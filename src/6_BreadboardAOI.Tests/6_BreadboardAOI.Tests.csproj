@@ -21,6 +21,7 @@
     <ProjectReference Include="..\1_BreadboardAOI.Hardware\1_BreadboardAOI.Hardware.csproj" />
     <ProjectReference Include="..\2_BreadboardAOI.Core\2_BreadboardAOI.Core.csproj" />
     <ProjectReference Include="..\3_BreadboardAOI.Vision\3_BreadboardAOI.Vision.csproj" />
+    <ProjectReference Include="..\4_BreadboardAOI.Intelligence\4_BreadboardAOI.Intelligence.csproj" />
   </ItemGroup>
 
 </Project>
