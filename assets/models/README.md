@@ -23,7 +23,21 @@ Qwen weights never need to live on this PC. See `assets/colab/README.md` and the
 `BreadboardAOI_Qwen.ipynb` notebook. Local files are only used when the Colab route is not
 configured or its tunnel is down.
 
-## Where to download (GitHub only)
+## Cloud mirror (recommended)
+
+The `models-v1` release is produced by `.github/workflows/publish-models.yml`. Trigger it once from **Actions → Publish Qwen3-VL model release → Run workflow**: GitHub's runners download the official weights, split the GGUF below the 2 GB asset limit and publish the release. Neither your PC nor Colab talks to the model publisher; Colab pulls only from GitHub.
+
+Assets produced:
+
+| Asset | Size | Notes |
+| :--- | ---: | :--- |
+| `Qwen3VL-8B-Instruct-Q4_K_M.gguf.part_00` … `part_02` | ~4.8 GB total | Concatenate in order. |
+| `mmproj-Qwen3VL-8B-Instruct-F16.gguf` | 1.1 GB | Vision projector. |
+| `SHA256SUMS.txt` | tiny | Verify the joined model. |
+
+The Colab notebook's configuration cell already points at these URLs.
+
+## Manual download (GitHub only)
 
 Keep downloads on GitHub to avoid third-party CDN traffic:
 
@@ -34,7 +48,7 @@ gh release download models-v1 `
 ```
 
 GitHub caps a single release asset at 2 GB, so large GGUFs are published as split parts
-(`*.gguf.part-aa`, …). The Colab notebook joins them automatically; locally, concatenate
+(`*.gguf.part_00`, …). The Colab notebook joins them automatically; locally, concatenate
 with `Get-Content -AsByteStream` or `cat` before use. For the CUDA `llama-server.exe`, use the
 upstream `ggml-org/llama.cpp` GitHub Releases (also GitHub-hosted). Avoid Hugging Face or
 vendor mirrors unless a release asset is unavailable.

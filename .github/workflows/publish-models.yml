@@ -1,0 +1,134 @@
+name: Publish Qwen3-VL model release
+
+# Mirrors the official Qwen3-VL-8B-Instruct GGUF + F16 vision projector into a
+# GitHub Release so the workstation and Google Colab download only from GitHub.
+# GitHub caps a single release asset at 2 GB, so the GGUF is split into parts.
+#
+# This workflow is the only place that contacts the model publisher; it never
+# runs on the operator's PC. Trigger it once from Actions -> Run workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to create or update
+        required: true
+        default: models-v1
+      model_url:
+        description: Official Qwen3-VL-8B-Instruct Q4_K_M GGUF URL
+        required: true
+        default: https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q4_K_M.gguf
+      mmproj_url:
+        description: Official Qwen3-VL-8B-Instruct F16 vision projector URL
+        required: true
+        default: https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-F16.gguf
+      part_size:
+        description: Split size for the GGUF (must stay below 2 GB per asset)
+        required: true
+        default: 1900M
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-models
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      MODEL_FILE: Qwen3VL-8B-Instruct-Q4_K_M.gguf
+      MMPROJ_FILE: mmproj-Qwen3VL-8B-Instruct-F16.gguf
+    steps:
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo apt-get clean
+          df -h /
+
+      - name: Download official weights
+        run: |
+          mkdir -p models
+          curl -fL --retry 5 --retry-delay 5 --retry-all-errors \
+            -o "models/$MODEL_FILE" "${{ inputs.model_url }}"
+          curl -fL --retry 5 --retry-delay 5 --retry-all-errors \
+            -o "models/$MMPROJ_FILE" "${{ inputs.mmproj_url }}"
+          ls -lh models
+          df -h /
+
+      - name: Write checksums
+        working-directory: models
+        run: |
+          sha256sum "$MODEL_FILE" "$MMPROJ_FILE" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Split the GGUF into GitHub-sized parts
+        working-directory: models
+        run: |
+          split -b "${{ inputs.part_size }}" -d -a 2 "$MODEL_FILE" "$MODEL_FILE.part_"
+          rm -f "$MODEL_FILE"
+          ls -lh
+          df -h /
+
+      - name: Create the release when missing
+        run: |
+          cat > release-notes.md <<'EOF'
+          Official **Qwen3-VL-8B-Instruct** GGUF (Q4_K_M) and F16 vision projector, mirrored for the BreadboardAOI Colab tutor.
+
+          GitHub caps one release asset at 2 GB, so the model is split. Concatenate the parts in order before use:
+
+          ```bash
+          cat Qwen3VL-8B-Instruct-Q4_K_M.gguf.part_* > Qwen3VL-8B-Instruct-Q4_K_M.gguf
+          sha256sum -c SHA256SUMS.txt
+          ```
+
+          The `mmproj-Qwen3VL-8B-Instruct-F16.gguf` projector is a single asset and does not need joining.
+
+          Weights: Qwen3-VL-8B-Instruct, Apache-2.0, published by the Qwen team.
+          EOF
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; uploading missing parts."
+          else
+            gh release create "$RELEASE_TAG" \
+              --title "BreadboardAOI models v1" \
+              --notes-file release-notes.md
+          fi
+
+      - name: Upload the model parts
+        working-directory: models
+        run: |
+          upload() {
+            local file="$1"
+            for attempt in 1 2 3 4; do
+              if gh release upload "$RELEASE_TAG" "$file" --clobber; then
+                return 0
+              fi
+              echo "upload failed (attempt $attempt); retrying in 15s"
+              sleep 15
+            done
+            return 1
+          }
+
+          shopt -s nullglob
+          for part in "$MODEL_FILE".part_*; do
+            echo "uploading $part ($(stat -c%s "$part") bytes)"
+            upload "$part"
+            rm -f "$part"
+          done
+
+      - name: Upload the projector and checksums
+        working-directory: models
+        run: |
+          gh release upload "$RELEASE_TAG" "$MMPROJ_FILE" SHA256SUMS.txt --clobber
+
+      - name: Verify the release
+        run: |
+          gh release view "$RELEASE_TAG" --json assets \
+            --jq '.assets[] | "\(.name)  \(.size) bytes  \(.state)"'
+          echo "### Model release ready: \`$RELEASE_TAG\`" >> "$GITHUB_STEP_SUMMARY"

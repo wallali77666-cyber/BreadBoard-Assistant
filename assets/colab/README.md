@@ -62,30 +62,43 @@ Only the narrow `drive.file` scope is requested, so the app sees **only files it
 
 The workstation polls Drive every 15 seconds (or on **REFRESH ENDPOINT**), probes `/health`, and only then swaps the tutor. If the tunnel dies, the next diagnosis silently falls back to local `llama-server`, then to the offline rule-based tutor.
 
-## 4. Weights must come from GitHub
+## 4. Weights are mirrored to GitHub by a workflow
 
-The project policy is GitHub-only downloads, so the notebook never touches Hugging Face or a vendor CDN. GitHub caps a release asset at **2 GB**, and a 4-bit 8B GGUF is ~5 GB, so split it:
+The project policy is GitHub-only downloads at runtime, and copying ~6 GB from your PC is unnecessary. A one-time GitHub Actions workflow does the mirroring in the cloud:
+
+1. GitHub → **Actions → Publish Qwen3-VL model release → Run workflow** (defaults are correct).
+2. The runner downloads the official **Qwen3-VL-8B-Instruct Q4_K_M** GGUF (4.8 GB) and **F16 projector** (1.1 GB), splits the GGUF into three sub-2 GB assets (`part_00` … `part_02`) and publishes the `models-v1` release.
+3. Notebook cell 1 already points at those URLs, so **Run all** needs no edits.
+
+Your PC transfers none of the weights; Google Colab pulls only from the GitHub release. The workflow also publishes `SHA256SUMS.txt` for integrity checks.
+
+### Manual alternative
+
+If you already have the files locally:
 
 ```powershell
 # 1.9 GB parts keep you safely under the 2 GB asset limit
-split -b 1900M -d -a 2 Qwen3-VL-8B-Instruct-Q4_K_M.gguf Qwen3-VL-8B-Instruct-Q4_K_M.gguf.part_
+split -b 1900M -d -a 2 Qwen3VL-8B-Instruct-Q4_K_M.gguf Qwen3VL-8B-Instruct-Q4_K_M.gguf.part_
 
 gh release create models-v1 `
-  Qwen3-VL-8B-Instruct-Q4_K_M.gguf.part_* `
-  mmproj-Qwen3-VL-8B-f16.gguf `
+  Qwen3VL-8B-Instruct-Q4_K_M.gguf.part_* `
+  mmproj-Qwen3VL-8B-Instruct-F16.gguf `
   --repo wallali77666-cyber/BreadBoard-Assistant `
   --title "BreadboardAOI models v1" `
   --notes "Split GGUF weights for the Colab tutor. Concatenate parts in order."
 ```
 
-Then in the notebook set `MODEL_PARTS` to the ordered asset URLs (or `GITHUB_MODEL_URL` for a single-file model), and `GITHUB_MMPROJ_URL` for the projector. The notebook concatenates the parts before starting the server.
+Then update `MODEL_PARTS` / `GITHUB_MMPROJ_URL` in cell 1 if the file names differ.
 
-Suggested sizes:
+### Runtime sizes
 
 | Runtime | Model | Notes |
 | :--- | :--- | :--- |
-| Free T4 (16 GB VRAM / 12.7 GB RAM) | `Qwen3-VL-8B-Instruct Q4_K_M` | ~5 GB weights + ~1.5 GB mmproj; comfortable. |
-| Colab Pro A100 40 GB | `Qwen3-VL-30B-A3B-Instruct Q4_K_M` | Mirrors the local `--n-gpu-layers 99 --n-cpu-moe 22` command line. |
+| Free T4 (16 GB VRAM / 12.7 GB RAM) | `Qwen3VL-8B-Instruct Q4_K_M` | ~4.8 GB weights + 1.1 GB projector; runs fully on the GPU. |
+| Colab Pro L4 (24 GB) | `Qwen3VL-30B-A3B-Instruct Q4_K_M` | ~17.7 GB weights + 1.0 GB projector; tight but usable. |
+| Colab Pro A100 40 GB | `Qwen3VL-30B-A3B-Instruct Q4_K_M` | Comfortable; matches the local `--n-gpu-layers 99` path. |
+
+The 30B-A3B cannot run on a free T4: its weights alone exceed VRAM, and CPU offload on a 2-vCPU runtime is too slow.
 
 ## 5. Manual endpoint (no Drive)
 
