@@ -1,0 +1,43 @@
+{
+  "name": "555_astable_blinker",
+  "description": "Reference NE555 astable LED blinker. Holes are the physical tie points that must resolve to the same electrical net after all jumpers are placed.",
+  "nets": [
+    {
+      "name": "NET_VCC",
+      "holes": [ "TOP_VCC_25", "E20", "F23", "A18" ]
+    },
+    {
+      "name": "NET_GND",
+      "holes": [ "TOP_GND_25", "F20", "J25", "J24", "J16" ]
+    },
+    {
+      "name": "NET_DISCHARGE",
+      "holes": [ "E21", "B24" ]
+    },
+    {
+      "name": "NET_TRIGGER_THRESHOLD",
+      "holes": [ "F21", "E22", "D25" ]
+    },
+    {
+      "name": "NET_CONTROL",
+      "holes": [ "E23" ]
+    },
+    {
+      "name": "NET_OUTPUT",
+      "holes": [ "F22", "A17" ]
+    },
+    {
+      "name": "NET_LED_CATHODE",
+      "holes": [ "D16", "J16" ]
+    }
+  ],
+  "components": [
+    { "ref": "U1", "kind": "IntegratedCircuit", "pin1": "E20", "pin2": "F20" },
+    { "ref": "R1", "kind": "Resistor", "pin1": "A18", "pin2": "B24" },
+    { "ref": "R2", "kind": "Resistor", "pin1": "B24", "pin2": "D25" },
+    { "ref": "C1", "kind": "Capacitor", "pin1": "D25", "pin2": "J25" },
+    { "ref": "R3", "kind": "Resistor", "pin1": "F22", "pin2": "A17" },
+    { "ref": "D1", "kind": "Led", "pin1": "A17", "pin2": "D16" },
+    { "ref": "C2", "kind": "Capacitor", "pin1": "E23", "pin2": "J24" }
+  ]
+}
