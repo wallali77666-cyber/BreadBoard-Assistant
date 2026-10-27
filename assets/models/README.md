@@ -11,3 +11,15 @@ The repository intentionally does **not** commit model weights. Place the follow
 | `llama-server.exe` | `4_BreadboardAOI.Intelligence` | CUDA build, launched on P-Cores (0x00FFF), port 8089. |
 
 All of the above are excluded by `.gitignore`. The intelligence layer handles missing files gracefully so the app still launches.
+
+## Where to download (GitHub only)
+
+Keep downloads on GitHub to avoid third-party CDN traffic. The weights are published as release assets on this repository:
+
+```powershell
+gh release download models-v1 `
+  --repo wallali77666-cyber/BreadBoard-Assistant `
+  --dir assets/models
+```
+
+For the CUDA `llama-server.exe`, use the upstream `ggml-org/llama.cpp` GitHub Releases (also GitHub-hosted). Avoid Hugging Face or vendor mirrors unless a release asset is unavailable.

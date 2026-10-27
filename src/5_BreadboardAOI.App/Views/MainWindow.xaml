@@ -1,16 +1,385 @@
 <Window x:Class="BreadboardAOI.App.Views.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="BreadboardAOI Workstation"
-        Height="720" Width="1280"
-        Background="#141414"
-        WindowStartupLocation="CenterScreen">
+        xmlns:skia="clr-namespace:SkiaSharp.Views.WPF;assembly=SkiaSharp.Views.WPF"
+        Title="BreadboardAOI — 830-Point Inspection Workstation"
+        Height="900" Width="1500"
+        MinHeight="540" MinWidth="1000"
+        Background="{StaticResource PasteboardBrush}"
+        TextOptions.TextFormattingMode="Display"
+        WindowStartupLocation="Manual"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    </Window.Resources>
+
     <Grid>
-        <TextBlock Text="BreadboardAOI — Phase 1 scaffolding. CAD workstation arrives in Phase 5."
-                   Foreground="#CCCCCC"
-                   FontFamily="Consolas"
-                   FontSize="12"
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Center" />
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- ================================================================
+             ZONE 1 — COMMAND BAR
+             ================================================================ -->
+        <Border Grid.Row="0" Style="{StaticResource ToolbarBorderStyle}">
+            <DockPanel LastChildFill="False" Margin="10,6">
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Width="4" Height="22" Margin="0,0,10,0"
+                            Background="{StaticResource AccentBlueBrush}" />
+                    <StackPanel Margin="0,0,14,0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding AppTitle}"
+                                   FontFamily="{StaticResource UiFontFamily}"
+                                   FontSize="12" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}" />
+                        <TextBlock Text="{Binding AppSubtitle}" FontSize="9"
+                                   Style="{StaticResource StatusTextStyle}" />
+                    </StackPanel>
+
+                    <Border Style="{StaticResource ToolbarSeparatorStyle}" />
+
+                    <ToggleButton Content="DEMO MODE"
+                                  Style="{StaticResource ToolbarToggleButtonStyle}"
+                                  IsChecked="{Binding DemoModeEnabled, Mode=TwoWay}"
+                                  ToolTip="Inject a deterministic faulty circuit so the DRC engine and tutor can be exercised without a camera." />
+
+                    <Button Content="REPLAY DIAGNOSTIC"
+                            Style="{StaticResource ToolbarButtonStyle}"
+                            Command="{Binding ReplayDiagnosticCommand}" />
+
+                    <Button Content="TEST ALARM"
+                            Style="{StaticResource ToolbarButtonStyle}"
+                            Command="{Binding TestAlarmCommand}" />
+
+                    <ToggleButton Content="MUTE VOICE"
+                                  Style="{StaticResource ToolbarToggleButtonStyle}"
+                                  IsChecked="{Binding IsVoiceMuted, Mode=TwoWay}" />
+
+                    <Border Style="{StaticResource ToolbarSeparatorStyle}" />
+
+                    <Button Content="{Binding CameraLabel}"
+                            Style="{StaticResource ToolbarButtonStyle}"
+                            Command="{Binding CycleCameraCommand}"
+                            ToolTip="Cycle Synthetic board → Camera 0 → Camera 1." />
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- ================================================================
+             ZONE 2 — DOCKING WORK AREA (left scene dock / centre CAD / right DRC)
+             ================================================================ -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="270" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="338" />
+            </Grid.ColumnDefinitions>
+
+            <!-- LEFT DOCK -->
+            <Border Grid.Column="0"
+                    Background="{StaticResource PanelBackgroundBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="0,0,1,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Style="{StaticResource DockHeaderBorderStyle}">
+                        <TextBlock Text="SCENE / DEMO FAULTS" Style="{StaticResource DockHeaderTextStyle}" />
+                    </Border>
+
+                    <ListBox Grid.Row="1"
+                             Height="228"
+                             Style="{StaticResource WorkstationListBoxStyle}"
+                             ItemContainerStyle="{StaticResource ScenarioListItemStyle}"
+                             ItemsSource="{Binding ScenarioItems}"
+                             SelectedItem="{Binding SelectedScenario, Mode=TwoWay}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Title}"
+                                               Style="{StaticResource ScenarioTitleTextStyle}" />
+                                    <TextBlock Text="{Binding Description}"
+                                               Style="{StaticResource ScenarioDetailTextStyle}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <StackPanel Grid.Row="2">
+                        <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                        <Border Style="{StaticResource DockHeaderBorderStyle}">
+                            <TextBlock Text="NETLIST &amp; LAYERS" Style="{StaticResource DockHeaderTextStyle}" />
+                        </Border>
+
+                        <StackPanel Margin="12,8,12,10">
+                            <CheckBox Content="Show pin matrix dots (830)"
+                                      Style="{StaticResource LayerCheckBoxStyle}"
+                                      IsChecked="{Binding ShowPinMatrixDots, Mode=TwoWay}" />
+                            <CheckBox Content="Show X-ray metal clips"
+                                      Style="{StaticResource LayerCheckBoxStyle}"
+                                      IsChecked="{Binding ShowXRayStrips, Mode=TwoWay}" />
+                            <CheckBox Content="Show KiCad ratsnest arrows"
+                                      Style="{StaticResource LayerCheckBoxStyle}"
+                                      IsChecked="{Binding ShowRatsnestArrows, Mode=TwoWay}" />
+                            <CheckBox Content="Show component boxes"
+                                      Style="{StaticResource LayerCheckBoxStyle}"
+                                      IsChecked="{Binding ShowComponentBoxes, Mode=TwoWay}" />
+                            <CheckBox Content="Show component labels"
+                                      Style="{StaticResource LayerCheckBoxStyle}"
+                                      IsChecked="{Binding ShowComponentLabels, Mode=TwoWay}" />
+                            <CheckBox Content="Show CAD rulers"
+                                      Style="{StaticResource LayerCheckBoxStyle}"
+                                      IsChecked="{Binding ShowRulers, Mode=TwoWay}" />
+                            <CheckBox Content="Show telemetry HUD"
+                                      Style="{StaticResource LayerCheckBoxStyle}"
+                                      IsChecked="{Binding ShowTelemetry, Mode=TwoWay}" />
+                            <CheckBox Content="Camera underlay"
+                                      Style="{StaticResource LayerCheckBoxStyle}"
+                                      IsChecked="{Binding ShowCameraUnderlay, Mode=TwoWay}" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                            <Border Style="{StaticResource DockSeparatorStyle}" />
+                            <Border Style="{StaticResource DockHeaderBorderStyle}">
+                                <TextBlock Text="HARDWARE / TELEMETRY" Style="{StaticResource DockHeaderTextStyle}" />
+                            </Border>
+
+                            <StackPanel Margin="12,8,12,12">
+                                <TextBlock Text="{Binding VisionBackend}" Style="{StaticResource MonoSecondaryTextStyle}" TextWrapping="Wrap" Margin="0,0,0,4" />
+                                <TextBlock Text="{Binding TutorBackend}" Style="{StaticResource MonoSecondaryTextStyle}" TextWrapping="Wrap" Margin="0,0,0,4" />
+                                <TextBlock Text="{Binding VoiceBackend}" Style="{StaticResource MonoSecondaryTextStyle}" TextWrapping="Wrap" Margin="0,0,0,4" />
+                                <TextBlock Text="{Binding VramTelemetry}" Style="{StaticResource MonoSecondaryTextStyle}" TextWrapping="Wrap" Margin="0,0,0,4" />
+                                <TextBlock Text="{Binding AffinityTelemetry}" Style="{StaticResource MonoSecondaryTextStyle}" TextWrapping="Wrap" Margin="0,0,0,4" />
+                                <TextBlock Text="{Binding TargetNetlistStatus}" Style="{StaticResource MonoSecondaryTextStyle}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+
+            <!-- CENTRE CAD VIEWPORT -->
+            <Grid Grid.Column="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Style="{StaticResource DockHeaderBorderStyle}">
+                    <DockPanel LastChildFill="False">
+                        <TextBlock Text="CAD VIEWPORT / X-RAY OVERLAY"
+                                   Style="{StaticResource DockHeaderTextStyle}" />
+                        <TextBlock DockPanel.Dock="Right"
+                                   Text="{Binding HoverHoleId, StringFormat=PIN {0}}"
+                                   Style="{StaticResource MonoSecondaryTextStyle}" />
+                    </DockPanel>
+                </Border>
+
+                <Border Grid.Row="1"
+                        Background="{StaticResource PasteboardBrush}"
+                        ClipToBounds="True">
+                    <skia:SKElement x:Name="Viewport"
+                                    PaintSurface="OnViewportPaintSurface"
+                                    MouseMove="OnViewportMouseMove"
+                                    MouseLeave="OnViewportMouseLeave" />
+                </Border>
+            </Grid>
+
+            <!-- RIGHT DOCK -->
+            <Border Grid.Column="2"
+                    Background="{StaticResource PanelBackgroundBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1,0,0,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="238" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Style="{StaticResource DockHeaderBorderStyle}">
+                        <DockPanel LastChildFill="False">
+                            <TextBlock Text="DRC VIOLATIONS" Style="{StaticResource DockHeaderTextStyle}" />
+                            <TextBlock DockPanel.Dock="Right"
+                                       Text="{Binding ViolationSummary}"
+                                       Style="{StaticResource MonoSecondaryTextStyle}" />
+                        </DockPanel>
+                    </Border>
+
+                    <Grid Grid.Row="1">
+                        <ListBox Style="{StaticResource WorkstationListBoxStyle}"
+                                 ItemContainerStyle="{StaticResource DrcListItemStyle}"
+                                 ItemsSource="{Binding Violations}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <Border Grid.Column="0" Margin="0,0,8,0" VerticalAlignment="Top">
+                                                <Border.Style>
+                                                    <Style TargetType="{x:Type Border}" BasedOn="{StaticResource SeverityChipStyle}">
+                                                        <Setter Property="Background" Value="#33E68619" />
+                                                        <Setter Property="BorderBrush" Value="{StaticResource DrcWarningBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsCritical}" Value="True">
+                                                                <Setter Property="Background" Value="#33D7373F" />
+                                                                <Setter Property="BorderBrush" Value="{StaticResource DrcCriticalBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="{Binding SeverityLabel}" FontFamily="{StaticResource UiFontFamily}" FontSize="9" FontWeight="SemiBold">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="{x:Type TextBlock}">
+                                                            <Setter Property="Foreground" Value="{StaticResource DrcWarningBrush}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsCritical}" Value="True">
+                                                                    <Setter Property="Foreground" Value="{StaticResource DrcCriticalBrush}" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </Border>
+
+                                            <TextBlock Grid.Column="1" Text="{Binding CodeLabel}"
+                                                       Style="{StaticResource MonoTelemetryTextStyle}"
+                                                       VerticalAlignment="Top" />
+                                        </Grid>
+
+                                        <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                                            <TextBlock Text="{Binding BadHole}" Style="{StaticResource MonoSecondaryTextStyle}" />
+                                            <TextBlock Text="  →  " Style="{StaticResource MonoSecondaryTextStyle}"
+                                                       Visibility="{Binding HasCorrection, Converter={StaticResource BoolToVis}}" />
+                                            <TextBlock Text="{Binding TargetHole}" Style="{StaticResource MonoSecondaryTextStyle}"
+                                                       Visibility="{Binding HasCorrection, Converter={StaticResource BoolToVis}}" />
+                                        </StackPanel>
+
+                                        <TextBlock Text="{Binding Message}"
+                                                   FontFamily="{StaticResource UiFontFamily}"
+                                                   FontSize="10"
+                                                   Foreground="{StaticResource TextMutedBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,3,0,0" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <TextBlock Text="NO VIOLATIONS — NETLIST CLEAN"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="{x:Type TextBlock}" BasedOn="{StaticResource StatusTextStyle}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Violations.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+
+                    <Border Grid.Row="2" Style="{StaticResource DockSeparatorStyle}" />
+
+                    <StackPanel Grid.Row="3">
+                        <Border Style="{StaticResource DockHeaderBorderStyle}">
+                            <TextBlock Text="PIN INSPECTOR" Style="{StaticResource DockHeaderTextStyle}" />
+                        </Border>
+
+                        <Grid Margin="12,8,12,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="14" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="HOLE" Style="{StaticResource InspectorLabelStyle}" Margin="0,0,6,1" />
+                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding HoverHoleId}" Style="{StaticResource InspectorValueStyle}" />
+                            <TextBlock Grid.Row="0" Grid.Column="3" Text="STRIP" Style="{StaticResource InspectorLabelStyle}" Margin="0,0,6,1" />
+                            <TextBlock Grid.Row="0" Grid.Column="4" Text="{Binding HoverStripId}" Style="{StaticResource InspectorValueStyle}" />
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="NET" Style="{StaticResource InspectorLabelStyle}" Margin="0,0,6,1" />
+                            <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="4" Text="{Binding HoverNetName}" Style="{StaticResource InspectorValueStyle}" TextTrimming="CharacterEllipsis" />
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="TYPE" Style="{StaticResource InspectorLabelStyle}" Margin="0,0,6,1" />
+                            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding HoverStripType}" Style="{StaticResource InspectorValueStyle}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Grid.Row="2" Grid.Column="3" Text="LEADS" Style="{StaticResource InspectorLabelStyle}" Margin="0,0,6,1" />
+                            <TextBlock Grid.Row="2" Grid.Column="4" Text="{Binding HoverOccupancy}" Style="{StaticResource InspectorValueStyle}" />
+                        </Grid>
+                    </StackPanel>
+
+                    <Grid Grid.Row="4">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0" Style="{StaticResource DockHeaderBorderStyle}">
+                            <DockPanel LastChildFill="False">
+                                <TextBlock Text="TUTOR / DIAGNOSTIC" Style="{StaticResource DockHeaderTextStyle}" />
+                                <TextBlock DockPanel.Dock="Right" Text="{Binding DrcStatus}"
+                                           Style="{StaticResource MonoSecondaryTextStyle}" />
+                            </DockPanel>
+                        </Border>
+
+                        <TextBlock Grid.Row="1" Text="{Binding TutorBackend}"
+                                   Style="{StaticResource StatusTextStyle}"
+                                   Margin="12,6,12,4" />
+
+                        <TextBox Grid.Row="2" x:Name="TranscriptBox"
+                                 Style="{StaticResource ConsoleTextBoxStyle}"
+                                 Margin="12,0,12,12"
+                                 Text="{Binding TutorTranscript, Mode=OneWay}"
+                                 TextChanged="OnTranscriptTextChanged" />
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ================================================================
+             ZONE 3 — STATUS BAR
+             ================================================================ -->
+        <Border Grid.Row="2" Style="{StaticResource ToolbarBorderStyle}"
+                BorderThickness="0,1,0,0" Padding="10,4">
+            <DockPanel LastChildFill="True">
+                <TextBlock DockPanel.Dock="Left"
+                           Text="READY"
+                           Style="{StaticResource StatusTextStyle}"
+                           Margin="0,0,12,0" />
+                <TextBlock DockPanel.Dock="Right"
+                           Text="{Binding FrameTelemetry}"
+                           Style="{StaticResource MonoSecondaryTextStyle}" />
+                <TextBlock Text="{Binding StatusLine}"
+                           Style="{StaticResource StatusTextStyle}"
+                           TextTrimming="CharacterEllipsis"
+                           VerticalAlignment="Center" />
+            </DockPanel>
+        </Border>
     </Grid>
 </Window>

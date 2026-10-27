@@ -248,6 +248,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     private double _lastYoloMs;
     private long _frameCount;
     private int _tutorBusy;
+    private int _voiceMuted;
 
     public InspectionPipelineCoordinator(InspectionPipelineOptions? options = null)
     {
@@ -356,6 +357,9 @@ public sealed class InspectionPipelineCoordinator : IDisposable
 
     /// <summary>True while the cognitive loop is streaming or speaking a diagnostic.</summary>
     public bool IsTutorBusy => Volatile.Read(ref _tutorBusy) != 0;
+
+    /// <summary>When muted the tutor still streams text, but no speech is synthesized.</summary>
+    public bool VoiceMuted => Volatile.Read(ref _voiceMuted) != 0;
 
     public long FrameCount => Interlocked.Read(ref _frameCount);
 
@@ -954,7 +958,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             {
                 TutorSentenceCompleted?.Invoke(sentence);
 
-                if (_voice is not null)
+                if (_voice is not null && !VoiceMuted)
                     await _voice.SpeakSentenceAsync(sentence, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -964,7 +968,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         {
             TutorSentenceCompleted?.Invoke(tail);
 
-            if (_voice is not null)
+            if (_voice is not null && !VoiceMuted)
                 await _voice.SpeakSentenceAsync(tail, cancellationToken).ConfigureAwait(false);
         }
 
@@ -995,6 +999,63 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         }
 
         return null;
+    }
+
+    /// <summary>Mutes/unmutes neural TTS while leaving the streamed transcript intact.</summary>
+    public void SetVoiceMuted(bool muted)
+    {
+        Volatile.Write(ref _voiceMuted, muted ? 1 : 0);
+        RaiseStatus(muted ? "Voice muted: transcript only." : $"Voice unmuted: {VoiceBackendDescription}.");
+    }
+
+    /// <summary>Re-queues the current packet so the tutor speaks the latest fault again.</summary>
+    public void ReplayLatestDiagnostic()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        DrcStatePacket? packet = LatestPacket;
+        if (packet is null)
+        {
+            RaiseStatus("Replay unavailable: no DRC packet yet.");
+            return;
+        }
+
+        if (_qwen is null || _cognitiveTask is null)
+        {
+            RaiseStatus("Replay unavailable: cognitive tutor is disabled.");
+            return;
+        }
+
+        if (!_cognitiveChannel.Writer.TryWrite(packet))
+        {
+            RaiseStatus("Replay skipped: tutor is still streaming.");
+            return;
+        }
+
+        RaiseStatus("Replaying latest diagnostic...");
+    }
+
+    /// <summary>Toolbar self-test for the sub-10 ms emergency WAV reflex.</summary>
+    public void TestEmergencyAlarm()
+    {
+        VoiceSynthesisEngine? voice = _voice;
+        if (voice is null)
+        {
+            RaiseStatus("Alarm test failed: voice engine unavailable.");
+            return;
+        }
+
+        try
+        {
+            bool played = voice.PlayEmergencyReflexAlarm();
+            RaiseStatus(played
+                ? "Emergency reflex alarm played."
+                : "Alarm test: no pre-loaded WAV clip on disk.");
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            RaiseStatus($"Alarm test failed: {ex.Message}");
+        }
     }
 
     private void RaiseStatus(string message) => StatusChanged?.Invoke(message);
