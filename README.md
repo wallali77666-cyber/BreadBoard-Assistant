@@ -53,18 +53,29 @@ $env:BREADBOARD_IMAGE_PATH = "C:\photos\breadboard.jpg"
 ## Remote AI on Colab (optional)
 
 The Qwen3-VL tutor can run in the operator's own Google Colab runtime instead of this PC.
-The app signs in with Google (OAuth 2.0 + PKCE on an ephemeral `127.0.0.1` loopback), writes
-a one-time session key to Drive, and the notebook (`assets/colab/BreadboardAOI_Qwen.ipynb`)
-reads it, starts `llama-server`, then publishes a Cloudflare tunnel URL back to Drive. The
-tutor routes **Colab → local `llama-server` → rule-based tutor**, so the workstation always
-has a fallback.
+Vision, homography, the PinMatrix and the KiCad DRC engine stay local at 60 FPS; only the
+diagnosis is offloaded. The tutor routes **Colab → local `llama-server` → rule-based tutor**,
+so the workstation always has a fallback.
+
+### One-paste pairing (default, no Google account)
+
+1. Open `assets/colab/BreadboardAOI_Qwen.ipynb` in Colab, choose **Runtime → Change runtime type → T4 GPU**, then **Run all**.
+2. Cell 5 prints one line: `BBAOI1|https://<tunnel>.trycloudflare.com|<key>`.
+3. In the workstation open **REMOTE AI**, paste that line into **PAIR CODE**, press **CONNECT**.
+
+The endpoint and key are stored under `%LOCALAPPDATA%\BreadboardAOI\remote-endpoint.json`, so the
+next start reconnects automatically. **DISCONNECT** forgets it. `BBAOI1|url|key`, `url#key`,
+`url?key=...` and a bare tunnel URL are all accepted.
+
+### Drive auto-connect (optional)
+
+Set `USE_DRIVE = True` in notebook cell 1 and link a Google account instead of pasting:
 
 1. Create an OAuth **Desktop app** client in [Google Cloud Console](https://console.cloud.google.com/apis/credentials) and enable the Google Drive API.
-2. Open the **REMOTE AI** tab, paste the client ID (secret optional), press **LINK GOOGLE**, then **PUBLISH SESSION**.
-3. Press **OPEN NOTEBOOK** to run it in Colab, then **REFRESH ENDPOINT** (the app also polls every 15 s).
+2. In **REMOTE AI**, paste the client ID (secret optional), press **LINK GOOGLE**, then **PUBLISH SESSION**.
+3. Press **OPEN NOTEBOOK** to run it in Colab; the app polls Drive every 15 s, or press **REFRESH ENDPOINT**.
 
-No Google account is required: **APPLY MANUAL ENDPOINT** accepts any tunnel URL plus its bearer
-key. See `assets/colab/README.md` for the OAuth setup, Drive flow and release-asset splitting.
+See `assets/colab/README.md` for OAuth details, the Drive session format and model hosting.
 
 ## Environment variables
 
@@ -99,6 +110,7 @@ No model is required to start the workstation: Demo Mode, the synthetic camera a
 - [x] **Phase 4** — Qwen3-VL MoE service + Kokoro voice engine with offline rule-based tutor and SAPI fallback.
 - [x] **Phase 5** — Spectrum-dark WPF workstation, SkiaSharp CAD viewport, demo-mode fault injection.
 - [x] **Phase 6** — Google-linked Colab Qwen3-VL runtime, still-image input (`LOAD IMAGE`, drag & drop, `BREADBOARD_IMAGE_PATH`), dock tabs.
+- [x] **Phase 7** — one-paste Colab pairing (`BBAOI1|url|key`), prebuilt CUDA `llama-server`, persisted endpoint, optional Drive auto-connect.
 
 ## Coordinate space
 

@@ -110,6 +110,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     // Remote AI / Colab link. All of these are touched from the dispatcher only.
     private readonly GoogleTokenStore _tokenStore = new();
     private readonly GoogleClientConfigStore _clientStore = new();
+    private readonly ManualEndpointStore _endpointStore = new();
     private readonly ColabDriveBridge _drive = new();
     private readonly HttpClient _probeHttp = new(new SocketsHttpHandler
     {
@@ -124,6 +125,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     private GoogleTokenSet? _googleTokens;
     private ColabSession? _colabSession;
     private RemoteTutorTarget? _appliedRemoteTarget;
+    private RemoteTutorTarget? _savedEndpoint;
     private int _remotePolling;
 
     private InspectionPipelineCoordinator? _coordinator;
@@ -312,6 +314,10 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     [ObservableProperty]
     private string _manualApiKey = string.Empty;
 
+    /// <summary>The single line the Colab notebook prints: BBAOI1|url|key.</summary>
+    [ObservableProperty]
+    private string _pairCode = string.Empty;
+
     [ObservableProperty]
     private bool _isRemoteBusy;
 
@@ -399,8 +405,16 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         _telemetryTimer.Start();
         RefreshTelemetry();
 
-        if (UseColabAi)
+        if (_savedEndpoint is not null)
+        {
+            RemoteTutorTarget saved = _savedEndpoint;
+            _savedEndpoint = null;
+            _ = ConnectEndpointAsync(saved, persist: false);
+        }
+        else if (UseColabAi)
+        {
             _ = PollColabAsync(force: true);
+        }
 
         DrcStatePacket? packet = coordinator.LatestPacket;
         if (packet is not null)
@@ -726,25 +740,82 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             return;
         }
 
+        await ConnectEndpointAsync(
+            new RemoteTutorTarget(endpoint, NullIfBlank(ManualApiKey), null),
+            persist: true).ConfigureAwait(true);
+    }
+
+    /// <summary>Connects from the single line printed by the Colab notebook.</summary>
+    [RelayCommand]
+    private async Task ConnectPairCodeAsync()
+    {
+        if (IsRemoteBusy)
+            return;
+
+        if (!ColabPairCode.TryParse(PairCode, out RemoteTutorTarget target))
+        {
+            RemoteAiStatus =
+                "Paste the whole line printed by Colab: BBAOI1|https://....trycloudflare.com|key";
+            return;
+        }
+
+        await ConnectEndpointAsync(target, persist: true).ConfigureAwait(true);
+    }
+
+    /// <summary>Drops the saved endpoint and returns the cognitive loop to this PC.</summary>
+    [RelayCommand]
+    private void DisconnectPairCode()
+    {
+        _savedEndpoint = null;
+        _appliedRemoteTarget = null;
+        _endpointStore.Clear();
+        _remoteTimer.Stop();
+        _coordinator?.SetRemoteTutor(null);
+
+        UseColabAi = false;
+        PairCode = string.Empty;
+        RemoteRouteLabel = "TUTOR ROUTE: LOCAL";
+        RemoteAiStatus = "Pair code cleared. The local tutor is active again.";
+    }
+
+    /// <summary>Probes a target, then swaps the tutor and remembers it for the next start.</summary>
+    private async Task ConnectEndpointAsync(RemoteTutorTarget target, bool persist)
+    {
+        if (IsRemoteBusy)
+            return;
+
         IsRemoteBusy = true;
+        RemoteAiStatus = $"Probing {target.DisplayHost}...";
+
         try
         {
-            string? key = NullIfBlank(ManualApiKey);
-            RemoteProbeResult probe = await RemoteEndpointProbe.ProbeAsync(_probeHttp, endpoint, key);
+            RemoteProbeResult probe = await RemoteEndpointProbe
+                .ProbeAsync(_probeHttp, target.EndpointUrl, target.ApiKey)
+                .ConfigureAwait(true);
 
             if (!probe.IsHealthy)
             {
-                RemoteAiStatus = $"Endpoint not serving: {probe.Detail}.";
+                RemoteAiStatus =
+                    $"Colab is not answering yet ({probe.Detail}). Wait for the notebook to print the pair code, then press CONNECT.";
                 return;
             }
 
-            ApplyRemoteTarget(new RemoteTutorTarget(endpoint, key, null));
+            ApplyRemoteTarget(target);
             UseColabAi = true;
-            RemoteAiStatus = $"Manual endpoint online ({probe.LatencyMs:0} ms). The tutor streams from it.";
+            PairCode = ColabPairCode.Format(target);
+
+            if (persist)
+            {
+                _savedEndpoint = target;
+                _endpointStore.Save(target);
+            }
+
+            RemoteAiStatus =
+                $"Connected to {target.DisplayHost} ({probe.LatencyMs:0} ms). Diagnoses stream from Colab.";
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            RemoteAiStatus = "Manual endpoint failed: " + ex.Message;
+            RemoteAiStatus = "Connect failed: " + ex.Message;
         }
         finally
         {
@@ -774,6 +845,14 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         {
             ManualEndpoint = manual.Trim();
             ManualApiKey = Environment.GetEnvironmentVariable("BREADBOARD_COLAB_KEY") ?? string.Empty;
+        }
+
+        RemoteTutorTarget? saved = _endpointStore.Load();
+        if (saved is not null)
+        {
+            _savedEndpoint = saved;
+            PairCode = ColabPairCode.Format(saved);
+            RemoteAiStatus = "Saved Colab endpoint found. Probing it now...";
         }
     }
 
@@ -859,6 +938,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             }
 
             ApplyRemoteTarget(target);
+            PairCode = ColabPairCode.Format(target);
             RemoteAiStatus =
                 $"Serving {session.Model ?? "Qwen"} on {target.DisplayHost} · {probe.LatencyMs:0} ms{(string.IsNullOrWhiteSpace(session.Gpu) ? string.Empty : " · " + session.Gpu)}";
         }

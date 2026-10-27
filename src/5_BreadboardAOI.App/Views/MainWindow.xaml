@@ -184,7 +184,47 @@
                                 </Border>
 
                                 <StackPanel Margin="12,8,12,14">
-                                    <TextBlock Text="{Binding GoogleAccountStatus}"
+                                    <TextBlock Text="PAIR CODE"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,0,0,3" />
+                                    <TextBox Style="{StaticResource DockTextBoxStyle}"
+                                             ToolTip="Run all in the Colab notebook, then paste the single BBAOI1|... line it prints."
+                                             Text="{Binding PairCode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                                    <UniformGrid Columns="2" Margin="0,2,0,0">
+                                        <Button Content="CONNECT"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                ToolTip="Probes the tunnel and routes the tutor through Colab."
+                                                Command="{Binding ConnectPairCodeCommand}" />
+                                        <Button Content="DISCONNECT"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                ToolTip="Forgets the saved endpoint and returns to the local tutor."
+                                                Command="{Binding DisconnectPairCodeCommand}" />
+                                    </UniformGrid>
+
+                                    <TextBlock Text="{Binding RemoteAiStatus}"
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,6,0,10" />
+
+                                    <TextBlock Text="The notebook prints BBAOI1|https://....trycloudflare.com|key in cell 5. Paste the whole line; it is remembered for the next start."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,10" />
+
+                                    <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                    <Border Style="{StaticResource DockHeaderBorderStyle}">
+                                        <DockPanel LastChildFill="False">
+                                            <TextBlock Text="GOOGLE DRIVE (OPTIONAL AUTO-CONNECT)"
+                                                       Style="{StaticResource DockHeaderTextStyle}" />
+                                            <TextBlock DockPanel.Dock="Right"
+                                                       Text="{Binding GoogleAccountStatus}"
+                                                       Style="{StaticResource StatusTextStyle}" />
+                                        </DockPanel>
+                                    </Border>
+
+                                    <TextBlock Text="Only needed if you want the app to discover the tunnel by itself. The pair code above needs no Google account."
                                                Style="{StaticResource MonoSecondaryTextStyle}"
                                                TextWrapping="Wrap"
                                                Margin="0,0,0,8" />
@@ -225,14 +265,9 @@
                                                       Margin="0,0,4,4" />
                                     </UniformGrid>
 
-                                    <TextBlock Text="{Binding RemoteAiStatus}"
-                                               Style="{StaticResource MonoSecondaryTextStyle}"
-                                               TextWrapping="Wrap"
-                                               Margin="0,4,0,10" />
-
                                     <Border Style="{StaticResource DockSeparatorStyle}" />
 
-                                    <TextBlock Text="MANUAL TUNNEL (NO DRIVE REQUIRED)"
+                                    <TextBlock Text="MANUAL URL + KEY (ADVANCED)"
                                                Style="{StaticResource StatusTextStyle}"
                                                Margin="0,10,0,3" />
                                     <TextBox Style="{StaticResource DockTextBoxStyle}"
