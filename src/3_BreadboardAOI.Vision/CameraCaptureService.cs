@@ -1,13 +1,15 @@
 // ============================================================================
 // FILE: src/3_BreadboardAOI.Vision/CameraCaptureService.cs
 // PURPOSE: 60 FPS frame source for the reflex loop. Exposes an explicit
-//          CameraSource selector (Synthetic / Camera0 / Camera1) so the Phase 5
-//          toolbar can toggle a live USB webcam, and falls back to the rendered
-//          synthetic breadboard when no camera is present.
+//          CameraSource selector (Synthetic / Camera0 / Camera1 / ImageFile) so
+//          the toolbar can toggle a live USB webcam or replay an uploaded photo,
+//          and falls back to the rendered synthetic breadboard when neither a
+//          camera nor a usable image is available.
 // ============================================================================
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using BreadboardAOI.Hardware;
 using OpenCvSharp;
 
@@ -23,7 +25,10 @@ public enum CameraSource
     Camera0 = 1,
 
     /// <summary>OpenCV capture device index 1.</summary>
-    Camera1 = 2
+    Camera1 = 2,
+
+    /// <summary>Still image loaded from disk and replayed every frame (toolbar "Load Image").</summary>
+    ImageFile = 3
 }
 
 /// <summary>
@@ -40,6 +45,7 @@ public sealed class CameraCaptureService : IDisposable
     private readonly Mat _bgra = new();
     private readonly Mat _resized = new();
     private readonly Mat? _syntheticFrame;
+    private readonly Mat? _imageFrame;
     private readonly int _requestedWidth;
     private readonly int _requestedHeight;
 
@@ -50,7 +56,8 @@ public sealed class CameraCaptureService : IDisposable
     public CameraCaptureService(
         CameraSource source = CameraSource.Synthetic,
         int width = DefaultWidth,
-        int height = DefaultHeight)
+        int height = DefaultHeight,
+        string? imagePath = null)
     {
         if (width <= 0)
             throw new ArgumentOutOfRangeException(nameof(width), width, "Capture width must be positive.");
@@ -58,6 +65,7 @@ public sealed class CameraCaptureService : IDisposable
             throw new ArgumentOutOfRangeException(nameof(height), height, "Capture height must be positive.");
 
         RequestedSource = source;
+        ImagePath = source == CameraSource.ImageFile ? imagePath : null;
         _requestedWidth = width;
         _requestedHeight = height;
         ActiveSource = source;
@@ -65,6 +73,18 @@ public sealed class CameraCaptureService : IDisposable
         if (source == CameraSource.Synthetic)
         {
             _syntheticFrame = HomographyCalibrator.CreateSyntheticBoardFrame(width, height);
+            return;
+        }
+
+        if (source == CameraSource.ImageFile)
+        {
+            _imageFrame = TryLoadImageFrame(imagePath, width, height, out string? imageError);
+            if (_imageFrame is not null)
+                return;
+
+            ActiveSource = CameraSource.Synthetic;
+            _syntheticFrame = HomographyCalibrator.CreateSyntheticBoardFrame(width, height);
+            LastError = imageError ?? "Still image unavailable; using the synthetic board.";
             return;
         }
 
@@ -93,6 +113,12 @@ public sealed class CameraCaptureService : IDisposable
     public bool IsSynthetic => ActiveSource == CameraSource.Synthetic;
 
     public bool IsLiveCamera => _capture is not null;
+
+    /// <summary>True when frames are replayed from the uploaded still image.</summary>
+    public bool IsStillImage => _imageFrame is not null;
+
+    /// <summary>Absolute path of the still image requested via <see cref="CameraSource.ImageFile"/>.</summary>
+    public string? ImagePath { get; }
 
     public string? LastError { get; private set; }
 
@@ -144,6 +170,69 @@ public sealed class CameraCaptureService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Loads a still photo into a fixed-size BGR canvas, letterboxed to preserve
+    /// the original aspect ratio. Returns null (and an operator-facing reason)
+    /// when the file is missing, unreadable or not a decodable image.
+    /// </summary>
+    private static Mat? TryLoadImageFrame(string? path, int width, int height, out string? error)
+    {
+        error = null;
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            error = "No still image selected; using the synthetic board.";
+            return null;
+        }
+
+        if (!File.Exists(path))
+        {
+            error = $"Image not found: {Path.GetFileName(path)}";
+            return null;
+        }
+
+        Mat? decoded = null;
+        try
+        {
+            byte[] bytes = File.ReadAllBytes(path);
+            decoded = Cv2.ImDecode(bytes, ImreadModes.Color);
+            if (decoded.Empty())
+            {
+                decoded.Dispose();
+                error = $"Image could not be decoded: {Path.GetFileName(path)}";
+                return null;
+            }
+
+            var frame = new Mat(new OpenCvSharp.Size(width, height), MatType.CV_8UC3, Scalar.Black);
+            double scale = Math.Min((double)width / decoded.Width, (double)height / decoded.Height);
+            int targetWidth = Math.Max(1, (int)Math.Round(decoded.Width * scale));
+            int targetHeight = Math.Max(1, (int)Math.Round(decoded.Height * scale));
+
+            using var scaled = new Mat();
+            Cv2.Resize(
+                decoded,
+                scaled,
+                new OpenCvSharp.Size(targetWidth, targetHeight),
+                0,
+                0,
+                scale < 1d ? InterpolationFlags.Area : InterpolationFlags.Linear);
+
+            using (var roi = new Mat(frame, new Rect((width - targetWidth) / 2, (height - targetHeight) / 2, targetWidth, targetHeight)))
+            {
+                scaled.CopyTo(roi);
+            }
+
+            decoded.Dispose();
+            return frame;
+        }
+        catch (Exception ex)
+        {
+            decoded?.Dispose();
+            error = $"Image load failed: {ex.Message}";
+            return null;
+        }
+    }
+
     /// <summary>Grabs the next frame into a caller-owned BGR Mat (reallocates only on size changes).</summary>
     public bool TryGrabFrame(Mat destination)
     {
@@ -160,6 +249,13 @@ public sealed class CameraCaptureService : IDisposable
                     return false;
                 }
 
+                Interlocked.Increment(ref _framesCaptured);
+                return true;
+            }
+
+            if (_imageFrame is not null)
+            {
+                _imageFrame.CopyTo(destination);
                 Interlocked.Increment(ref _framesCaptured);
                 return true;
             }
@@ -271,6 +367,7 @@ public sealed class CameraCaptureService : IDisposable
             _capture?.Dispose();
             _capture = null;
             _syntheticFrame?.Dispose();
+            _imageFrame?.Dispose();
             _scratch.Dispose();
             _bgra.Dispose();
             _resized.Dispose();

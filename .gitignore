@@ -40,6 +40,23 @@ assets/models/*.bin
 assets/models/*.exe
 assets/models/*.dll
 assets/models/*.engine
+assets/models/**/*.gguf
+assets/models/**/*.onnx
+assets/models/**/*.bin
+assets/models/**/*.exe
+assets/models/**/*.dll
+assets/models/**/*.engine
+assets/models/**/*.wav
+*.gguf.part*
+
+# Local helper binaries (llama-server download / scratch tools)
+tools/*.exe
+tools/*.dll
+tools/*.zip
+
+# Google OAuth client secrets / Drive session cache live outside the repo, never here
+google-client.json
+breadboardaoi-colab.json
 
 # Generated frame dumps / micro-crops
 artifacts/

@@ -120,6 +120,36 @@ public partial class MainWindow : Window
         _viewModel.ClearHover();
     }
 
+    private void OnViewportDragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = TryGetDroppedImage(e.Data, out _) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void OnViewportDrop(object sender, DragEventArgs e)
+    {
+        if (TryGetDroppedImage(e.Data, out string? imagePath) && imagePath is not null)
+            _viewModel.LoadImage(imagePath);
+
+        e.Handled = true;
+    }
+
+    private static bool TryGetDroppedImage(IDataObject data, out string? imagePath)
+    {
+        imagePath = null;
+
+        if (!data.GetDataPresent(DataFormats.FileDrop) || data.GetData(DataFormats.FileDrop) is not string[] files || files.Length == 0)
+            return false;
+
+        string candidate = files[0];
+        string extension = System.IO.Path.GetExtension(candidate).ToLowerInvariant();
+        if (extension is not (".png" or ".jpg" or ".jpeg" or ".bmp" or ".webp" or ".tif" or ".tiff"))
+            return false;
+
+        imagePath = candidate;
+        return true;
+    }
+
     private void OnTranscriptTextChanged(object sender, TextChangedEventArgs e)
     {
         if (sender is TextBox box)

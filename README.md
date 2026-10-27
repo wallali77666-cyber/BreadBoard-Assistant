@@ -38,6 +38,47 @@ dotnet run --project src/5_BreadboardAOI.App/5_BreadboardAOI.App.csproj --config
 
 The workstation boots with **Demo Mode ON** and the **synthetic camera**, so the full pipeline (830-pin CAD sheet, DRC engine, ratsnest arrows and spoken tutor) is testable on any Windows PC with no hardware attached. Use the toolbar to cycle to a real USB camera, replay the latest diagnostic, test the emergency alarm or mute the voice.
 
+### Camera, synthetic board or uploaded photo
+
+The camera button cycles **Synthetic → Camera 0 → Camera 1**. **LOAD IMAGE** — or dropping a
+`.png` / `.jpg` / `.bmp` / `.webp` / `.tif` file onto the CAD viewport — replays a still photo
+through the same homography → YOLO → DRC path. Photos are letterboxed into the 1280 × 720
+capture frame, so an ordinary phone photo keeps its aspect ratio. To boot straight into an
+image:
+
+```powershell
+$env:BREADBOARD_IMAGE_PATH = "C:\photos\breadboard.jpg"
+```
+
+## Remote AI on Colab (optional)
+
+The Qwen3-VL tutor can run in the operator's own Google Colab runtime instead of this PC.
+The app signs in with Google (OAuth 2.0 + PKCE on an ephemeral `127.0.0.1` loopback), writes
+a one-time session key to Drive, and the notebook (`assets/colab/BreadboardAOI_Qwen.ipynb`)
+reads it, starts `llama-server`, then publishes a Cloudflare tunnel URL back to Drive. The
+tutor routes **Colab → local `llama-server` → rule-based tutor**, so the workstation always
+has a fallback.
+
+1. Create an OAuth **Desktop app** client in [Google Cloud Console](https://console.cloud.google.com/apis/credentials) and enable the Google Drive API.
+2. Open the **REMOTE AI** tab, paste the client ID (secret optional), press **LINK GOOGLE**, then **PUBLISH SESSION**.
+3. Press **OPEN NOTEBOOK** to run it in Colab, then **REFRESH ENDPOINT** (the app also polls every 15 s).
+
+No Google account is required: **APPLY MANUAL ENDPOINT** accepts any tunnel URL plus its bearer
+key. See `assets/colab/README.md` for the OAuth setup, Drive flow and release-asset splitting.
+
+## Environment variables
+
+| Variable | Default | Purpose |
+| :--- | :--- | :--- |
+| `BREADBOARD_IMAGE_PATH` | — | Boot with a still photo instead of a camera. |
+| `BREADBOARD_MUTE_VOICE` | `0` | Start with the tutor muted. |
+| `BREADBOARD_USE_COLAB` | `0` | Prefer the linked Colab endpoint at boot. |
+| `BREADBOARD_COLAB_ENDPOINT` | — | Manual tunnel URL (no Google/Drive link needed). |
+| `BREADBOARD_COLAB_KEY` | — | Bearer key for `BREADBOARD_COLAB_ENDPOINT`. |
+| `BREADBOARD_GOOGLE_CLIENT_ID` / `_CLIENT_SECRET` | — | OAuth client instead of the in-app fields. |
+| `BREADBOARD_QWEN_*` | see `QwenMoEOptions` | Local `llama-server` model paths, port, layers. |
+| `BREADBOARD_VOICE_*` | see `VoiceSynthesisEngine` | Kokoro model / voice paths. |
+
 ## Model downloads (GitHub only)
 
 Model weights are deliberately **not** committed. To avoid third-party CDN traffic, pull them from this repository's GitHub Releases instead of Hugging Face or other mirrors:
@@ -57,6 +98,7 @@ No model is required to start the workstation: Demo Mode, the synthetic camera a
 - [x] **Phase 3** — OpenCV homography, hand gate, YOLO pose inference.
 - [x] **Phase 4** — Qwen3-VL MoE service + Kokoro voice engine with offline rule-based tutor and SAPI fallback.
 - [x] **Phase 5** — Spectrum-dark WPF workstation, SkiaSharp CAD viewport, demo-mode fault injection.
+- [x] **Phase 6** — Google-linked Colab Qwen3-VL runtime, still-image input (`LOAD IMAGE`, drag & drop, `BREADBOARD_IMAGE_PATH`), dock tabs.
 
 ## Coordinate space
 

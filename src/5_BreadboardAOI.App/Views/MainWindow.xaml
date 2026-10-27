@@ -64,6 +64,11 @@
                             Style="{StaticResource ToolbarButtonStyle}"
                             Command="{Binding CycleCameraCommand}"
                             ToolTip="Cycle Synthetic board → Camera 0 → Camera 1." />
+
+                    <Button Content="LOAD IMAGE"
+                            Style="{StaticResource ToolbarButtonStyle}"
+                            Command="{Binding LoadImageFileCommand}"
+                            ToolTip="Replay a breadboard photo (.png / .jpg) instead of a live camera. You can also drag a photo onto the CAD viewport." />
                 </StackPanel>
             </DockPanel>
         </Border>
@@ -83,89 +88,168 @@
                     Background="{StaticResource PanelBackgroundBrush}"
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="0,0,1,0">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
+                <TabControl Style="{StaticResource DockTabControlStyle}">
+                    <!-- ============================ SCENE ============================ -->
+                    <TabItem Header="SCENE" Style="{StaticResource DockTabItemStyle}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel>
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
 
-                    <Border Grid.Row="0" Style="{StaticResource DockHeaderBorderStyle}">
-                        <TextBlock Text="SCENE / DEMO FAULTS" Style="{StaticResource DockHeaderTextStyle}" />
-                    </Border>
+                                <Border Style="{StaticResource DockHeaderBorderStyle}">
+                                    <TextBlock Text="DEMO FAULTS" Style="{StaticResource DockHeaderTextStyle}" />
+                                </Border>
 
-                    <ListBox Grid.Row="1"
-                             Height="228"
-                             Style="{StaticResource WorkstationListBoxStyle}"
-                             ItemContainerStyle="{StaticResource ScenarioListItemStyle}"
-                             ItemsSource="{Binding ScenarioItems}"
-                             SelectedItem="{Binding SelectedScenario, Mode=TwoWay}">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel>
-                                    <TextBlock Text="{Binding Title}"
-                                               Style="{StaticResource ScenarioTitleTextStyle}" />
-                                    <TextBlock Text="{Binding Description}"
-                                               Style="{StaticResource ScenarioDetailTextStyle}" />
+                                <ListBox Style="{StaticResource WorkstationListBoxStyle}"
+                                         ItemContainerStyle="{StaticResource ScenarioListItemStyle}"
+                                         ItemsSource="{Binding ScenarioItems}"
+                                         SelectedItem="{Binding SelectedScenario, Mode=TwoWay}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Title}"
+                                                           Style="{StaticResource ScenarioTitleTextStyle}" />
+                                                <TextBlock Text="{Binding Description}"
+                                                           Style="{StaticResource ScenarioDetailTextStyle}" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                <Border Style="{StaticResource DockHeaderBorderStyle}">
+                                    <TextBlock Text="NETLIST &amp; LAYERS" Style="{StaticResource DockHeaderTextStyle}" />
+                                </Border>
+
+                                <StackPanel Margin="12,8,12,10">
+                                    <CheckBox Content="Show pin matrix dots (830)"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding ShowPinMatrixDots, Mode=TwoWay}" />
+                                    <CheckBox Content="Show X-ray metal clips"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding ShowXRayStrips, Mode=TwoWay}" />
+                                    <CheckBox Content="Show KiCad ratsnest arrows"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding ShowRatsnestArrows, Mode=TwoWay}" />
+                                    <CheckBox Content="Show component boxes"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding ShowComponentBoxes, Mode=TwoWay}" />
+                                    <CheckBox Content="Show component labels"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding ShowComponentLabels, Mode=TwoWay}" />
+                                    <CheckBox Content="Show CAD rulers"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding ShowRulers, Mode=TwoWay}" />
+                                    <CheckBox Content="Show telemetry HUD"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding ShowTelemetry, Mode=TwoWay}" />
+                                    <CheckBox Content="Camera underlay"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding ShowCameraUnderlay, Mode=TwoWay}" />
                                 </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
 
-                    <StackPanel Grid.Row="2">
-                        <Border Style="{StaticResource DockSeparatorStyle}" />
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
 
-                        <Border Style="{StaticResource DockHeaderBorderStyle}">
-                            <TextBlock Text="NETLIST &amp; LAYERS" Style="{StaticResource DockHeaderTextStyle}" />
-                        </Border>
+                                <Border Style="{StaticResource DockHeaderBorderStyle}">
+                                    <TextBlock Text="HARDWARE / TELEMETRY" Style="{StaticResource DockHeaderTextStyle}" />
+                                </Border>
 
-                        <StackPanel Margin="12,8,12,10">
-                            <CheckBox Content="Show pin matrix dots (830)"
-                                      Style="{StaticResource LayerCheckBoxStyle}"
-                                      IsChecked="{Binding ShowPinMatrixDots, Mode=TwoWay}" />
-                            <CheckBox Content="Show X-ray metal clips"
-                                      Style="{StaticResource LayerCheckBoxStyle}"
-                                      IsChecked="{Binding ShowXRayStrips, Mode=TwoWay}" />
-                            <CheckBox Content="Show KiCad ratsnest arrows"
-                                      Style="{StaticResource LayerCheckBoxStyle}"
-                                      IsChecked="{Binding ShowRatsnestArrows, Mode=TwoWay}" />
-                            <CheckBox Content="Show component boxes"
-                                      Style="{StaticResource LayerCheckBoxStyle}"
-                                      IsChecked="{Binding ShowComponentBoxes, Mode=TwoWay}" />
-                            <CheckBox Content="Show component labels"
-                                      Style="{StaticResource LayerCheckBoxStyle}"
-                                      IsChecked="{Binding ShowComponentLabels, Mode=TwoWay}" />
-                            <CheckBox Content="Show CAD rulers"
-                                      Style="{StaticResource LayerCheckBoxStyle}"
-                                      IsChecked="{Binding ShowRulers, Mode=TwoWay}" />
-                            <CheckBox Content="Show telemetry HUD"
-                                      Style="{StaticResource LayerCheckBoxStyle}"
-                                      IsChecked="{Binding ShowTelemetry, Mode=TwoWay}" />
-                            <CheckBox Content="Camera underlay"
-                                      Style="{StaticResource LayerCheckBoxStyle}"
-                                      IsChecked="{Binding ShowCameraUnderlay, Mode=TwoWay}" />
-                        </StackPanel>
-                    </StackPanel>
-
-                    <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto">
-                        <StackPanel>
-                            <Border Style="{StaticResource DockSeparatorStyle}" />
-                            <Border Style="{StaticResource DockHeaderBorderStyle}">
-                                <TextBlock Text="HARDWARE / TELEMETRY" Style="{StaticResource DockHeaderTextStyle}" />
-                            </Border>
-
-                            <StackPanel Margin="12,8,12,12">
-                                <TextBlock Text="{Binding VisionBackend}" Style="{StaticResource MonoSecondaryTextStyle}" TextWrapping="Wrap" Margin="0,0,0,4" />
-                                <TextBlock Text="{Binding TutorBackend}" Style="{StaticResource MonoSecondaryTextStyle}" TextWrapping="Wrap" Margin="0,0,0,4" />
-                                <TextBlock Text="{Binding VoiceBackend}" Style="{StaticResource MonoSecondaryTextStyle}" TextWrapping="Wrap" Margin="0,0,0,4" />
-                                <TextBlock Text="{Binding VramTelemetry}" Style="{StaticResource MonoSecondaryTextStyle}" TextWrapping="Wrap" Margin="0,0,0,4" />
-                                <TextBlock Text="{Binding AffinityTelemetry}" Style="{StaticResource MonoSecondaryTextStyle}" TextWrapping="Wrap" Margin="0,0,0,4" />
-                                <TextBlock Text="{Binding TargetNetlistStatus}" Style="{StaticResource MonoSecondaryTextStyle}" TextWrapping="Wrap" />
+                                <StackPanel Margin="12,8,12,12">
+                                    <TextBlock Text="{Binding VisionBackend}" Style="{StaticResource MonoSecondaryTextStyle}" TextWrapping="Wrap" Margin="0,0,0,4" />
+                                    <TextBlock Text="{Binding TutorBackend}" Style="{StaticResource MonoSecondaryTextStyle}" TextWrapping="Wrap" Margin="0,0,0,4" />
+                                    <TextBlock Text="{Binding VoiceBackend}" Style="{StaticResource MonoSecondaryTextStyle}" TextWrapping="Wrap" Margin="0,0,0,4" />
+                                    <TextBlock Text="{Binding VramTelemetry}" Style="{StaticResource MonoSecondaryTextStyle}" TextWrapping="Wrap" Margin="0,0,0,4" />
+                                    <TextBlock Text="{Binding AffinityTelemetry}" Style="{StaticResource MonoSecondaryTextStyle}" TextWrapping="Wrap" Margin="0,0,0,4" />
+                                    <TextBlock Text="{Binding TargetNetlistStatus}" Style="{StaticResource MonoSecondaryTextStyle}" TextWrapping="Wrap" />
+                                </StackPanel>
                             </StackPanel>
-                        </StackPanel>
-                    </ScrollViewer>
-                </Grid>
+                        </ScrollViewer>
+                    </TabItem>
+
+                    <!-- ========================== REMOTE AI ========================== -->
+                    <TabItem Header="REMOTE AI" Style="{StaticResource DockTabItemStyle}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel>
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                <Border Style="{StaticResource DockHeaderBorderStyle}">
+                                    <DockPanel LastChildFill="False">
+                                        <TextBlock Text="COLAB TUTOR" Style="{StaticResource DockHeaderTextStyle}" />
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Text="{Binding RemoteRouteLabel}"
+                                                   Style="{StaticResource StatusTextStyle}" />
+                                    </DockPanel>
+                                </Border>
+
+                                <StackPanel Margin="12,8,12,14">
+                                    <TextBlock Text="{Binding GoogleAccountStatus}"
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,8" />
+
+                                    <TextBlock Text="OAUTH CLIENT ID (DESKTOP APP)"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,0,0,3" />
+                                    <TextBox Style="{StaticResource DockTextBoxStyle}"
+                                             ToolTip="Google Cloud Console → APIs &amp; Services → Credentials → OAuth client ID → Desktop app."
+                                             Text="{Binding GoogleClientId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                                    <TextBlock Text="CLIENT SECRET (OPTIONAL)"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,0,0,3" />
+                                    <TextBox Style="{StaticResource DockTextBoxStyle}"
+                                             Text="{Binding GoogleClientSecret, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                                    <UniformGrid Columns="2" Margin="0,2,0,0">
+                                        <Button Content="LINK GOOGLE"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Command="{Binding LinkGoogleCommand}" />
+                                        <Button Content="UNLINK"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Command="{Binding UnlinkGoogleCommand}" />
+                                        <Button Content="PUBLISH SESSION"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                ToolTip="Writes a one-time session key to Drive for the Colab notebook."
+                                                Command="{Binding PublishColabSessionCommand}" />
+                                        <Button Content="OPEN NOTEBOOK"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Command="{Binding OpenColabNotebookCommand}" />
+                                        <Button Content="REFRESH ENDPOINT"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Command="{Binding RefreshColabCommand}" />
+                                        <ToggleButton Content="USE COLAB AI"
+                                                      Style="{StaticResource ToolbarToggleButtonStyle}"
+                                                      IsChecked="{Binding UseColabAi, Mode=TwoWay}"
+                                                      Margin="0,0,4,4" />
+                                    </UniformGrid>
+
+                                    <TextBlock Text="{Binding RemoteAiStatus}"
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,4,0,10" />
+
+                                    <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                    <TextBlock Text="MANUAL TUNNEL (NO DRIVE REQUIRED)"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,10,0,3" />
+                                    <TextBox Style="{StaticResource DockTextBoxStyle}"
+                                             ToolTip="https://random-words.trycloudflare.com"
+                                             Text="{Binding ManualEndpoint, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Style="{StaticResource DockTextBoxStyle}"
+                                             ToolTip="Bearer key printed by the notebook."
+                                             Text="{Binding ManualApiKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    <Button Content="APPLY MANUAL ENDPOINT"
+                                            Style="{StaticResource DockButtonStyle}"
+                                            HorizontalAlignment="Stretch"
+                                            Command="{Binding ApplyManualEndpointCommand}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+                </TabControl>
             </Border>
 
             <!-- CENTRE CAD VIEWPORT -->
@@ -191,7 +275,10 @@
                     <skia:SKElement x:Name="Viewport"
                                     PaintSurface="OnViewportPaintSurface"
                                     MouseMove="OnViewportMouseMove"
-                                    MouseLeave="OnViewportMouseLeave" />
+                                    MouseLeave="OnViewportMouseLeave"
+                                    AllowDrop="True"
+                                    DragOver="OnViewportDragOver"
+                                    Drop="OnViewportDrop" />
                 </Border>
             </Grid>
 

@@ -14,6 +14,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -24,6 +25,7 @@ using BreadboardAOI.Core.DrcEngine;
 using BreadboardAOI.Core.Geometry;
 using BreadboardAOI.Hardware;
 using BreadboardAOI.Intelligence;
+using BreadboardAOI.Intelligence.Remote;
 using BreadboardAOI.Vision;
 using SkiaSharp;
 
@@ -179,6 +181,9 @@ public sealed class InspectionPipelineOptions
 
     public CameraSource CameraSource { get; init; } = CameraSource.Synthetic;
 
+    /// <summary>Still image replayed when <see cref="CameraSource"/> is <see cref="CameraSource.ImageFile"/>.</summary>
+    public string? ImagePath { get; init; }
+
     public bool EnableCognitiveTutor { get; init; } = true;
 
     public bool EnableVoice { get; init; } = true;
@@ -190,6 +195,9 @@ public sealed class InspectionPipelineOptions
     public double TargetFramesPerSecond { get; init; } = 60d;
 
     public string? TargetSchematicPath { get; init; }
+
+    /// <summary>Colab tunnel endpoint; when set the cognitive loop streams from it first.</summary>
+    public RemoteTutorTarget? RemoteTutor { get; init; }
 }
 
 /// <summary>
@@ -229,6 +237,12 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     private VoiceSynthesisEngine? _voice;
     private TargetSchematic? _targetSchematic;
 
+    /// <summary>Guards live tutor swaps; retired services are disposed with the coordinator.</summary>
+    private readonly object _qwenSync = new();
+    private readonly List<QwenMoEService> _retiredQwen = new(4);
+    private RemoteTutorTarget? _remoteTarget;
+    private int _remoteActive;
+
     private Task? _visionTask;
     private Task? _cognitiveTask;
     private bool _started;
@@ -239,6 +253,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     private int _activeCameraSource;
     private int _lastStateHash = int.MinValue;
     private string _cameraNote = string.Empty;
+    private string _cameraImagePath = string.Empty;
     private string _targetNote = string.Empty;
     private string _yoloNote = string.Empty;
     private string _voiceNote = string.Empty;
@@ -294,7 +309,9 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         {
             try
             {
-                _qwen = new QwenMoEService();
+                _remoteTarget = _options.RemoteTutor;
+                _remoteActive = _remoteTarget is null ? 0 : 1;
+                _qwen = CreateQwenService(_remoteTarget);
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
@@ -378,6 +395,9 @@ public sealed class InspectionPipelineCoordinator : IDisposable
                 CameraSource.Synthetic => "SYNTHETIC BOARD",
                 CameraSource.Camera0 => "CAMERA 0",
                 CameraSource.Camera1 => "CAMERA 1",
+                CameraSource.ImageFile => _cameraImagePath.Length == 0
+                    ? "STILL IMAGE"
+                    : $"IMAGE / {Path.GetFileName(_cameraImagePath).ToUpperInvariant()}",
                 _ => "NO CAMERA"
             };
 
@@ -403,13 +423,88 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     {
         get
         {
-            if (_qwen is null)
+            QwenMoEService? qwen = _qwen;
+            if (qwen is null)
                 return "TUTOR DISABLED";
 
-            return _qwen.LastMode == QwenResponseMode.Server
-                ? "QWEN3-VL-30B-A3B / SERVER"
-                : "RULE-BASED TUTOR / OFFLINE";
+            string route = UsingRemoteTutor
+                ? $"COLAB / {_remoteTarget?.DisplayHost ?? "REMOTE"}"
+                : "LOCAL";
+
+            return qwen.LastMode == QwenResponseMode.Server
+                ? $"QWEN3-VL / {route}"
+                : $"RULE-BASED TUTOR / OFFLINE ({route})";
         }
+    }
+
+    /// <summary>True when the cognitive loop is configured to stream from Colab.</summary>
+    public bool UsingRemoteTutor => Volatile.Read(ref _remoteActive) != 0;
+
+    /// <summary>
+    /// Swaps the tutor to a Colab tunnel (or back to local/offline with null).
+    /// Safe to call while the reflex loop runs: the cognitive loop picks the new
+    /// service up on its next packet and the old one is retired, not disposed,
+    /// so an in-flight stream can finish.
+    /// </summary>
+    public void SetRemoteTutor(RemoteTutorTarget? target)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        bool changed;
+        lock (_qwenSync)
+        {
+            changed = !SameTarget(_remoteTarget, target);
+            if (!changed)
+                return;
+
+            if (_qwen is not null)
+                _retiredQwen.Add(_qwen);
+
+            _remoteTarget = target;
+            Volatile.Write(ref _remoteActive, target is null ? 0 : 1);
+
+            if (!_options.EnableCognitiveTutor)
+            {
+                _qwen = null;
+            }
+            else
+            {
+                try
+                {
+                    _qwen = CreateQwenService(target);
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    _qwen = null;
+                }
+            }
+        }
+
+        RaiseStatus(target is null
+            ? "Tutor backend: local llama-server / offline fallback."
+            : $"Tutor backend: Colab tunnel at {target.DisplayHost}.");
+    }
+
+    private static bool SameTarget(RemoteTutorTarget? left, RemoteTutorTarget? right)
+    {
+        if (left is null || right is null)
+            return left is null && right is null;
+
+        return string.Equals(left.EndpointUrl, right.EndpointUrl, StringComparison.OrdinalIgnoreCase)
+               && string.Equals(left.ApiKey, right.ApiKey, StringComparison.Ordinal)
+               && string.Equals(left.ModelAlias, right.ModelAlias, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static QwenMoEService CreateQwenService(RemoteTutorTarget? target)
+    {
+        QwenMoEOptions baseOptions = QwenMoEOptions.FromEnvironment();
+        if (target is null)
+            return new QwenMoEService(baseOptions);
+
+        return new QwenMoEService(baseOptions.WithRemoteEndpoint(
+            target.ChatEndpoint,
+            target.ApiKey,
+            target.ModelAlias));
     }
 
     public string VoiceBackendDescription => _voice?.Backend switch
@@ -562,11 +657,13 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     }
 
     /// <summary>Hot-swaps the camera (or synthetic source) without stopping the loops.</summary>
-    public void SetCameraSource(CameraSource source)
+    public void SetCameraSource(CameraSource source, string? imagePath = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        if (source == ActiveCameraSource && _camera is not null)
+        // Re-selecting a still image always reloads it (the file on disk may have
+        // changed); device and synthetic sources are idempotent.
+        if (source == ActiveCameraSource && source != CameraSource.ImageFile && _camera is not null)
         {
             RaiseStatus($"Camera already active: {CameraStatus}");
             return;
@@ -575,7 +672,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         CameraCaptureService replacement;
         try
         {
-            replacement = new CameraCaptureService(source);
+            replacement = new CameraCaptureService(source, imagePath: imagePath);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -583,6 +680,31 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             return;
         }
 
+        SwapCamera(replacement, imagePath);
+    }
+
+    /// <summary>Replays an uploaded still photo (letterboxed to the 1280 x 720 capture frame).</summary>
+    public void SetImageSource(string imagePath)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentException.ThrowIfNullOrWhiteSpace(imagePath);
+
+        CameraCaptureService replacement;
+        try
+        {
+            replacement = new CameraCaptureService(CameraSource.ImageFile, imagePath: imagePath);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            RaiseStatus($"Image load failed: {ex.Message}");
+            return;
+        }
+
+        SwapCamera(replacement, imagePath);
+    }
+
+    private void SwapCamera(CameraCaptureService replacement, string? imagePath)
+    {
         CameraCaptureService? previous;
         lock (_cameraSync)
         {
@@ -594,6 +716,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
 
         Volatile.Write(ref _activeCameraSource, (int)replacement.ActiveSource);
         _cameraNote = replacement.LastError ?? string.Empty;
+        _cameraImagePath = replacement.ActiveSource == CameraSource.ImageFile ? imagePath ?? string.Empty : string.Empty;
 
         _calibrator.ResetCalibration();
         _motionGate.Reset();
@@ -606,9 +729,10 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     {
         try
         {
-            _camera = new CameraCaptureService(source);
+            _camera = new CameraCaptureService(source, imagePath: _options.ImagePath);
             Volatile.Write(ref _activeCameraSource, (int)_camera.ActiveSource);
             _cameraNote = _camera.LastError ?? string.Empty;
+            _cameraImagePath = _camera.ActiveSource == CameraSource.ImageFile ? _options.ImagePath ?? string.Empty : string.Empty;
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -1109,7 +1233,18 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         _motionGate.Dispose();
         _yolo?.Dispose();
         _cropExtractor.Dispose();
-        _qwen?.Dispose();
+
+        lock (_qwenSync)
+        {
+            _qwen?.Dispose();
+            _qwen = null;
+
+            for (int i = 0; i < _retiredQwen.Count; i++)
+                _retiredQwen[i].Dispose();
+
+            _retiredQwen.Clear();
+        }
+
         _voice?.Dispose();
         _vramMonitor.Dispose();
         _cameraFrame.Dispose();

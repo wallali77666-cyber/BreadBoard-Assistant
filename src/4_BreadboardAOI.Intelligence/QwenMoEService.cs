@@ -117,6 +117,32 @@ public sealed class QwenMoEOptions
         };
     }
 
+    /// <summary>
+    /// Copy pointed at a remote OpenAI-compatible tunnel (Colab + cloudflared).
+    /// Local auto-launch is disabled because the weights live on the runtime.
+    /// </summary>
+    public QwenMoEOptions WithRemoteEndpoint(string chatEndpoint, string? apiKey, string? modelAlias) => new()
+    {
+        EndpointUrl = chatEndpoint,
+        ServerExecutablePath = ServerExecutablePath,
+        ModelPath = ModelPath,
+        MmprojPath = MmprojPath,
+        Port = Port,
+        ContextSize = ContextSize,
+        GpuLayers = GpuLayers,
+        CpuMoeLayers = CpuMoeLayers,
+        Threads = Threads,
+        ThreadsBatch = ThreadsBatch,
+        AutoLaunchServer = false,
+        Mlock = Mlock,
+        FlashAttention = FlashAttention,
+        ServerStartupTimeoutSeconds = ServerStartupTimeoutSeconds,
+        RequestTimeoutSeconds = Math.Max(60d, RequestTimeoutSeconds),
+        FallbackTokensPerSecond = FallbackTokensPerSecond,
+        ModelAlias = string.IsNullOrWhiteSpace(modelAlias) ? ModelAlias : modelAlias,
+        ApiKey = string.IsNullOrWhiteSpace(apiKey) ? ApiKey : apiKey
+    };
+
     /// <summary>Builds the exact llama-server.exe command line (no shell escaping).</summary>
     public IReadOnlyList<string> BuildServerArguments(int port, string modelPath, string mmprojPath)
     {
