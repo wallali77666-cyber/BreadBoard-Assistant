@@ -120,7 +120,9 @@ unnecessary. A one-time GitHub Actions workflow does the mirroring in the cloud:
 3. Notebook cell 1 already points at those URLs, so **Run all** needs no edits.
 
 Your PC transfers none of the weights; Google Colab pulls only from the GitHub release. The
-workflow also publishes `SHA256SUMS.txt` for integrity checks. The notebook pins
+workflow also publishes `SHA256SUMS.txt` for integrity checks, and notebook cell 4 verifies
+both files against it. Downloads resume with HTTP Range requests, so a dropped connection
+costs only the missing bytes - re-run the cell and it continues. The notebook pins
 `LLAMA_BUILD` (a `ggml-org/llama.cpp` release tag) for the prebuilt `llama-server`; set it to
 any newer tag that ships `llama-*-bin-ubuntu-cuda-12.8-x64.tar.gz`.
 
