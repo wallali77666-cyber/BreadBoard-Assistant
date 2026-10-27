@@ -1,0 +1,47 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+
+# Test + coverage artifacts
+TestResults/
+*.trx
+*.coverage
+coverage*.json
+coverage*.xml
+coverage*.info
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+.nuget/
+
+# OS junk
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Local model weights / large binaries (download separately, see assets/models/README.md)
+assets/models/*.gguf
+assets/models/*.onnx
+assets/models/*.bin
+assets/models/*.exe
+assets/models/*.dll
+assets/models/*.engine
+
+# Generated frame dumps / micro-crops
+artifacts/
+frames/
+*.png.tmp

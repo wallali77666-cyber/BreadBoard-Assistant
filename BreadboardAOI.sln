@@ -1,0 +1,62 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{2FCF04A2-671A-4D43-A73A-1B5C2B33AFA1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "1_BreadboardAOI.Hardware", "src\1_BreadboardAOI.Hardware\1_BreadboardAOI.Hardware.csproj", "{5317D537-8FB6-498A-9E32-2B0979DD8A03}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "2_BreadboardAOI.Core", "src\2_BreadboardAOI.Core\2_BreadboardAOI.Core.csproj", "{A9A7EDCE-2B3E-4322-8AB0-2F780BDE897F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "3_BreadboardAOI.Vision", "src\3_BreadboardAOI.Vision\3_BreadboardAOI.Vision.csproj", "{0F13777E-6B08-4581-849A-BB71D116E955}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "4_BreadboardAOI.Intelligence", "src\4_BreadboardAOI.Intelligence\4_BreadboardAOI.Intelligence.csproj", "{84A3373D-1FF2-4606-ACED-40C8B95DB953}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "5_BreadboardAOI.App", "src\5_BreadboardAOI.App\5_BreadboardAOI.App.csproj", "{4FD6F922-39C8-4A58-B3CE-80744069C45F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "6_BreadboardAOI.Tests", "src\6_BreadboardAOI.Tests\6_BreadboardAOI.Tests.csproj", "{705B23A3-56DC-450A-BBDE-B0E092C6DF1F}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{5317D537-8FB6-498A-9E32-2B0979DD8A03}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5317D537-8FB6-498A-9E32-2B0979DD8A03}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5317D537-8FB6-498A-9E32-2B0979DD8A03}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5317D537-8FB6-498A-9E32-2B0979DD8A03}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A9A7EDCE-2B3E-4322-8AB0-2F780BDE897F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A9A7EDCE-2B3E-4322-8AB0-2F780BDE897F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A9A7EDCE-2B3E-4322-8AB0-2F780BDE897F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A9A7EDCE-2B3E-4322-8AB0-2F780BDE897F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0F13777E-6B08-4581-849A-BB71D116E955}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0F13777E-6B08-4581-849A-BB71D116E955}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0F13777E-6B08-4581-849A-BB71D116E955}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0F13777E-6B08-4581-849A-BB71D116E955}.Release|Any CPU.Build.0 = Release|Any CPU
+		{84A3373D-1FF2-4606-ACED-40C8B95DB953}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{84A3373D-1FF2-4606-ACED-40C8B95DB953}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{84A3373D-1FF2-4606-ACED-40C8B95DB953}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{84A3373D-1FF2-4606-ACED-40C8B95DB953}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4FD6F922-39C8-4A58-B3CE-80744069C45F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4FD6F922-39C8-4A58-B3CE-80744069C45F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4FD6F922-39C8-4A58-B3CE-80744069C45F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4FD6F922-39C8-4A58-B3CE-80744069C45F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{705B23A3-56DC-450A-BBDE-B0E092C6DF1F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{705B23A3-56DC-450A-BBDE-B0E092C6DF1F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{705B23A3-56DC-450A-BBDE-B0E092C6DF1F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{705B23A3-56DC-450A-BBDE-B0E092C6DF1F}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{5317D537-8FB6-498A-9E32-2B0979DD8A03} = {2FCF04A2-671A-4D43-A73A-1B5C2B33AFA1}
+		{A9A7EDCE-2B3E-4322-8AB0-2F780BDE897F} = {2FCF04A2-671A-4D43-A73A-1B5C2B33AFA1}
+		{0F13777E-6B08-4581-849A-BB71D116E955} = {2FCF04A2-671A-4D43-A73A-1B5C2B33AFA1}
+		{84A3373D-1FF2-4606-ACED-40C8B95DB953} = {2FCF04A2-671A-4D43-A73A-1B5C2B33AFA1}
+		{4FD6F922-39C8-4A58-B3CE-80744069C45F} = {2FCF04A2-671A-4D43-A73A-1B5C2B33AFA1}
+		{705B23A3-56DC-450A-BBDE-B0E092C6DF1F} = {2FCF04A2-671A-4D43-A73A-1B5C2B33AFA1}
+	EndGlobalSection
+EndGlobal

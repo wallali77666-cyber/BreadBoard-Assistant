@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>BreadboardAOI.App</AssemblyName>
+    <RootNamespace>BreadboardAOI.App</RootNamespace>
+    <UseWPF>true</UseWPF>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp" Version="2.88.8" />
+    <PackageReference Include="SkiaSharp.Views.WPF" Version="2.88.8" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\1_BreadboardAOI.Hardware\1_BreadboardAOI.Hardware.csproj" />
+    <ProjectReference Include="..\2_BreadboardAOI.Core\2_BreadboardAOI.Core.csproj" />
+    <ProjectReference Include="..\3_BreadboardAOI.Vision\3_BreadboardAOI.Vision.csproj" />
+    <ProjectReference Include="..\4_BreadboardAOI.Intelligence\4_BreadboardAOI.Intelligence.csproj" />
+  </ItemGroup>
+
+</Project>

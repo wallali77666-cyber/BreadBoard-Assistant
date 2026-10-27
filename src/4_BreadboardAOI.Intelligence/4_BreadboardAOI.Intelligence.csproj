@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>BreadboardAOI.Intelligence</AssemblyName>
+    <RootNamespace>BreadboardAOI.Intelligence</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="1.10.30" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\2_BreadboardAOI.Core\2_BreadboardAOI.Core.csproj" />
+    <ProjectReference Include="..\1_BreadboardAOI.Hardware\1_BreadboardAOI.Hardware.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>BreadboardAOI.Hardware</AssemblyName>
+    <RootNamespace>BreadboardAOI.Hardware</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Pure Win32 P/Invoke: kernel32.dll (SetThreadAffinityMask, VirtualLock), nvml.dll. No NuGet deps by design. -->
+
+</Project>
