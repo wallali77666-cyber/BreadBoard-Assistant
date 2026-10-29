@@ -24,11 +24,20 @@ public sealed class HomographyCalibrator : IDisposable
     private readonly Dictionary _dictionary;
     private readonly DetectorParameters _detectorParameters;
     private readonly Mat _gray = new();
+    private readonly Mat _undistorted = new();
 
     private Mat _homography = new(3, 3, MatType.CV_64FC1);
     private Mat? _fallbackHomography;
     private int _fallbackWidth;
     private int _fallbackHeight;
+
+    private Mat? _cameraMatrix;
+    private Mat? _distortionCoefficients;
+    private Mat? _undistortMap1;
+    private Mat? _undistortMap2;
+    private int _mapWidth;
+    private int _mapHeight;
+
     private bool _disposed;
 
     public HomographyCalibrator()
@@ -43,8 +52,138 @@ public sealed class HomographyCalibrator : IDisposable
 
     public string? LastError { get; private set; }
 
+    /// <summary>True when frames are lens-corrected before the homography warp.</summary>
+    public bool HasLensCorrection => _cameraMatrix is not null && _distortionCoefficients is not null;
+
     /// <summary>Current 3x3 CV_64F transform, camera pixels -> 1000 x 500 board space.</summary>
     public Mat Homography => _homography;
+
+    /// <summary>
+    /// Supplies the camera intrinsics and distortion coefficients captured once for
+    /// this lens (for example with an OpenCV chessboard calibration). Frames are
+    /// remapped before ArUco detection and before the perspective warp, so a
+    /// barrel-distorted top/bottom rail no longer drifts outside the 11.5 px snap
+    /// radius. Passing <c>null</c> for both restores the raw-camera path.
+    /// </summary>
+    public void SetLensDistortion(Mat? cameraMatrix, Mat? distortionCoefficients)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (cameraMatrix is null || distortionCoefficients is null)
+        {
+            if (cameraMatrix is not null || distortionCoefficients is not null)
+                throw new ArgumentException("Camera matrix and distortion coefficients must be supplied together.");
+
+            ClearLensCorrection();
+            return;
+        }
+
+        if (cameraMatrix.Empty() || cameraMatrix.Rows != 3 || cameraMatrix.Cols != 3 || cameraMatrix.Channels() != 1)
+            throw new ArgumentException("Camera matrix must be a single-channel 3x3 intrinsic matrix.", nameof(cameraMatrix));
+
+        if (distortionCoefficients.Empty() || distortionCoefficients.Channels() != 1)
+            throw new ArgumentException("Distortion coefficients must be a non-empty single-channel matrix.", nameof(distortionCoefficients));
+
+        Mat matrix = ToDouble(cameraMatrix);
+        Mat coefficients = ToDouble(distortionCoefficients);
+        bool adopted = false;
+
+        try
+        {
+            if (coefficients.Rows != 1 && coefficients.Cols != 1)
+                throw new ArgumentException("Distortion coefficients must be a single row or column.", nameof(distortionCoefficients));
+
+            _cameraMatrix?.Dispose();
+            _distortionCoefficients?.Dispose();
+            _cameraMatrix = matrix;
+            _distortionCoefficients = coefficients;
+            adopted = true;
+
+            ReleaseUndistortMaps();
+
+            // The previous homography was measured on raw pixels and is no longer
+            // valid once the input coordinate system changes.
+            ResetCalibration();
+            LastError = null;
+        }
+        finally
+        {
+            if (!adopted)
+            {
+                matrix.Dispose();
+                coefficients.Dispose();
+            }
+        }
+    }
+
+    private static Mat ToDouble(Mat source)
+    {
+        var destination = new Mat();
+        if (source.Type() == MatType.CV_64FC1)
+            source.CopyTo(destination);
+        else
+            source.ConvertTo(destination, MatType.CV_64FC1);
+        return destination;
+    }
+
+    private void ClearLensCorrection()
+    {
+        _cameraMatrix?.Dispose();
+        _distortionCoefficients?.Dispose();
+        _cameraMatrix = null;
+        _distortionCoefficients = null;
+        ReleaseUndistortMaps();
+        ResetCalibration();
+    }
+
+    private void ReleaseUndistortMaps()
+    {
+        _undistortMap1?.Dispose();
+        _undistortMap2?.Dispose();
+        _undistortMap1 = null;
+        _undistortMap2 = null;
+        _mapWidth = 0;
+        _mapHeight = 0;
+    }
+
+    /// <summary>Applies the pre-computed rectification maps when intrinsics are set.</summary>
+    private Mat PrepareSource(Mat source)
+    {
+        if (!HasLensCorrection)
+            return source;
+
+        if (_undistortMap1 is null || _undistortMap2 is null
+            || _mapWidth != source.Width || _mapHeight != source.Height)
+        {
+            ReleaseUndistortMaps();
+
+            _undistortMap1 = new Mat();
+            _undistortMap2 = new Mat();
+            using var identity = new Mat();
+            Cv2.InitUndistortRectifyMap(
+                _cameraMatrix!,
+                _distortionCoefficients!,
+                identity,
+                _cameraMatrix!,
+                new OpenCvSharp.Size(source.Width, source.Height),
+                MatType.CV_16SC2,
+                _undistortMap1,
+                _undistortMap2);
+            _mapWidth = source.Width;
+            _mapHeight = source.Height;
+        }
+
+        Cv2.Remap(
+            source,
+            _undistorted,
+            _undistortMap1,
+            _undistortMap2,
+            InterpolationFlags.Linear,
+            BorderTypes.Constant,
+            new Scalar(20, 20, 20));
+
+        return _undistorted;
+    }
 
     /// <summary>
     /// Locates marker IDs 0 (TL), 1 (TR), 2 (BR), 3 (BL) and rebuilds the homography.
@@ -63,10 +202,12 @@ public sealed class HomographyCalibrator : IDisposable
             return false;
         }
 
-        if (cameraFrame.Channels() > 1)
-            Cv2.CvtColor(cameraFrame, _gray, ColorConversionCodes.BGR2GRAY);
+        Mat prepared = PrepareSource(cameraFrame);
+
+        if (prepared.Channels() > 1)
+            Cv2.CvtColor(prepared, _gray, ColorConversionCodes.BGR2GRAY);
         else
-            cameraFrame.CopyTo(_gray);
+            prepared.CopyTo(_gray);
 
         CvAruco.DetectMarkers(
             _gray,
@@ -119,7 +260,7 @@ public sealed class HomographyCalibrator : IDisposable
         ];
 
         Mat candidate = Cv2.GetPerspectiveTransform(centers, destination);
-        if (!IsFinite(candidate))
+        if (!IsFinite(candidate) || !HasUsableDeterminant(candidate))
         {
             candidate.Dispose();
             error = "Detected corner geometry produced a degenerate homography.";
@@ -150,12 +291,14 @@ public sealed class HomographyCalibrator : IDisposable
         if (source.Empty())
             return false;
 
+        Mat prepared = PrepareSource(source);
+
         Mat transform = IsCalibrated
             ? _homography
             : GetFallbackHomography(source.Width, source.Height);
 
         Cv2.WarpPerspective(
-            source,
+            prepared,
             destination,
             transform,
             new OpenCvSharp.Size(WarpedWidth, WarpedHeight),
@@ -217,6 +360,26 @@ public sealed class HomographyCalibrator : IDisposable
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Rejects a nearly singular 3x3 matrix: corner points that are almost
+    /// collinear produce a huge, unstable warp even when every element is finite.
+    /// </summary>
+    private static bool HasUsableDeterminant(Mat matrix)
+    {
+        if (matrix.Rows != 3 || matrix.Cols != 3)
+            return false;
+
+        double a = matrix.At<double>(0, 0), b = matrix.At<double>(0, 1), c = matrix.At<double>(0, 2);
+        double d = matrix.At<double>(1, 0), e = matrix.At<double>(1, 1), f = matrix.At<double>(1, 2);
+        double g = matrix.At<double>(2, 0), h = matrix.At<double>(2, 1), i = matrix.At<double>(2, 2);
+
+        double determinant = a * (e * i - f * h)
+                             - b * (d * i - f * g)
+                             + c * (d * h - e * g);
+
+        return double.IsFinite(determinant) && Math.Abs(determinant) > 1e-9;
     }
 
     /// <summary>
@@ -337,7 +500,11 @@ public sealed class HomographyCalibrator : IDisposable
         _disposed = true;
         _dictionary.Dispose();
         _gray.Dispose();
+        _undistorted.Dispose();
         _homography.Dispose();
         _fallbackHomography?.Dispose();
+        _cameraMatrix?.Dispose();
+        _distortionCoefficients?.Dispose();
+        ReleaseUndistortMaps();
     }
 }

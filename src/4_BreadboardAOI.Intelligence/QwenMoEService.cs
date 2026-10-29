@@ -379,36 +379,64 @@ public sealed class QwenMoEService : IDisposable
         string badHole = string.IsNullOrWhiteSpace(violation.BadHole.HoleId)
             ? $"strip {violation.OffendingStripId}"
             : violation.BadHole.HoleId;
-        string targetHole = violation.SuggestedTargetHole.HoleId ?? string.Empty;
+        string targetHole = string.IsNullOrWhiteSpace(violation.SuggestedTargetHole.HoleId)
+            ? string.Empty
+            : violation.SuggestedTargetHole.HoleId;
 
-        string sentence = violation.Code switch
+        (string action, string why, string check) = violation.Code switch
         {
-            ViolationCode.ErcVccGndDirectShort =>
-                $"The {component} connects VCC directly to GND at {badHole}, which is a dead short; remove it before powering the board.",
+            ViolationCode.ErcVccGndDirectShort => (
+                $"Remove the jumper from {badHole} to the ground rail, as it ties VCC straight to GND and creates a dead short.",
+                "If you apply power, the supply will dump its whole current through that wire and can overheat the board or the supply.",
+                "Pull that jumper before you power anything, then re-check the rail colours so VCC only reaches VCC."),
 
-            ViolationCode.ErcSameStripShort when !string.IsNullOrWhiteSpace(targetHole) =>
-                $"The {component} has both leads in {badHole} on the same metal strip, so they are shorted; move the second lead to {targetHole}.",
+            ViolationCode.ErcSameStripShort when targetHole.Length > 0 => (
+                $"Move lead 2 of {component} from {badHole} to {targetHole}, as both leads sit in the same metal clip.",
+                "The five holes in a column are one piece of metal, so the part is bypassed and will never do its job.",
+                $"{targetHole} is the next free column; press the lead in there and let the DRC re-check the board."),
 
-            ViolationCode.ErcSameStripShort =>
-                $"The {component} has both leads on {badHole} inside one metal strip, so they are shorted; move one lead to the next free column.",
+            ViolationCode.ErcSameStripShort => (
+                $"Move one lead of {component} from {badHole} to an empty column, as both leads sit in the same metal clip.",
+                "A single clip is one node, so the part is bypassed and the circuit cannot work.",
+                "Leave at least one empty column between the legs, then reseat the part."),
 
-            ViolationCode.ErcFloatingLead =>
-                $"The {component} lead at {badHole} sits on an isolated strip with only one connection, so it has no return path; connect it to the ground rail.",
+            ViolationCode.ErcFloatingLead => (
+                $"Move the free end of {component} from {badHole} to the target net, as {badHole} is the only terminal on its strip.",
+                "A part only conducts when both of its ends reach a complete loop, so this lead carries no current.",
+                "Run a jumper to the ground rail or the net named in the target netlist, then re-check the pin inspector."),
 
-            ViolationCode.ErcReversedPolarity =>
-                $"The {component} looks reversed; check the anode and cathode orientation before powering the board.",
+            ViolationCode.ErcRedundantJumper => (
+                $"Remove the jumper from {badHole} to {targetHole}, as both holes already share one metal clip.",
+                "The strip is already one node, so the wire is spare copper that only makes the board harder to read.",
+                "Move one end to a net that still needs power if you meant to bridge two strips."),
 
-            ViolationCode.DrcSchematicNetMismatch =>
-                $"The wiring around {badHole} does not match the target netlist; recheck the jumper routing near {badHole}.",
+            ViolationCode.ErcHoleCollision => (
+                $"Move one lead out of {badHole} to the next free hole, as too many leads share one spring clip.",
+                "A clip that is overfilled grips nothing firmly, so the joint will go intermittent when the board warms up.",
+                "Reseat the remaining leads so every clip holds no more than two."),
 
-            _ =>
-                $"The board reports {violation.Code} at {badHole}; recheck that connection."
+            ViolationCode.DrcSchematicNetMismatch => (
+                $"Add a jumper from {targetHole} to {badHole}, as the target net is open between them.",
+                "An open net means the signal or power never reaches the part, so the circuit stays dead even though every part is placed.",
+                "Confirm the new net in the pin inspector before moving on."),
+
+            ViolationCode.DrcUnexpectedNetLink => (
+                $"Remove the jumper that joins {targetHole} and {badHole}, as they belong to two different target nets.",
+                "Bridging two nets mixes signals and can make one part drive another one backwards.",
+                "Check the two nets separately in the pin inspector so they stay isolated."),
+
+            ViolationCode.ErcReversedPolarity => (
+                $"Refit {component} at {badHole} the other way round, as it looks reversed.",
+                "An LED or capacitor fitted backwards will not work and can be damaged when power is applied.",
+                "Check the flat side or the shorter lead, then press the part back in."),
+
+            _ => (
+                $"Recheck the connection at {badHole}, as the board reports {violation.Code}.",
+                "That rule exists because this connection does not behave like a finished circuit.",
+                "Compare it with the target netlist and reseat the leads.")
         };
 
-        if (state.Violations.Count > 1)
-            sentence += $" There are {state.Violations.Count} violations in total, so fix this one first.";
-
-        return sentence;
+        return $"{action} {why} {check}";
     }
 
     private async IAsyncEnumerable<string> StreamFallbackAsync(
@@ -617,7 +645,7 @@ public sealed class QwenMoEService : IDisposable
             ["max_tokens"] = 160,
             ["messages"] = new object[]
             {
-                new { role = "system", content = "You are a concise breadboard tutor. Never use markdown or lists." },
+                new { role = "system", content = "You are a calm, experienced breadboard tutor speaking across the bench. Use plain spoken English and contractions. Sound human and specific, never theatrical. Never use markdown or lists." },
                 new { role = "user", content = BuildUserContent(prompt, imagePng) }
             },
             ["chat_template_kwargs"] = new { enable_thinking = false }

@@ -75,6 +75,59 @@ public sealed class RemotePairingTests
         ColabPairCode.TryParse(text, out _).Should().BeFalse();
     }
 
+    [Theory]
+    [InlineData("https://192.168.1.20", false)]
+    [InlineData("https://10.0.0.5:8089", false)]
+    [InlineData("https://172.20.1.2", false)]
+    [InlineData("https://169.254.169.254", false)]
+    [InlineData("https://100.64.0.7", false)]
+    [InlineData("https://box.local", false)]
+    [InlineData("https://metadata.google.internal", false)]
+    [InlineData("https://[fd12:3456::1]", false)]
+    [InlineData("https://[fe80::1]", false)]
+    [InlineData("https://[::1]", true)]
+    [InlineData("https://127.0.0.1:8089", true)]
+    [InlineData("http://localhost:1234", true)]
+    [InlineData("https://calm-otter-1234.trycloudflare.com", true)]
+    [InlineData("https://example.com", true)]
+    public void Private_and_link_local_hosts_are_not_public(string url, bool expected)
+    {
+        ColabEndpoints.IsPublicHost(url).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("https://calm-otter-1234.trycloudflare.com", true)]
+    [InlineData("https://abc.ngrok-free.app", true)]
+    [InlineData("https://abc.gradio.live", true)]
+    [InlineData("https://abc.loca.lt", true)]
+    [InlineData("http://127.0.0.1:8089", true)]
+    [InlineData("https://example.com", false)]
+    public void Tunnel_hosts_are_recognised_for_the_custom_host_note(string url, bool expected)
+    {
+        ColabEndpoints.IsKnownTunnelHost(url).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("BBAOI1|https://192.168.1.20|key")]
+    [InlineData("BBAOI1|https://169.254.169.254/latest/meta-data|key")]
+    [InlineData("https://10.1.2.3#key")]
+    public void Pair_codes_aimed_at_private_networks_are_rejected(string text)
+    {
+        ColabPairCode.TryParse(text, out _, out string? rejection).Should().BeFalse();
+        rejection.Should().NotBeNullOrWhiteSpace();
+        rejection.Should().Contain("private");
+    }
+
+    [Fact]
+    public void A_public_custom_domain_is_accepted_but_not_labelled_as_a_tunnel()
+    {
+        ColabPairCode.TryParse("BBAOI1|https://tutor.example.edu|key", out RemoteTutorTarget target)
+            .Should().BeTrue();
+
+        target.EndpointUrl.Should().Be("https://tutor.example.edu");
+        ColabEndpoints.IsKnownTunnelHost(target.EndpointUrl).Should().BeFalse();
+    }
+
     [Fact]
     public void Format_and_parse_round_trip()
     {

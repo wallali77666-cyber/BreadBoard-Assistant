@@ -56,6 +56,9 @@ public sealed class YoloPoseInferenceEngine : IDisposable
     private int _inputSize;
     private bool _disposed;
 
+    // Infer() mutates the shared input Mat/buffer/tensor, so callers must not overlap.
+    private readonly object _inferenceSync = new();
+
     public YoloPoseInferenceEngine(YoloPoseOptions? options = null)
     {
         _options = options ?? new YoloPoseOptions();
@@ -185,6 +188,14 @@ public sealed class YoloPoseInferenceEngine : IDisposable
         ArgumentNullException.ThrowIfNull(destination);
         ObjectDisposedException.ThrowIf(_disposed, this);
 
+        // The input tensor is reused for zero allocations; a second caller must wait
+        // rather than overwrite the pixels another inference is reading.
+        lock (_inferenceSync)
+            return InferLocked(warpedFrame, destination, firstTrackId);
+    }
+
+    private int InferLocked(Mat warpedFrame, List<DetectedComponent> destination, int firstTrackId)
+    {
         destination.Clear();
         if (_session is null || warpedFrame.Empty())
             return 0;

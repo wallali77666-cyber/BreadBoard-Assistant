@@ -128,10 +128,10 @@ BreadboardAOI/
     │   └── Views/
     │       └── MainWindow.xaml & .cs          # 4-Zone Docking Workstation UI
     │
-    └── 6_BreadboardAOI.Tests/
-        ├── 6_BreadboardAOI.Tests.csproj
-        ├── PinMatrixLookupTests.cs            # Verifies coordinate snapping accuracy across all 830 holes
-        └── ElectricalRulesCheckerTests.cs     # Verifies VCC-GND shorts, Same-Strip shorts, and Floating Pins
+    ├── 6_BreadboardAOI.Tests/
+    │   ├── 6_BreadboardAOI.Tests.csproj
+    │   ├── PinMatrixLookupTests.cs            # Verifies coordinate snapping accuracy across all 830 holes
+    │   └── ElectricalRulesCheckerTests.cs     # Verifies VCC-GND shorts, Same-Strip shorts, and Floating Pins
 ```
 
 ---
@@ -171,6 +171,8 @@ The application must look and feel like **Adobe InDesign / Visual Studio 2022 / 
 * **CAD Viewport Features (`SkiaArOverlayRenderer.cs`):**
   * Top horizontal pixel/column ruler (`Cols 1..63`) and left vertical row ruler (`+, -, A..E, F..J, +, -`) rendered in `#252526` with `#888888` ticks.
   * Toggleable layers from the Left Dock: `Show Pin Matrix Dots`, `Show X-Ray Metal Clips`, `Show KiCad Ratsnest Arrows`, `Show Component Boxes`.
+* **Single 2D canvas (v0.9.x):** the viewport is the simulated breadboard only. There is no schematic sheet, no `SCHEMATIC` / `SPLIT` view mode, no `.kicad_sch` export and no photo→shapes importer. `LOAD IMAGE` replays a photo as the camera frame; a photo is never converted into parts. Parts come from the builder and the demo catalogue.
+* **Command bar groups:** `INSPECT` (demo / X-ray), `IMAGE` (camera / load), `DIAGNOSE` (replay / alarm / mute), with `PANELS` on the right. Left dock tabs are `SCENE`, `BUILDER`, `AI ROUTING`, `VIEW`.
 
 ---
 

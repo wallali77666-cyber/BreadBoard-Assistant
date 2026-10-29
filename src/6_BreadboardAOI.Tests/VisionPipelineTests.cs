@@ -56,6 +56,90 @@ public sealed class VisionPipelineTests
     }
 
     [Fact]
+    public void Lens_correction_runs_before_calibration_and_resets_a_raw_homography()
+    {
+        using var calibrator = new HomographyCalibrator();
+        using var cameraFrame = HomographyCalibrator.CreateSyntheticBoardFrame();
+
+        calibrator.TryCalibrate(cameraFrame, out string? error).Should().BeTrue(error);
+        calibrator.IsCalibrated.Should().BeTrue();
+
+        using var cameraMatrix = new Mat(3, 3, MatType.CV_64FC1, Scalar.All(0));
+        cameraMatrix.Set(0, 0, 1100.0);
+        cameraMatrix.Set(1, 1, 1100.0);
+        cameraMatrix.Set(0, 2, 640.0);
+        cameraMatrix.Set(1, 2, 360.0);
+        cameraMatrix.Set(2, 2, 1.0);
+
+        using var distortion = new Mat(1, 5, MatType.CV_64FC1, Scalar.All(0));
+
+        calibrator.SetLensDistortion(cameraMatrix, distortion);
+        calibrator.HasLensCorrection.Should().BeTrue();
+        calibrator.IsCalibrated.Should().BeFalse("the old homography was measured on raw pixels");
+
+        calibrator.TryCalibrate(cameraFrame, out error).Should().BeTrue(error);
+
+        using var warped = new Mat();
+        calibrator.Warp(cameraFrame, warped).Should().BeTrue();
+        warped.Size().Should().Be(new OpenCvSharp.Size(1000, 500));
+
+        using var gray = new Mat();
+        Cv2.CvtColor(warped, gray, ColorConversionCodes.BGR2GRAY);
+        Cv2.CountNonZero(gray).Should().BeGreaterThan(0);
+
+        calibrator.SetLensDistortion(null, null);
+        calibrator.HasLensCorrection.Should().BeFalse();
+        calibrator.IsCalibrated.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Half_a_lens_calibration_is_rejected()
+    {
+        using var calibrator = new HomographyCalibrator();
+        using var cameraMatrix = new Mat(3, 3, MatType.CV_64FC1, Scalar.All(0));
+
+        Action act = () => calibrator.SetLensDistortion(cameraMatrix, null);
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void Hand_gate_ignores_a_global_exposure_shift()
+    {
+        using var calibrator = new HomographyCalibrator();
+        using var cameraFrame = HomographyCalibrator.CreateSyntheticBoardFrame();
+        using var warped = new Mat();
+        calibrator.Warp(cameraFrame, warped).Should().BeTrue();
+
+        using var brighter = new Mat();
+        warped.ConvertTo(brighter, -1, 0.92, 14);
+
+        using var gate = new HandMotionGate();
+        gate.Update(warped).Should().BeFalse();
+        Thread.Sleep(320);
+
+        gate.Update(brighter).Should().BeTrue("min/max normalisation removes a global exposure shift");
+        gate.MotionPixels.Should().BeLessThan(100);
+        gate.IsBoardStable.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Hand_gate_still_detects_a_local_change()
+    {
+        using var calibrator = new HomographyCalibrator();
+        using var cameraFrame = HomographyCalibrator.CreateSyntheticBoardFrame();
+        using var warped = new Mat();
+        calibrator.Warp(cameraFrame, warped).Should().BeTrue();
+
+        using var changed = warped.Clone();
+        Cv2.Rectangle(changed, new Rect(300, 150, 180, 140), new Scalar(230, 230, 230), -1);
+
+        using var gate = new HandMotionGate();
+        gate.Update(warped).Should().BeFalse();
+        gate.Update(changed).Should().BeFalse();
+        gate.MotionPixels.Should().BeGreaterThan(500);
+    }
+
+    [Fact]
     public void Hand_gate_debounces_static_frames_for_250ms()
     {
         using var calibrator = new HomographyCalibrator();

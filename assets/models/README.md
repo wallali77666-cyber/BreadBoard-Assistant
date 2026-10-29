@@ -10,11 +10,33 @@ feature degrades (CPU ONNX / rule-based tutor / Windows SAPI voice).
 | `yolov11s_breadboard_pose_fp16.onnx` | `3_BreadboardAOI.Vision` | YOLOv11s-Pose fine-tuned for breadboard components (2 keypoints = metal leads). Optional. |
 | `Qwen3-VL-30B-A3B-Instruct-Q4_K_M.gguf` | `4_BreadboardAOI.Intelligence` | ~10.6 GB VRAM with `--n-gpu-layers 99 --n-cpu-moe 22`. Only for local inference. |
 | `mmproj-Qwen3-VL-30B-f16.gguf` | `4_BreadboardAOI.Intelligence` | Multimodal projector for the local model. |
-| `kokoro-tts.onnx` + tokens/voices | `4_BreadboardAOI.Intelligence` | Sherpa-ONNX Kokoro-82M export. Optional (SAPI fallback). |
+| `kokoro/model.onnx`, `kokoro/tokens.txt`, `kokoro/espeak-ng-data/`, `kokoro/lexicon-us-en.txt`, `kokoro/dict/` | `4_BreadboardAOI.Intelligence` | Sherpa-ONNX Kokoro-82M export. The engine auto-selects speaker 10 (`af_sky`) for the BMO-style profile; Windows SAPI (Zira) is the fallback. Optional. |
+| `piper/piper.exe`, `piper/bmo.onnx`, `piper/bmo.onnx.json` | `4_BreadboardAOI.Intelligence` | Rhasspy Piper Windows build plus a Piper/VITS BMO voice. Unzip the **whole** Piper release (DLLs and `espeak-ng-data/` included) into `piper/`. Selected with **BMO PIPER** in the VIEW dock. Optional; the engine falls back to Kokoro/SAPI. |
 | `llama-server.exe` | `4_BreadboardAOI.Intelligence` | CUDA build, launched on P-Cores (0x00FFF), port 8089. Only for local inference. |
 
-All weights are excluded by `.gitignore`, including nested model folders such as
-`kokoro/`. The intelligence layer handles missing files gracefully so the app still launches.
+All weights are excluded by `.gitignore`: the `*.gguf`, `*.onnx`, `*.bin`, `*.exe` and `*.dll`
+patterns also match nested folders such as `kokoro/` and `piper/`. The intelligence layer
+handles missing files gracefully so the app still launches.
+
+## BMO Piper voice (optional)
+
+`piper/` mirrors the reference `rogeriochaves/bmo` local TTS: the Rhasspy Piper CLI reads a
+Piper/VITS ONNX voice directly, so no conversion step or extra NuGet package is needed.
+
+```text
+assets/models/piper/
+├── piper.exe            # Windows build from github.com/rhasspy/piper/releases
+├── *.dll                # shipped beside piper.exe
+├── espeak-ng-data/      # shipped with the release
+├── bmo.onnx             # community BMO Piper voice
+└── bmo.onnx.json        # voice config, read automatically
+```
+
+The app resolves paths relative to the executable, then the repository root, so running from
+`bin/Release` still finds the drop folder. Override any path with
+`BREADBOARD_VOICE_PIPER_EXE`, `BREADBOARD_VOICE_PIPER_MODEL` or `BREADBOARD_VOICE_PIPER_CONFIG`.
+Community sources for `bmo.onnx` include the `brenpoly/be-more-agent` `v1.0-voice` release and
+the PiperHub `bmo-adventure-time-piper-tts` model. The application never downloads them.
 
 ## Remote inference (recommended on laptops)
 

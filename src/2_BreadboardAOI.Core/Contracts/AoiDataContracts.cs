@@ -36,7 +36,10 @@ public enum ViolationCode : ushort
     ErcSameStripShort = 101,
     ErcFloatingLead = 102,
     ErcReversedPolarity = 103,
-    DrcSchematicNetMismatch = 200
+    ErcRedundantJumper = 104,
+    ErcHoleCollision = 105,
+    DrcSchematicNetMismatch = 200,
+    DrcUnexpectedNetLink = 202
 }
 
 /// <summary>
@@ -50,8 +53,16 @@ public readonly record struct HoleCoord(
     float Py            // Warped Y coordinate in [0..500]
 );
 
+/// <summary>Raw pixel position of a lead tip (pin 3..N of a multi-lead part).</summary>
+public readonly record struct LeadPoint(float Px, float Py);
+
+/// <summary>One snapped pin of a multi-lead part (DIP, TO-92, adapter module).</summary>
+public readonly record struct SnappedPin(HoleCoord Hole, string NetName);
+
 /// <summary>
 /// Emitted by YOLOv11-Pose TensorRT engine for each detected part on the board.
+/// Two-lead parts fill Lead1/Lead2; DIPs and other modules put pins 3..N in
+/// <see cref="ExtraLeads"/> and carry the KiCad symbol that describes them.
 /// </summary>
 public readonly record struct DetectedComponent(
     int TrackId,
@@ -62,8 +73,15 @@ public readonly record struct DetectedComponent(
     // Keypoint pixel coordinates of the metal leads entering the breadboard holes
     float Lead1Px, float Lead1Py,
     float Lead2Px, float Lead2Py,
-    string? DecodedValueLabel = null // Populated later by Qwen3-VL (e.g., "220_OHM")
-);
+    string? DecodedValueLabel = null, // Populated later by Qwen3-VL (e.g., "220_OHM")
+    string? SymbolId = null,          // KiCad "Library/Symbol", e.g. "Timer/NE555P"
+    ReadOnlyMemory<LeadPoint> ExtraLeads = default // pins 3..N in pin-number order
+)
+{
+    public int PinCount => 2 + ExtraLeads.Length;
+
+    public bool IsMultiPin => !ExtraLeads.IsEmpty;
+}
 
 /// <summary>
 /// A component whose metal leads have been geometrically snapped to physical breadboard holes.
@@ -73,8 +91,30 @@ public readonly record struct SnappedComponent(
     HoleCoord Pin1Hole,
     HoleCoord Pin2Hole,
     string Net1Name,
-    string Net2Name
-);
+    string Net2Name,
+    ReadOnlyMemory<SnappedPin> ExtraPins = default
+)
+{
+    public int PinCount => 2 + ExtraPins.Length;
+
+    public bool IsMultiPin => !ExtraPins.IsEmpty;
+
+    /// <summary>Hole of pin <paramref name="pinIndex"/> (0-based, pin 1 = 0).</summary>
+    public HoleCoord GetHole(int pinIndex) => pinIndex switch
+    {
+        0 => Pin1Hole,
+        1 => Pin2Hole,
+        _ => ExtraPins.Span[pinIndex - 2].Hole
+    };
+
+    /// <summary>Resolved net of pin <paramref name="pinIndex"/> (0-based, pin 1 = 0).</summary>
+    public string GetNetName(int pinIndex) => pinIndex switch
+    {
+        0 => Net1Name,
+        1 => Net2Name,
+        _ => ExtraPins.Span[pinIndex - 2].NetName
+    };
+}
 
 /// <summary>
 /// Represents a single KiCad-style ERC/DRC violation with exact pixel vectors

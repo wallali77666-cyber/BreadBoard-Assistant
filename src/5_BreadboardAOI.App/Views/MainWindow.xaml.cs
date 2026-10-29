@@ -5,12 +5,14 @@
 // ============================================================================
 
 using System;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using BreadboardAOI.App.ViewModels;
 using SkiaSharp.Views.Desktop;
 using SkiaSharp.Views.WPF;
@@ -33,6 +35,7 @@ public partial class MainWindow : Window
 
         Loaded += OnWindowLoaded;
         Closed += OnWindowClosed;
+        Closing += OnWindowClosing;
 
         CompositionTarget.Rendering += OnCompositionTargetRendering;
     }
@@ -68,6 +71,23 @@ public partial class MainWindow : Window
     {
         Loaded -= OnWindowLoaded;
         _viewModel.Initialize();
+
+        if (LeftDockTabs.SelectedIndex == 1)
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() => BuilderScroll.ScrollToTop()));
+    }
+
+    /// <summary>
+    /// WPF focuses the first list in a tab as soon as it is selected, which used
+    /// to scroll the BUILDER panel past BUILD MODE. Opening the tab always starts
+    /// at the top; the user can scroll from there.
+    /// </summary>
+    private void OnLeftDockTabChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!ReferenceEquals(e.Source, LeftDockTabs))
+            return;
+
+        if (LeftDockTabs.SelectedIndex == 1)
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() => BuilderScroll.ScrollToTop()));
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -111,13 +131,42 @@ public partial class MainWindow : Window
 
     private void OnViewportMouseMove(object sender, MouseEventArgs e)
     {
-        Point position = e.GetPosition(Viewport);
+        Point position = GetViewportPoint(e);
         _viewModel.UpdateHover(position.X, position.Y);
+    }
+
+    /// <summary>
+    /// SKElement paints into a surface measured in device pixels (ActualWidth x DPI
+    /// scale) but WPF reports the mouse in DIPs. Converting here keeps the snapped
+    /// pin exactly under the cursor on 125 %/150 % displays instead of drifting
+    /// toward the top-left of the board.
+    /// </summary>
+    private Point GetViewportPoint(MouseEventArgs e)
+    {
+        Point position = e.GetPosition(Viewport);
+        DpiScale dpi = VisualTreeHelper.GetDpi(Viewport);
+        return new Point(position.X * dpi.DpiScaleX, position.Y * dpi.DpiScaleY);
     }
 
     private void OnViewportMouseLeave(object sender, MouseEventArgs e)
     {
         _viewModel.ClearHover();
+    }
+
+    private void OnViewportMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        Point position = GetViewportPoint(e);
+        _viewModel.HandleViewportClick(position.X, position.Y, secondary: false);
+    }
+
+    private void OnViewportMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!_viewModel.IsBuildMode)
+            return;
+
+        Point position = GetViewportPoint(e);
+        _viewModel.HandleViewportClick(position.X, position.Y, secondary: true);
+        e.Handled = true;
     }
 
     private void OnViewportDragOver(object sender, DragEventArgs e)
@@ -150,15 +199,32 @@ public partial class MainWindow : Window
         return true;
     }
 
+    private int _lastTranscriptLength;
+
     private void OnTranscriptTextChanged(object sender, TextChangedEventArgs e)
     {
-        if (sender is TextBox box)
-            box.ScrollToEnd();
+        if (sender is not TextBox box)
+            return;
+
+        // Keep the beginning of a fresh explanation visible. Auto-scrolling to
+        // the end on every token used to clip the first visible line mid-glyph.
+        if (box.Text.Length < _lastTranscriptLength)
+            box.ScrollToHome();
+
+        _lastTranscriptLength = box.Text.Length;
     }
 
     private void OnCompositionTargetRendering(object? sender, EventArgs e)
     {
         Viewport.InvalidateVisual();
+    }
+
+    private void OnWindowClosing(object? sender, CancelEventArgs e)
+    {
+        // Persist the dock layout immediately; the debounce timer may not get
+        // another dispatcher turn before the process exits.
+        _viewModel.SaveWorkspaceNow();
+        Closing -= OnWindowClosing;
     }
 
     private void OnWindowClosed(object? sender, EventArgs e)

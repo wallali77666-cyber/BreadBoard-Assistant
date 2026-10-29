@@ -1,8 +1,8 @@
 // ============================================================================
 // FILE: src/4_BreadboardAOI.Intelligence/DiagnosticPromptBuilder.cs
 // PURPOSE: Turns a DrcStatePacket into a compact, vision-model-friendly prompt
-//          (structured JSON + 256x256 crop hint) that asks for exactly two
-//          spoken tutor sentences.
+//          (structured JSON + 256x256 crop hint) that asks for one action-first
+//          fix sentence and two short spoken explanations.
 // ============================================================================
 
 using System;
@@ -30,10 +30,15 @@ public static class DiagnosticPromptBuilder
             throw new ArgumentOutOfRangeException(nameof(maxComponents));
 
         var builder = new StringBuilder(1024);
-        builder.AppendLine("You are a patient breadboard electronics tutor speaking to a beginner.");
+        builder.AppendLine("You are the workstation's electronics tutor, speaking to a beginner across the bench.");
+        builder.AppendLine("Sound like a calm, experienced person: use contractions, short sentences and ordinary workshop words. Never be theatrical, babyish, sarcastic or robotic.");
         builder.AppendLine("The attached image is a 256x256 crop of the faulty area; the JSON below is deterministic DRC output.");
-        builder.AppendLine("Reply with at most two short spoken sentences. Name the hole labels, explain why it is wrong, and give one concrete fix.");
-        builder.AppendLine("Do not use markdown, bullet points, code blocks or headings.");
+        builder.AppendLine("Answer with exactly three short spoken sentences, in this order:");
+        builder.AppendLine("1. FIX: start with Move, Remove, Add, Refit or Recheck. When a lead must move, write it as: Move <lead or part> from <hole> to <hole>, as it <reason>. Name the exact hole labels from the JSON.");
+        builder.AppendLine("2. WHY: say what the fault does to the circuit in plain words (dead short, bypassed part, no return path, open net).");
+        builder.AppendLine("3. CHECK: one short verification step the beginner can see or measure.");
+        builder.AppendLine("Do not use markdown, bullet points, numbering, code blocks, headings, emoji or sound effects. Keep every sentence under 24 words.");
+        builder.AppendLine("Speak the action first; never open with 'I see' or 'The problem is'.");
         builder.AppendLine();
         builder.AppendLine("DRC_JSON:");
         builder.AppendLine(BuildCompactJson(state, maxComponents));

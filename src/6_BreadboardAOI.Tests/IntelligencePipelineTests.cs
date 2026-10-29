@@ -35,14 +35,17 @@ public sealed class IntelligencePipelineTests
     }
 
     [Fact]
-    public void Prompt_contains_hole_labels_violation_code_and_two_sentence_rule()
+    public void Prompt_contains_hole_labels_violation_code_and_three_sentence_rule()
     {
         string prompt = DiagnosticPromptBuilder.Build(CreateSameStripPacket());
 
         prompt.Should().Contain("ErcSameStripShort");
         prompt.Should().Contain("D15");
         prompt.Should().Contain("D16");
-        prompt.Should().Contain("two short spoken sentences");
+        prompt.Should().Contain("three short spoken sentences");
+        prompt.Should().Contain("FIX: start with Move");
+        prompt.Should().Contain("from <hole> to <hole>, as it <reason>");
+        prompt.Should().Contain("WHY:");
         prompt.Should().Contain("DRC_JSON");
     }
 
@@ -60,7 +63,7 @@ public sealed class IntelligencePipelineTests
     [InlineData(ViolationCode.ErcVccGndDirectShort, "dead short")]
     [InlineData(ViolationCode.ErcSameStripShort, "D16")]
     [InlineData(ViolationCode.ErcFloatingLead, "ground rail")]
-    [InlineData(ViolationCode.DrcSchematicNetMismatch, "target netlist")]
+    [InlineData(ViolationCode.DrcSchematicNetMismatch, "target net is open")]
     public void Rule_based_diagnostic_explains_the_fault(ViolationCode code, string expectedFragment)
     {
         DrcStatePacket packet = CreatePacket(new DrcViolation(
@@ -73,6 +76,43 @@ public sealed class IntelligencePipelineTests
             "Technical DRC message."));
 
         QwenMoEService.BuildRuleBasedDiagnostic(packet).Should().Contain(expectedFragment);
+    }
+
+    [Fact]
+    public void Rule_based_diagnostic_speaks_exactly_three_sentences_even_with_many_faults()
+    {
+        var packet = new DrcStatePacket
+        {
+            FrameNumber = 43,
+            YoloInferenceMs = 0.5,
+            DrcComputeMs = 0.08,
+            StateHash = 7,
+            Components = Array.Empty<SnappedComponent>(),
+            Violations = new[]
+            {
+                new DrcViolation(
+                    ViolationCode.ErcSameStripShort,
+                    DrcSeverity.Critical,
+                    "LED1",
+                    115,
+                    new HoleCoord("D15", 115, 400f, 140f),
+                    new HoleCoord("D16", 116, 414.8f, 140f),
+                    "Short."),
+                new DrcViolation(
+                    ViolationCode.ErcFloatingLead,
+                    DrcSeverity.Warning,
+                    "R1",
+                    130,
+                    new HoleCoord("A30", 130, 470f, 95f),
+                    default,
+                    "Floating.")
+            }
+        };
+
+        string answer = QwenMoEService.BuildRuleBasedDiagnostic(packet);
+
+        SentenceStreamSplitter.Split(answer).Should().HaveCount(3);
+        answer.Should().Contain("D15").And.Contain("D16");
     }
 
     [Fact]

@@ -31,7 +31,10 @@ public sealed class OverlayLayerSettings
 
     public bool ShowRatsnestArrows { get; set; } = true;
 
-    public bool ShowComponentBoxes { get; set; } = true;
+    public bool ShowComponentBoxes { get; set; }
+
+    /// <summary>Draws each part as its physical 2D symbol instead of a CAD rectangle.</summary>
+    public bool ShowRealisticParts { get; set; } = true;
 
     public bool ShowComponentLabels { get; set; } = true;
 
@@ -45,6 +48,9 @@ public sealed class OverlayLayerSettings
 
     /// <summary>Off by default: the vector board is the CAD drawing, not a photo.</summary>
     public bool ShowCameraUnderlay { get; set; }
+
+    /// <summary>Draws all 126 conductive clips faintly so the board reads as an X-ray.</summary>
+    public bool ShowAllStrips { get; set; }
 }
 
 /// <summary>Result of snapping the mouse cursor through the pin matrix.</summary>
@@ -64,7 +70,7 @@ public readonly record struct BoardViewportTransform(float Scale, float OffsetX,
         new((screenX - OffsetX) / Scale, (screenY - OffsetY) / Scale);
 }
 
-public sealed class SkiaArOverlayRenderer : IDisposable
+public sealed partial class SkiaArOverlayRenderer : IDisposable
 {
     private const float BoardWidth = BreadboardSpec.CanvasWidth;
     private const float BoardHeight = BreadboardSpec.CanvasHeight;
@@ -89,6 +95,11 @@ public sealed class SkiaArOverlayRenderer : IDisposable
     private string _hoverText = string.Empty;
     private string _hoverNetName = string.Empty;
     private DrcStatePacket? _lastRenderedState;
+
+    // ---- X-ray builder state ----------------------------------------------
+    private SKPath? _allStripsPath;
+    private HoleCoord _pendingHole;
+    private bool _pendingValid;
 
     // ---- telemetry cache (rebuilt at ~4 Hz, never per frame) ---------------
     private int _hudHash = int.MinValue;
@@ -137,6 +148,7 @@ public sealed class SkiaArOverlayRenderer : IDisposable
     private readonly SKPaint _boardLabelPaint;
     private readonly SKPaint _boardSmallLabelPaint;
     private readonly SKPaint _boardTinyLabelPaint;
+    private readonly SKPaint _labelChipPaint;
     private readonly SKPaint _telemetryPanelPaint;
     private readonly SKPaint _telemetryBorderPaint;
     private readonly SKPaint _telemetryStatusPaint;
@@ -150,6 +162,11 @@ public sealed class SkiaArOverlayRenderer : IDisposable
     private readonly SKPaint _hoverBorderPaint;
     private readonly SKPaint _hoverTextPaint;
     private readonly SKPaint _legendTextPaint;
+    private readonly SKPaint _stripGhostFillPaint;
+    private readonly SKPaint _stripGhostStrokePaint;
+    private readonly SKPaint _builderPendingFillPaint;
+    private readonly SKPaint _builderPendingStrokePaint;
+    private readonly SKPaint _builderLinkPaint;
     private readonly SKTypeface _monoTypeface;
     private readonly SKTypeface _uiTypeface;
     private readonly SKTypeface _uiBoldTypeface;
@@ -197,6 +214,8 @@ public sealed class SkiaArOverlayRenderer : IDisposable
         _boardLabelPaint = Text(0x2E, 0x2E, 0x2E, 12f, _uiBoldTypeface);
         _boardSmallLabelPaint = Text(0x4A, 0x4A, 0x48, 8.5f, _monoTypeface);
         _boardTinyLabelPaint = Text(0x6E, 0x6E, 0x6A, 7.5f, _monoTypeface);
+        _partPinNumberPaint = Text(0xA8, 0xA6, 0x9E, 7f, _monoTypeface);
+        _labelChipPaint = Fill(0xED, 0xEB, 0xE4, 214);
         _telemetryPanelPaint = Fill(0x1E, 0x1E, 0x1E);
         _telemetryBorderPaint = Stroke(0x33, 0x33, 0x37, 1f);
         _telemetryStatusPaint = Text(0xCC, 0xCC, 0xCC, 13f, _uiBoldTypeface);
@@ -210,8 +229,15 @@ public sealed class SkiaArOverlayRenderer : IDisposable
         _hoverBorderPaint = Stroke(0x00, 0x7A, 0xCC, 1f);
         _hoverTextPaint = Text(0xE6, 0xE6, 0xE6, 10f, _monoTypeface);
         _legendTextPaint = Text(0x4A, 0x4A, 0x48, 8f, _monoTypeface);
+        _stripGhostFillPaint = Fill(0x2F, 0x6F, 0xB3, 12);
+        _stripGhostStrokePaint = Stroke(0x88, 0x88, 0x88, 0.55f);
+        _builderPendingFillPaint = Fill(0x00, 0x7A, 0xCC, 210);
+        _builderPendingStrokePaint = Stroke(0x00, 0x7A, 0xCC, 1.4f);
+        _builderLinkPaint = Stroke(0x00, 0x7A, 0xCC, 1.2f);
+        _builderLinkPaint.PathEffect = SKPathEffect.CreateDash(new[] { 4f, 3f }, 0f);
 
         BuildPinDotsPath();
+        _allStripsPath = BuildAllStripsPath();
     }
 
     /// <summary>Layer switches bound by the Phase 5B left dock.</summary>
@@ -274,6 +300,22 @@ public sealed class SkiaArOverlayRenderer : IDisposable
             return;
 
         _lastRenderedState = drcState;
+
+        RenderBoardViewport(canvas, viewportWidth, viewportHeight, warpedBoardFrame, drcState, ratsnest);
+    }
+
+    /// <summary>
+    /// Paints the 2D board: pasteboard, rulers, 830-pin matrix, X-ray strips,
+    /// realistic parts, corrective ratsnest arrows and the telemetry HUD.
+    /// </summary>
+    private void RenderBoardViewport(
+        SKCanvas canvas,
+        int viewportWidth,
+        int viewportHeight,
+        SKBitmap? warpedBoardFrame,
+        DrcStatePacket? drcState,
+        IReadOnlyList<RatsnestVector>? ratsnest)
+    {
         EnsureComponentLabels(drcState);
 
         if (_hoverValid)
@@ -363,6 +405,12 @@ public sealed class SkiaArOverlayRenderer : IDisposable
         canvas.DrawLine(0f, 175f, BoardWidth, 175f, _trenchEdgePaint);
         canvas.DrawLine(0f, 225f, BoardWidth, 225f, _trenchEdgePaint);
 
+        if (Layers.ShowAllStrips && _allStripsPath is not null)
+        {
+            canvas.DrawPath(_allStripsPath, _stripGhostFillPaint);
+            canvas.DrawPath(_allStripsPath, _stripGhostStrokePaint);
+        }
+
         DrawPowerRails(canvas);
         DrawJumperLeads(canvas, state);
 
@@ -371,6 +419,9 @@ public sealed class SkiaArOverlayRenderer : IDisposable
 
         if (Layers.ShowHoverInspector)
             DrawHoverStrip(canvas);
+
+        if (_pendingValid)
+            DrawPendingLead(canvas);
 
         DrawComponentBoxes(canvas, state);
 
@@ -413,6 +464,12 @@ public sealed class SkiaArOverlayRenderer : IDisposable
             if (component.RawDetection.Kind != ComponentKind.JumperWire)
                 continue;
 
+            if (Layers.ShowRealisticParts)
+            {
+                DrawJumperWire(canvas, component);
+                continue;
+            }
+
             _jumperLinePath.Reset();
             _jumperLinePath.MoveTo(component.Pin1Hole.Px, component.Pin1Hole.Py);
             _jumperLinePath.LineTo(component.Pin2Hole.Px, component.Pin2Hole.Py);
@@ -443,7 +500,12 @@ public sealed class SkiaArOverlayRenderer : IDisposable
 
     private void DrawComponentBoxes(SKCanvas canvas, DrcStatePacket? state)
     {
-        if (state is null || !Layers.ShowComponentBoxes)
+        if (state is null)
+            return;
+
+        bool drawBoxes = Layers.ShowComponentBoxes;
+        bool drawSymbols = Layers.ShowRealisticParts;
+        if (!drawBoxes && !drawSymbols)
             return;
 
         foreach (SnappedComponent component in state.Components)
@@ -462,21 +524,51 @@ public sealed class SkiaArOverlayRenderer : IDisposable
                 detection.BoxX + detection.BoxW,
                 detection.BoxY + detection.BoxH);
 
-            canvas.DrawRect(box, boxPaint);
-
-            if (!isJumper)
+            if (drawBoxes)
             {
-                canvas.DrawCircle(component.Pin1Hole.Px, component.Pin1Hole.Py, 2.2f, _leadPaint);
-                canvas.DrawCircle(component.Pin2Hole.Px, component.Pin2Hole.Py, 2.2f, _leadPaint);
+                canvas.DrawRect(box, boxPaint);
+
+                if (!isJumper)
+                {
+                    for (int pin = 0; pin < component.PinCount; pin++)
+                    {
+                        HoleCoord hole = component.GetHole(pin);
+                        if (string.IsNullOrEmpty(hole.HoleId))
+                            continue;
+
+                        canvas.DrawCircle(hole.Px, hole.Py, 2.2f, _leadPaint);
+                    }
+                }
             }
+
+            // Jumpers are already drawn as bowed wires by DrawJumperLeads.
+            if (drawSymbols && !isJumper)
+                DrawRealisticPart(canvas, component);
+
+            // A realistic glyph hides the plain box, so a fault still needs its
+            // dashed outline when the boxes layer is switched off.
+            if (isFlagged && drawSymbols && !drawBoxes)
+                canvas.DrawRoundRect(box, 4f, 4f, _partFlagPaint);
 
             if (!isJumper
                 && Layers.ShowComponentLabels
                 && _componentLabels.TryGetValue(detection.TrackId, out string? label))
             {
                 float width = _boardSmallLabelPaint.MeasureText(label);
-                float baseline = MathF.Max(_boardSmallLabelPaint.TextSize, box.Top - 4f / _scale);
-                canvas.DrawText(label, box.MidX - width * 0.5f, baseline, _boardSmallLabelPaint);
+                float textSize = _boardSmallLabelPaint.TextSize;
+
+                // Alternate above/below so two neighbouring parts never stack their
+                // labels, and paint a paper chip so the text survives the camera underlay.
+                float baseline = (detection.TrackId & 1) == 0
+                    ? box.Bottom + textSize + 3f / _scale
+                    : MathF.Max(textSize, box.Top - 4f / _scale);
+
+                float left = box.MidX - width * 0.5f;
+                float pad = 2f / _scale;
+
+                var chip = new SKRect(left - pad, baseline - textSize, left + width + pad, baseline + pad);
+                canvas.DrawRoundRect(chip, 2f, 2f, _labelChipPaint);
+                canvas.DrawText(label, left, baseline, _boardSmallLabelPaint);
             }
         }
     }
@@ -485,11 +577,13 @@ public sealed class SkiaArOverlayRenderer : IDisposable
     {
         for (int i = 0; i < violations.Count; i++)
         {
-            DrcViolation violation = violations[i];
-            if (violation.OffendingStripId == component.Pin1Hole.StripId
-                || violation.OffendingStripId == component.Pin2Hole.StripId)
+            int strip = violations[i].OffendingStripId;
+
+            for (int pin = 0; pin < component.PinCount; pin++)
             {
-                return true;
+                HoleCoord hole = component.GetHole(pin);
+                if (!string.IsNullOrEmpty(hole.HoleId) && hole.StripId == strip)
+                    return true;
             }
         }
 
@@ -660,7 +754,10 @@ public sealed class SkiaArOverlayRenderer : IDisposable
         ViolationCode.ErcSameStripShort => "ERC 101  SAME-STRIP SHORT",
         ViolationCode.ErcFloatingLead => "ERC 102  FLOATING LEAD",
         ViolationCode.ErcReversedPolarity => "ERC 103  REVERSED POLARITY",
-        ViolationCode.DrcSchematicNetMismatch => "DRC 200  NET MISMATCH",
+        ViolationCode.ErcRedundantJumper => "ERC 104  REDUNDANT JUMPER",
+        ViolationCode.ErcHoleCollision => "ERC 105  OVERFILLED HOLE",
+        ViolationCode.DrcSchematicNetMismatch => "DRC 200  OPEN NET",
+        ViolationCode.DrcUnexpectedNetLink => "DRC 202  UNEXPECTED BRIDGE",
         _ => "DRC VIOLATION"
     };
 
@@ -857,18 +954,29 @@ public sealed class SkiaArOverlayRenderer : IDisposable
         float width = textWidth + 16f;
         const float height = 24f;
 
-        float x = _hoverScreenX + 16f;
-        float y = _hoverScreenY + 18f;
+        // Anchor the inspector to the snapped pin, not the raw cursor: the panel
+        // then always labels the blue ring the operator can actually see.
+        float anchorX = _boardLeft + _hoverHole.Px * _scale;
+        float anchorY = _boardTop + _hoverHole.Py * _scale;
+
+        float x = anchorX + 16f;
+        float y = anchorY + 18f;
 
         if (x + width > viewportWidth - 8f)
-            x = _hoverScreenX - width - 12f;
+            x = anchorX - width - 16f;
         if (y + height > viewportHeight - 8f)
-            y = _hoverScreenY - height - 12f;
+            y = anchorY - height - 18f;
 
         x = MathF.Max(4f, x);
         y = MathF.Max(4f, y);
 
         var panel = new SKRect(x, y, x + width, y + height);
+
+        // Thin leader so a flipped tooltip still points at its hole.
+        float leaderX = Math.Clamp(anchorX, panel.Left, panel.Right);
+        float leaderY = Math.Clamp(anchorY, panel.Top, panel.Bottom);
+        canvas.DrawLine(anchorX, anchorY, leaderX, leaderY, _hoverBorderPaint);
+
         canvas.DrawRoundRect(panel, 2f, 2f, _hoverPanelPaint);
         canvas.DrawRoundRect(panel, 2f, 2f, _hoverBorderPaint);
         canvas.DrawText(_hoverText, x + 8f, y + 16f, _hoverTextPaint);
@@ -965,9 +1073,13 @@ public sealed class SkiaArOverlayRenderer : IDisposable
         foreach (SnappedComponent component in state.Components)
         {
             DetectedComponent detection = component.RawDetection;
+            string value = string.IsNullOrWhiteSpace(detection.DecodedValueLabel)
+                ? string.Empty
+                : "  " + detection.DecodedValueLabel;
+
             _componentLabels[detection.TrackId] = string.Create(
                 CultureInfo.InvariantCulture,
-                $"{KindLabel(detection.Kind)} #{detection.TrackId}  {component.Pin1Hole.HoleId}>{component.Pin2Hole.HoleId}");
+                $"{KindLabel(detection.Kind)} #{detection.TrackId}{value}  {component.Pin1Hole.HoleId}>{component.Pin2Hole.HoleId}");
         }
     }
 
@@ -988,6 +1100,66 @@ public sealed class SkiaArOverlayRenderer : IDisposable
         ReadOnlySpan<HoleCoord> holes = PinMatrixLookup.Shared.Holes;
         for (int i = 0; i < holes.Length; i++)
             _pinDotsPath.AddCircle(holes[i].Px, holes[i].Py, 2.1f);
+    }
+
+    /// <summary>One cached path containing every conductive clip, for the X-ray backdrop.</summary>
+    private static SKPath BuildAllStripsPath()
+    {
+        var path = new SKPath();
+
+        for (int strip = BreadboardSpec.UpperStripBase; strip <= BreadboardSpec.MaxStripId; strip++)
+        {
+            ReadOnlySpan<HoleCoord> holes = PinMatrixLookup.Shared.GetStripHoles(strip);
+            if (holes.Length == 0)
+                continue;
+
+            float minX = float.MaxValue;
+            float minY = float.MaxValue;
+            float maxX = float.MinValue;
+            float maxY = float.MinValue;
+
+            for (int i = 0; i < holes.Length; i++)
+            {
+                minX = MathF.Min(minX, holes[i].Px);
+                maxX = MathF.Max(maxX, holes[i].Px);
+                minY = MathF.Min(minY, holes[i].Py);
+                maxY = MathF.Max(maxY, holes[i].Py);
+            }
+
+            path.AddRoundRect(new SKRect(minX - 8f, minY - 9f, maxX + 8f, maxY + 9f), 5f, 5f);
+        }
+
+        for (int strip = BreadboardSpec.StripTopVcc; strip <= BreadboardSpec.StripBotGnd; strip++)
+        {
+            float railY = BreadboardSpec.RailY(strip);
+            path.AddRoundRect(new SKRect(20f, railY - 7f, BoardWidth - 20f, railY + 7f), 7f, 7f);
+        }
+
+        return path;
+    }
+
+    /// <summary>Marks the first lead of a part being placed in the X-ray builder.</summary>
+    public void SetPendingLead(HoleCoord hole)
+    {
+        _pendingHole = hole;
+        _pendingValid = true;
+    }
+
+    public void ClearPendingLead() => _pendingValid = false;
+
+    public bool HasPendingLead => _pendingValid;
+
+    /// <summary>Anchor-on-hover rubber band so the second click is unambiguous.</summary>
+    private void DrawPendingLead(SKCanvas canvas)
+    {
+        canvas.DrawCircle(_pendingHole.Px, _pendingHole.Py, 5.5f, _builderPendingFillPaint);
+        canvas.DrawCircle(_pendingHole.Px, _pendingHole.Py, 10f, _builderPendingStrokePaint);
+
+        if (!_hoverValid || string.Equals(_hoverHole.HoleId, _pendingHole.HoleId, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        canvas.DrawLine(_pendingHole.Px, _pendingHole.Py, _hoverHole.Px, _hoverHole.Py, _builderLinkPaint);
+        canvas.DrawCircle(_hoverHole.Px, _hoverHole.Py, 4f, _builderPendingFillPaint);
     }
 
     private static SKPaint Fill(byte red, byte green, byte blue, byte alpha = 255) =>
@@ -1039,6 +1211,8 @@ public sealed class SkiaArOverlayRenderer : IDisposable
         _pinDotsPath.Dispose();
         _arrowHeadPath.Dispose();
         _jumperLinePath.Dispose();
+        _partWirePath.Dispose();
+        _allStripsPath?.Dispose();
 
         DisposePaints(
             _pasteboardPaint,
@@ -1071,6 +1245,7 @@ public sealed class SkiaArOverlayRenderer : IDisposable
             _boardLabelPaint,
             _boardSmallLabelPaint,
             _boardTinyLabelPaint,
+            _labelChipPaint,
             _telemetryPanelPaint,
             _telemetryBorderPaint,
             _telemetryStatusPaint,
@@ -1083,7 +1258,35 @@ public sealed class SkiaArOverlayRenderer : IDisposable
             _hoverPanelPaint,
             _hoverBorderPaint,
             _hoverTextPaint,
-            _legendTextPaint);
+            _legendTextPaint,
+            _stripGhostFillPaint,
+            _stripGhostStrokePaint,
+            _builderPendingFillPaint,
+            _builderPendingStrokePaint,
+            _builderLinkPaint,
+            _partLeadPaint,
+            _partHighlightPaint,
+            _partResistorBodyPaint,
+            _partResistorEdgePaint,
+            _partLedBodyPaint,
+            _partLedEdgePaint,
+            _partLedEmissionPaint,
+            _partCapBodyPaint,
+            _partCapStripePaint,
+            _partCapEdgePaint,
+            _partIcBodyPaint,
+            _partIcMarkPaint,
+            _partIcPinPaint,
+            _partIcLegPaint,
+            _partButtonBasePaint,
+            _partButtonCapPaint,
+            _partButtonEdgePaint,
+            _partJumperPaint,
+            _partJumperPlugPaint,
+            _partFlagPaint);
+
+        for (int i = 0; i < _bandPaints.Length; i++)
+            _bandPaints[i].Dispose();
 
         // Typefaces are process-cached native objects; paints release their refs above.
     }

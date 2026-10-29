@@ -35,9 +35,17 @@ public static class ColabPairCode
     /// <c>BBAOI1|url</c>, <c>url#key</c>, <c>url?key=...</c> and a bare URL.
     /// Surrounding quotes, backticks and whitespace are ignored.
     /// </summary>
-    public static bool TryParse(string? text, out RemoteTutorTarget target)
+    public static bool TryParse(string? text, out RemoteTutorTarget target) =>
+        TryParse(text, out target, out _);
+
+    /// <summary>
+    /// Same as <see cref="TryParse(string?, out RemoteTutorTarget)"/> but explains a
+    /// rejection so the workstation can tell the operator why a paste was refused.
+    /// </summary>
+    public static bool TryParse(string? text, out RemoteTutorTarget target, out string? rejection)
     {
         target = null!;
+        rejection = null;
         if (string.IsNullOrWhiteSpace(text))
             return false;
 
@@ -97,6 +105,27 @@ public static class ColabPairCode
         string? baseUrl = ColabSession.NormalizeBaseUrl(endpoint);
         if (baseUrl is null)
             return false;
+
+        // A pair code chooses where the camera crops and the DRC report go, so a
+        // cleartext tunnel is refused except on loopback (LM Studio / Ollama).
+        if (!ColabEndpoints.IsSecureEndpoint(baseUrl))
+        {
+            rejection =
+                "That pair code uses plain http to another machine. Use the https:// tunnel URL printed by Colab " +
+                "(only 127.0.0.1 / localhost may use http) so frames are never sent in cleartext.";
+            return false;
+        }
+
+        // The paste must not be able to point the app at a LAN host or at a cloud
+        // metadata address (SSRF). Public custom domains are allowed; the dock
+        // labels them so the operator can spot a typo.
+        if (!ColabEndpoints.IsPublicHost(baseUrl))
+        {
+            rejection =
+                "That pair code points at a private or link-local address. Use the public https:// tunnel URL " +
+                "printed by Colab; the app refuses to send camera frames to a LAN or metadata endpoint.";
+            return false;
+        }
 
         if (!string.IsNullOrWhiteSpace(key))
         {

@@ -49,7 +49,8 @@ public sealed class ManualEndpointStore
                 return null;
 
             string? key = string.IsNullOrWhiteSpace(file.ApiKey) ? null : file.ApiKey.Trim();
-            return new RemoteTutorTarget(endpoint, key, null);
+            string? model = string.IsNullOrWhiteSpace(file.ModelAlias) ? null : file.ModelAlias.Trim();
+            return new RemoteTutorTarget(endpoint, key, model);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or NotSupportedException)
         {
@@ -70,6 +71,7 @@ public sealed class ManualEndpointStore
             {
                 EndpointUrl = target.EndpointUrl,
                 ApiKey = target.ApiKey,
+                ModelAlias = target.ModelAlias,
                 SavedAtUtc = DateTimeOffset.UtcNow
             };
 
@@ -107,6 +109,9 @@ public sealed class ManualEndpointStore
         public string? EndpointUrl { get; set; }
 
         public string? ApiKey { get; set; }
+
+        /// <summary>Model id discovered from /v1/models (LM Studio, Ollama, Colab).</summary>
+        public string? ModelAlias { get; set; }
 
         public DateTimeOffset SavedAtUtc { get; set; }
     }

@@ -1,10 +1,11 @@
-// ============================================================================
+﻿// ============================================================================
 // FILE: src/5_BreadboardAOI.App/Orchestration/InspectionPipelineCoordinator.cs
 // PURPOSE: Owns the dual-loop AOI workstation.
 //          Loop 1 (E-Cores): 60 FPS capture -> homography -> hand gate -> YOLO ->
 //          Union-Find DRC -> CAD frame/state publication. No LLM or TTS work.
 //          Loop 2 (P-Cores): Qwen3-VL-30B-A3B / rule-based tutor -> sentence
-//          splitter -> Kokoro / SAPI speech, connected only by a 1-slot channel.
+//          splitter -> natural voice for Qwen answers only. The rule-based
+//          fallback stays text-only. Connected only by a 1-slot channel.
 //
 // PORTABILITY: affinity is best-effort, the YOLO model is optional, Qwen is
 // optional and the voice engine degrades to SAPI or silence, so the app runs on
@@ -21,6 +22,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using BreadboardAOI.Core.Contracts;
+using BreadboardAOI.Core.Design;
 using BreadboardAOI.Core.DrcEngine;
 using BreadboardAOI.Core.Geometry;
 using BreadboardAOI.Hardware;
@@ -30,147 +32,6 @@ using BreadboardAOI.Vision;
 using SkiaSharp;
 
 namespace BreadboardAOI.App.Orchestration;
-
-/// <summary>Faults injected by the toolbar's Demo Mode selector.</summary>
-public enum DemoScenario
-{
-    None = 0,
-    SameStripLedShort = 1,
-    VccGndShort = 2,
-    FloatingLead = 3,
-    Valid555Blinker = 4
-}
-
-/// <summary>Deterministic, pre-built detection sets used by Demo Mode.</summary>
-public static class DemoScenarioCatalog
-{
-    private static readonly DetectedComponent[] SameStripLedShortDetections = BuildSameStripLedShort();
-    private static readonly DetectedComponent[] VccGndShortDetections = BuildVccGndShort();
-    private static readonly DetectedComponent[] FloatingLeadDetections = BuildFloatingLead();
-    private static readonly DetectedComponent[] Valid555Detections = BuildValid555();
-
-    public static IReadOnlyList<DemoScenario> All { get; } = new[]
-    {
-        DemoScenario.SameStripLedShort,
-        DemoScenario.VccGndShort,
-        DemoScenario.FloatingLead,
-        DemoScenario.Valid555Blinker
-    };
-
-    public static string GetTitle(DemoScenario scenario) => scenario switch
-    {
-        DemoScenario.SameStripLedShort => "Same-Strip LED Short (Row 15)",
-        DemoScenario.VccGndShort => "Direct VCC-GND Jumper Short",
-        DemoScenario.FloatingLead => "Floating Resistor Lead",
-        DemoScenario.Valid555Blinker => "Valid 555 Astable Blinker",
-        _ => "No Demo Scenario"
-    };
-
-    public static string GetDescription(DemoScenario scenario) => scenario switch
-    {
-        DemoScenario.SameStripLedShort => "LED legs in A15 and D15 share metal clip 115: ERC 101 with a corrective arrow to D16.",
-        DemoScenario.VccGndShort => "A jumper bridges TOP_VCC to TOP_GND: ERC 100 critical short plus the emergency reflex alarm.",
-        DemoScenario.FloatingLead => "A 220R resistor sits on A30 while its return lead is grounded: ERC 102 floating lead.",
-        DemoScenario.Valid555Blinker => "NE555 astable wired to the reference netlist: DRC pass, target ratsnest and tutor praise.",
-        _ => "Live YOLO detections from the selected camera source."
-    };
-
-    /// <summary>Shared immutable arrays: the 60 FPS loop never rebuilds demo detections.</summary>
-    public static DetectedComponent[] GetDetections(DemoScenario scenario) => scenario switch
-    {
-        DemoScenario.SameStripLedShort => SameStripLedShortDetections,
-        DemoScenario.VccGndShort => VccGndShortDetections,
-        DemoScenario.FloatingLead => FloatingLeadDetections,
-        DemoScenario.Valid555Blinker => Valid555Detections,
-        _ => Array.Empty<DetectedComponent>()
-    };
-
-    public static bool UsesTargetSchematic(DemoScenario scenario) => scenario == DemoScenario.Valid555Blinker;
-
-    private static DetectedComponent[] BuildSameStripLedShort() =>
-    [
-        Part(1, ComponentKind.Led, Hole("A15"), Hole("D15"), 0.96f, "LED_RED_5MM")
-    ];
-
-    private static DetectedComponent[] BuildVccGndShort() =>
-    [
-        Part(1, ComponentKind.JumperWire, Hole("TOP_VCC_25"), Hole("TOP_GND_25"), 0.99f, null)
-    ];
-
-    private static DetectedComponent[] BuildFloatingLead() =>
-    [
-        Part(1, ComponentKind.Resistor, Hole("A30"), Hole("D33"), 0.94f, "220R"),
-        Part(2, ComponentKind.JumperWire, Hole("D33"), Hole("TOP_GND_10"), 0.98f, null)
-    ];
-
-    private static DetectedComponent[] BuildValid555() =>
-    [
-        // VCC distribution: rail -> U1 pin 8 -> R1 top -> target net holes.
-        Part(1, ComponentKind.JumperWire, Hole("TOP_VCC_25"), Hole("E20"), 0.99f, null),
-        Part(2, ComponentKind.JumperWire, Hole("E20"), Hole("F23"), 0.99f, null),
-        Part(3, ComponentKind.JumperWire, Hole("F23"), Hole("A18"), 0.99f, null),
-
-        // GND distribution: rail -> U1 pin 1 -> C1 return -> spare ground columns.
-        Part(4, ComponentKind.JumperWire, Hole("TOP_GND_25"), Hole("F20"), 0.99f, null),
-        Part(5, ComponentKind.JumperWire, Hole("F20"), Hole("J25"), 0.99f, null),
-        Part(6, ComponentKind.JumperWire, Hole("J25"), Hole("J24"), 0.99f, null),
-        Part(7, ComponentKind.JumperWire, Hole("J24"), Hole("J16"), 0.99f, null),
-
-        // Discharge and trigger/threshold nets.
-        Part(8, ComponentKind.JumperWire, Hole("E21"), Hole("B24"), 0.99f, null),
-        Part(9, ComponentKind.JumperWire, Hole("F21"), Hole("E22"), 0.99f, null),
-        Part(10, ComponentKind.JumperWire, Hole("E22"), Hole("D25"), 0.99f, null),
-
-        // Placed parts: U1 + timing network (C2 omitted: E23 has no second terminal).
-        Part(11, ComponentKind.IntegratedCircuit, Hole("E20"), Hole("F20"), 0.98f, "NE555P"),
-        Part(12, ComponentKind.Resistor, Hole("A18"), Hole("B24"), 0.97f, "10K"),
-        Part(13, ComponentKind.Resistor, Hole("B24"), Hole("D25"), 0.96f, "100K"),
-        Part(14, ComponentKind.Capacitor, Hole("D25"), Hole("J25"), 0.95f, "10uF")
-    ];
-
-    private static DetectedComponent Part(
-        int trackId,
-        ComponentKind kind,
-        HoleCoord pin1,
-        HoleCoord pin2,
-        float confidence,
-        string? decodedValue)
-    {
-        const float padding = 12f;
-
-        float width = MathF.Max(18f, MathF.Abs(pin2.Px - pin1.Px) + padding * 2f);
-        float height = MathF.Max(18f, MathF.Abs(pin2.Py - pin1.Py) + padding * 2f);
-
-        float left = Math.Clamp(
-            MathF.Min(pin1.Px, pin2.Px) - padding,
-            0f,
-            BreadboardSpec.CanvasWidth - width);
-
-        float top = Math.Clamp(
-            MathF.Min(pin1.Py, pin2.Py) - padding,
-            0f,
-            BreadboardSpec.CanvasHeight - height);
-
-        return new DetectedComponent(
-            TrackId: trackId,
-            Kind: kind,
-            Confidence: confidence,
-            BoxX: left,
-            BoxY: top,
-            BoxW: width,
-            BoxH: height,
-            Lead1Px: pin1.Px,
-            Lead1Py: pin1.Py,
-            Lead2Px: pin2.Px,
-            Lead2Py: pin2.Py,
-            DecodedValueLabel: decodedValue);
-    }
-
-    private static HoleCoord Hole(string holeId) =>
-        PinMatrixLookup.Shared.TryGetHole(holeId, out HoleCoord hole)
-            ? hole
-            : new HoleCoord(holeId, 0, 0f, 0f);
-}
 
 /// <summary>Workstation boot configuration. Defaults match the Phase 5 demo launch.</summary>
 public sealed class InspectionPipelineOptions
@@ -187,6 +48,9 @@ public sealed class InspectionPipelineOptions
     public bool EnableCognitiveTutor { get; init; } = true;
 
     public bool EnableVoice { get; init; } = true;
+
+    /// <summary>Requested speech engine; the engine falls back if its files are absent.</summary>
+    public VoiceEnginePreference VoicePreference { get; init; } = VoiceEnginePreference.Auto;
 
     public bool EnableAffinity { get; init; } = true;
 
@@ -237,6 +101,9 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     private VoiceSynthesisEngine? _voice;
     private TargetSchematic? _targetSchematic;
 
+    /// <summary>Last distinct worker-loop fault, so a repeating error is reported once.</summary>
+    private string? _lastLoopFault;
+
     /// <summary>Guards live tutor swaps; retired services are disposed with the coordinator.</summary>
     private readonly object _qwenSync = new();
     private readonly List<QwenMoEService> _retiredQwen = new(4);
@@ -250,6 +117,8 @@ public sealed class InspectionPipelineCoordinator : IDisposable
 
     private int _demoEnabled;
     private int _scenario;
+    private int _manualCircuit;
+    private DetectedComponent[] _manualDetections = Array.Empty<DetectedComponent>();
     private int _activeCameraSource;
     private int _lastStateHash = int.MinValue;
     private string _cameraNote = string.Empty;
@@ -323,7 +192,11 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         {
             try
             {
-                _voice = new VoiceSynthesisEngine();
+                VoiceOptions voiceOptions = VoiceOptions.FromEnvironment();
+                if (voiceOptions.PreferredBackend == VoiceEnginePreference.Auto)
+                    voiceOptions = voiceOptions.WithPreferredBackend(_options.VoicePreference);
+
+                _voice = new VoiceSynthesisEngine(voiceOptions);
                 _voiceNote = _voice.LastError ?? string.Empty;
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -346,6 +219,9 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     /// <summary>Full tutor answer once the stream closes.</summary>
     public event Action<string>? TutorDiagnosticCompleted;
 
+    /// <summary>Latency of the last tutor turn (time to first token and total).</summary>
+    public event Action<TutorTurnMetrics>? TutorTurnMeasured;
+
     /// <summary>Operator-facing status line (camera/voice/demo changes and failures).</summary>
     public event Action<string>? StatusChanged;
 
@@ -367,6 +243,14 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     public SKBitmap BoardBitmap => _boardBitmap;
 
     public bool DemoModeEnabled => Volatile.Read(ref _demoEnabled) != 0;
+
+    /// <summary>
+    /// True while the X-ray builder owns the netlist. Vision and demo detections
+    /// are ignored so the operator's hand-placed circuit is what the DRC judges.
+    /// </summary>
+    public bool ManualCircuitEnabled => Volatile.Read(ref _manualCircuit) != 0;
+
+    public int ManualPartCount => Volatile.Read(ref _manualDetections).Length;
 
     public DemoScenario ActiveScenario => (DemoScenario)Volatile.Read(ref _scenario);
 
@@ -428,7 +312,9 @@ public sealed class InspectionPipelineCoordinator : IDisposable
                 return "TUTOR DISABLED";
 
             string route = UsingRemoteTutor
-                ? $"COLAB / {_remoteTarget?.DisplayHost ?? "REMOTE"}"
+                ? _remoteTarget is { IsLoopback: true }
+                    ? $"LOCAL AI / {_remoteTarget.DisplayHost}"
+                    : $"COLAB / {_remoteTarget?.DisplayHost ?? "REMOTE"}"
                 : "LOCAL";
 
             return qwen.LastMode == QwenResponseMode.Server
@@ -507,12 +393,44 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             target.ModelAlias));
     }
 
-    public string VoiceBackendDescription => _voice?.Backend switch
+    public string VoiceBackendDescription => _voice?.VoiceProfileName ?? "VOICE SILENT";
+
+    /// <summary>The engine that actually loaded, after any fallback.</summary>
+    public VoiceBackend ActiveVoiceBackend => _voice?.Backend ?? VoiceBackend.None;
+
+    /// <summary>True when piper.exe and the configured Piper model are present.</summary>
+    public bool HasPiperVoice => _voice?.HasPiperVoice ?? false;
+
+    /// <summary>
+    /// Switches the live speech engine from the VIEW panel. The old engine is
+    /// released only after any in-flight utterance has finished.
+    /// </summary>
+    public async Task<bool> SetVoiceBackendAsync(
+        VoiceEnginePreference preference,
+        CancellationToken cancellationToken = default)
     {
-        VoiceBackend.Kokoro => "KOKORO 82M / SHERPA-ONNX",
-        VoiceBackend.Sapi => "WINDOWS SAPI FALLBACK",
-        _ => "VOICE SILENT"
-    };
+        VoiceSynthesisEngine? voice = _voice;
+        if (voice is null)
+            return false;
+
+        bool switched = await voice.SwitchBackendAsync(preference, cancellationToken)
+            .ConfigureAwait(false);
+
+        _voiceNote = voice.LastError ?? string.Empty;
+        return switched;
+    }
+
+    /// <summary>Speaks a short natural line so the operator can audition the active voice.</summary>
+    public Task<bool> SpeakTestLineAsync(CancellationToken cancellationToken = default)
+    {
+        VoiceSynthesisEngine? voice = _voice;
+        return voice is null
+            ? Task.FromResult(false)
+            : voice.SpeakSentenceAsync(
+                "Hi there. Let's take a look at your circuit together.",
+                cancellationToken);
+    }
+
 
     public string VramStatus
     {
@@ -647,6 +565,39 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         Volatile.Write(ref _scenario, (int)scenario);
         ResetTopology();
         DemoScenarioChanged?.Invoke(scenario);
+    }
+
+    /// <summary>
+    /// Hands the engine to the X-ray builder. Disabling it returns to demo/YOLO
+    /// detections without touching the last published packet.
+    /// </summary>
+    public void SetManualCircuitEnabled(bool enabled)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        Volatile.Write(ref _manualCircuit, enabled ? 1 : 0);
+        ResetTopology();
+        RaiseStatus(enabled
+            ? $"X-ray builder active: the DRC judges {ManualPartCount} hand-placed part(s)."
+            : "X-ray builder closed: live detections are active again.");
+    }
+
+    /// <summary>
+    /// Publishes an immutable snapshot of the builder's parts to the reflex loop.
+    /// Called on the UI thread after every edit.
+    /// </summary>
+    public void SetManualDetections(IReadOnlyList<DetectedComponent> detections)
+    {
+        ArgumentNullException.ThrowIfNull(detections);
+
+        var snapshot = new DetectedComponent[detections.Count];
+        for (int i = 0; i < detections.Count; i++)
+            snapshot[i] = detections[i];
+
+        Volatile.Write(ref _manualDetections, snapshot);
+
+        if (ManualCircuitEnabled)
+            Volatile.Write(ref _lastStateHash, int.MinValue);
     }
 
     private void ResetTopology()
@@ -787,27 +738,55 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             long frameStart = System.Diagnostics.Stopwatch.GetTimestamp();
             frame++;
 
-            if (!TryCaptureWarpedFrame(ref calibrationCooldown))
+            try
             {
+                if (!TryCaptureWarpedFrame(ref calibrationCooldown))
+                {
+                    await DelayRemainingAsync(frameStart, targetFrameMs, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                bool stable = _motionGate.Update(_warpedFrame);
+
+                if (_options.EnableCameraPreviewBitmap && (frame & 1) == 0)
+                    UpdateBoardBitmap();
+
+                if (!stable && !DemoModeEnabled && !ManualCircuitEnabled)
+                {
+                    await DelayRemainingAsync(frameStart, targetFrameMs, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                EvaluateFrame(frame);
+
                 await DelayRemainingAsync(frameStart, targetFrameMs, cancellationToken).ConfigureAwait(false);
-                continue;
+
+                if (_lastLoopFault is not null)
+                    _lastLoopFault = null;
             }
-
-            bool stable = _motionGate.Update(_warpedFrame);
-
-            if (_options.EnableCameraPreviewBitmap && (frame & 1) == 0)
-                UpdateBoardBitmap();
-
-            if (!stable && !DemoModeEnabled)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                await DelayRemainingAsync(frameStart, targetFrameMs, cancellationToken).ConfigureAwait(false);
-                continue;
+                break;
             }
-
-            EvaluateFrame(frame);
-
-            await DelayRemainingAsync(frameStart, targetFrameMs, cancellationToken).ConfigureAwait(false);
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // Without this the loop task died silently and the viewport froze with
+                // no explanation. Report the fault and keep the 60 FPS loop alive.
+                ReportLoopFault("VISION", ex);
+                await DelayRemainingAsync(frameStart, targetFrameMs, cancellationToken).ConfigureAwait(false);
+            }
         }
+    }
+
+    /// <summary>Surfaces a worker-loop fault once per distinct message so the UI never freezes silently.</summary>
+    private void ReportLoopFault(string loop, Exception exception)
+    {
+        string message = $"{loop} LOOP FAULT: {exception.GetType().Name}: {exception.Message}";
+        if (string.Equals(message, _lastLoopFault, StringComparison.Ordinal))
+            return;
+
+        _lastLoopFault = message;
+        RaiseStatus(message + " The loop keeps retrying; check the camera / model files if it repeats.");
     }
 
     /// <summary>Captures + calibrates + warps under the camera lock so hot-swaps are safe.</summary>
@@ -858,12 +837,18 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     private void EvaluateFrame(long frame)
     {
         bool demo = DemoModeEnabled;
+        bool manual = ManualCircuitEnabled;
         DemoScenario scenario = ActiveScenario;
 
         ReadOnlySpan<DetectedComponent> detections;
         double yoloMs;
 
-        if (demo)
+        if (manual)
+        {
+            detections = Volatile.Read(ref _manualDetections);
+            yoloMs = 0d;
+        }
+        else if (demo)
         {
             detections = DemoScenarioCatalog.GetDetections(scenario);
             yoloMs = 0d;
@@ -897,7 +882,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         DrcStatePacket published = AttachMicroCrop(packet);
 
         IReadOnlyList<RatsnestVector> ratsnest = Array.Empty<RatsnestVector>();
-        if (demo && DemoScenarioCatalog.UsesTargetSchematic(scenario) && _targetSchematic is not null)
+        if ((manual || demo && DemoScenarioCatalog.UsesTargetSchematic(scenario)) && _targetSchematic is not null)
             ratsnest = TargetSchematicLoader.ComputeRatsnest(_targetSchematic, _pinMatrix, _drc);
 
         Volatile.Write(ref _latestRatsnest, ratsnest);
@@ -1060,6 +1045,11 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         {
             // Coordinator disposing.
         }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // A fault outside one tutor turn (e.g. channel plumbing) must still be visible.
+            ReportLoopFault("TUTOR", ex);
+        }
     }
 
     private async Task RunTutorTurnAsync(DrcStatePacket packet, CancellationToken cancellationToken)
@@ -1070,34 +1060,59 @@ public sealed class InspectionPipelineCoordinator : IDisposable
 
         var splitter = new SentenceStreamSplitter();
         var transcript = new StringBuilder(320);
+        var sentences = new List<string>(4);
+        System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+        double firstTokenMs = -1d;
 
         await foreach (string token in qwen
                            .StreamDiagnosticAsync(packet, prompt: null, cancellationToken)
                            .ConfigureAwait(false))
         {
+            if (firstTokenMs < 0d)
+                firstTokenMs = clock.Elapsed.TotalMilliseconds;
+
             transcript.Append(token);
             TutorTranscriptTokenReceived?.Invoke(token);
 
             foreach (string sentence in splitter.Push(token))
             {
+                sentences.Add(sentence);
                 TutorSentenceCompleted?.Invoke(sentence);
-
-                if (_voice is not null && !VoiceMuted)
-                    await _voice.SpeakSentenceAsync(sentence, cancellationToken).ConfigureAwait(false);
             }
         }
 
         string? tail = splitter.Flush();
         if (tail is not null)
         {
+            sentences.Add(tail);
             TutorSentenceCompleted?.Invoke(tail);
-
-            if (_voice is not null && !VoiceMuted)
-                await _voice.SpeakSentenceAsync(tail, cancellationToken).ConfigureAwait(false);
         }
 
+        // The voice belongs to Qwen only. A rule-based fallback is a text alert
+        // in the DRC dock; speaking it would blur the difference between the
+        // deterministic checker and the model.
+        bool answeredByQwen = qwen.LastMode == QwenResponseMode.Server;
+
+        // Speak once, after the model has finished. Synthesizing inside the token
+        // loop stalls the stream and chops the voice into disconnected clips.
+        if (answeredByQwen && sentences.Count > 0 && _voice is not null && !VoiceMuted)
+            await _voice.SpeakParagraphAsync(sentences, cancellationToken).ConfigureAwait(false);
+
         if (transcript.Length > 0)
+        {
             TutorDiagnosticCompleted?.Invoke(transcript.ToString());
+
+            TutorTurnMeasured?.Invoke(new TutorTurnMetrics(
+                TimeToFirstTokenMs: firstTokenMs < 0d ? clock.Elapsed.TotalMilliseconds : firstTokenMs,
+                TotalMs: clock.Elapsed.TotalMilliseconds,
+                Characters: transcript.Length,
+                Backend: qwen.LastMode == QwenResponseMode.Server
+                    ? _remoteTarget is { IsLoopback: true }
+                        ? "LOCAL AI TUTOR"
+                        : UsingRemoteTutor ? "REMOTE TUTOR" : "LOCAL TUTOR"
+                    : "RULE-BASED TUTOR",
+                RuleBased: qwen.LastMode != QwenResponseMode.Server));
+        }
     }
 
     /// <summary>Net name for the pin inspector without touching the Union-Find buffers.</summary>
@@ -1250,5 +1265,21 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         _cameraFrame.Dispose();
         _warpedFrame.Dispose();
         _boardBitmap.Dispose();
+    }
+}
+
+/// <summary>Latency numbers for one completed tutor turn, shown in the activity strip.</summary>
+public readonly record struct TutorTurnMetrics(
+    double TimeToFirstTokenMs,
+    double TotalMs,
+    int Characters,
+    string Backend,
+    bool RuleBased)
+{
+    public string Describe()
+    {
+        return string.Create(
+            System.Globalization.CultureInfo.InvariantCulture,
+            $"TTFT {TimeToFirstTokenMs:0} MS  \u00b7  {TotalMs / 1000d:0.0} S  \u00b7  {Characters} CHARS");
     }
 }

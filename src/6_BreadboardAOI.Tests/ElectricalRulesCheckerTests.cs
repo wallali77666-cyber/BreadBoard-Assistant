@@ -190,8 +190,7 @@ public sealed class ElectricalRulesCheckerTests
     }
 
     [Fact]
-    public void Shipped_target_netlist_produces_ratsnest_air_wires()
-    {
+    public void Shipped_target_netlist_produces_ratsnest_air_wires()    {
         TargetSchematic? target = TargetSchematicLoader.TryLoadDefault(out string? error);
         target.Should().NotBeNull(error);
 
@@ -201,6 +200,148 @@ public sealed class ElectricalRulesCheckerTests
         var ratsnest = TargetSchematicLoader.ComputeRatsnest(target!, Lookup, checker);
         ratsnest.Should().NotBeEmpty();
         ratsnest.Should().OnlyContain(v => v.From.HoleId != v.To.HoleId);
+    }
+
+    [Fact]
+    public void Vcc_gnd_bridge_names_the_offending_jumper_and_its_holes()
+    {
+        Lookup.TryGetRailHole(BreadboardSpec.StripTopVcc, 10, out var vcc).Should().BeTrue();
+        Lookup.TryGetRailHole(BreadboardSpec.StripTopGnd, 12, out var gnd).Should().BeTrue();
+
+        var checker = new ElectricalRulesChecker(Lookup);
+        var packet = checker.EvaluateBoard(9, 0.5, new[] { Create(ComponentKind.JumperWire, vcc, gnd, trackId: 7) });
+
+        var shorted = packet.Violations.Should()
+            .ContainSingle(v => v.Code == ViolationCode.ErcVccGndDirectShort).Subject;
+
+        shorted.ComponentId.Should().Be("JumperWire_7");
+        shorted.BadHole.HoleId.Should().Be(vcc.HoleId);
+        shorted.TechnicalMessage.Should().Contain(gnd.HoleId);
+    }
+
+    [Fact]
+    public void Jumper_inside_one_metal_clip_is_reported_as_redundant()
+    {
+        Lookup.TryGetRailHole(BreadboardSpec.StripTopVcc, 10, out var vcc10).Should().BeTrue();
+        Lookup.TryGetRailHole(BreadboardSpec.StripTopVcc, 20, out var vcc20).Should().BeTrue();
+
+        var checker = new ElectricalRulesChecker(Lookup);
+        var packet = checker.EvaluateBoard(10, 0.4, new[] { Create(ComponentKind.JumperWire, vcc10, vcc20) });
+
+        var redundant = packet.Violations.Should()
+            .ContainSingle(v => v.Code == ViolationCode.ErcRedundantJumper).Subject;
+
+        redundant.Severity.Should().Be(DrcSeverity.Warning);
+        redundant.OffendingStripId.Should().Be(BreadboardSpec.StripTopVcc);
+        redundant.TechnicalMessage.Should().Contain("does nothing");
+    }
+
+    [Fact]
+    public void Four_leads_in_one_hole_is_reported_as_mechanical_congestion()
+    {
+        Lookup.TryGetHole("A20", out var shared).Should().BeTrue();
+        Lookup.TryGetHole("B30", out var b30).Should().BeTrue();
+        Lookup.TryGetHole("C31", out var c31).Should().BeTrue();
+        Lookup.TryGetHole("D32", out var d32).Should().BeTrue();
+        Lookup.TryGetHole("E33", out var e33).Should().BeTrue();
+
+        var checker = new ElectricalRulesChecker(Lookup);
+        var packet = checker.EvaluateBoard(11, 0.4, new[]
+        {
+            Create(ComponentKind.JumperWire, shared, b30, trackId: 1),
+            Create(ComponentKind.JumperWire, shared, c31, trackId: 2),
+            Create(ComponentKind.JumperWire, shared, d32, trackId: 3),
+            Create(ComponentKind.JumperWire, shared, e33, trackId: 4)
+        });
+
+        var congestion = packet.Violations.Should()
+            .ContainSingle(v => v.Code == ViolationCode.ErcHoleCollision).Subject;
+
+        congestion.BadHole.HoleId.Should().Be("A20");
+        congestion.SuggestedTargetHole.HoleId.Should().NotBeNullOrEmpty();
+        congestion.SuggestedTargetHole.HoleId.Should().NotBe("A20");
+        congestion.TechnicalMessage.Should().Contain("4 leads");
+    }
+
+    [Fact]
+    public void Two_distinct_target_nets_bridged_together_emit_unexpected_link()
+    {
+        var target = TargetSchematicLoader.Parse("""
+            { "name": "pair", "nets": [
+                { "name": "NET_A", "holes": [ "A10", "B10" ] },
+                { "name": "NET_B", "holes": [ "A20", "B20" ] } ] }
+            """);
+
+        Lookup.TryGetHole("A10", out var a10).Should().BeTrue();
+        Lookup.TryGetHole("B10", out var b10).Should().BeTrue();
+        Lookup.TryGetHole("A20", out var a20).Should().BeTrue();
+        Lookup.TryGetHole("B20", out var b20).Should().BeTrue();
+
+        var checker = new ElectricalRulesChecker(Lookup);
+        var packet = checker.EvaluateBoard(12, 0.4, new[]
+        {
+            Create(ComponentKind.JumperWire, a10, b10, trackId: 1),
+            Create(ComponentKind.JumperWire, a20, b20, trackId: 2),
+            Create(ComponentKind.JumperWire, a10, a20, trackId: 3)
+        }, target);
+
+        var bridge = packet.Violations.Should()
+            .ContainSingle(v => v.Code == ViolationCode.DrcUnexpectedNetLink).Subject;
+
+        bridge.Severity.Should().Be(DrcSeverity.Warning);
+        bridge.ComponentId.Should().Contain("NET_A").And.Contain("NET_B");
+        bridge.TechnicalMessage.Should()
+            .Contain("Remove the jumper")
+            .And.Contain("must stay separate");
+    }
+
+    [Fact]
+    public void Open_target_net_message_names_both_holes_and_the_fix()
+    {
+        var target = TargetSchematicLoader.Parse("""
+            { "name": "open", "nets": [ { "name": "NET_OUT", "holes": [ "A10", "F10" ] } ] }
+            """);
+
+        Lookup.TryGetHole("A10", out var a10).Should().BeTrue();
+        Lookup.TryGetHole("F10", out var f10).Should().BeTrue();
+        Lookup.TryGetHole("C20", out var c20).Should().BeTrue();
+        Lookup.TryGetHole("J40", out var j40).Should().BeTrue();
+
+        var checker = new ElectricalRulesChecker(Lookup);
+        var packet = checker.EvaluateBoard(13, 0.4, new[]
+        {
+            Create(ComponentKind.Resistor, a10, c20, trackId: 1),
+            Create(ComponentKind.Resistor, f10, j40, trackId: 2)
+        }, target);
+
+        var open = packet.Violations.Should()
+            .ContainSingle(v => v.Code == ViolationCode.DrcSchematicNetMismatch).Subject;
+
+        open.TechnicalMessage.Should()
+            .Contain("Add a jumper from A10 to F10")
+            .And.Contain("is open");
+    }
+
+    [Fact]
+    public void Netlist_report_groups_terminal_holes_by_resolved_net()
+    {
+        Lookup.TryGetRailHole(BreadboardSpec.StripTopVcc, 12, out var vcc).Should().BeTrue();
+        Lookup.TryGetHole("A12", out var a12).Should().BeTrue();
+        Lookup.TryGetHole("B40", out var b40).Should().BeTrue();
+
+        var checker = new ElectricalRulesChecker(Lookup);
+        var packet = checker.EvaluateBoard(14, 0.4, new[]
+        {
+            Create(ComponentKind.JumperWire, vcc, a12),
+            Create(ComponentKind.JumperWire, b40, a12, trackId: 2)
+        });
+
+        var nets = NetlistReport.Build(packet);
+        nets.Should().NotBeEmpty();
+        nets[0].Name.Should().Be("NET_VCC");
+        nets[0].Holes.Should().Contain(new[] { vcc.HoleId, a12.HoleId, b40.HoleId });
+
+        NetlistReport.Format(packet).Should().Contain("NET_VCC");
     }
 
     private static DetectedComponent Create(ComponentKind kind, HoleCoord lead1, HoleCoord lead2, int trackId = 1)

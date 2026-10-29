@@ -43,7 +43,7 @@ public sealed class PinnedFrameRingBuffer : IDisposable
     private int _publishedSlot = -1;
     private long _publishCounter;
     private long _droppedWrites;
-    private bool _disposed;
+    private int _disposed; // Interlocked: 0 = live, 1 = disposed (see Dispose).
 
     public PinnedFrameRingBuffer(int width, int height, int bytesPerPixel = 4, int slotCount = DefaultSlotCount)
     {
@@ -78,12 +78,15 @@ public sealed class PinnedFrameRingBuffer : IDisposable
                     if (memory is null)
                         throw new OutOfMemoryException($"Unable to allocate {_frameBytes} byte frame slot {i}.");
 
-                    NativeMemory.Clear(memory, (nuint)_frameBytes);
+                    // Record the slot before anything else can throw, otherwise the
+                    // catch below would leak the memory that was just handed out.
                     _slotPointers[i] = (IntPtr)memory;
+                    allocated++;
+
+                    NativeMemory.Clear(memory, (nuint)_frameBytes);
                 }
 
                 _slotLocked[i] = CpuAffinityManager.TryLockMemory(_slotPointers[i], (nuint)_frameBytes);
-                allocated++;
             }
         }
         catch
@@ -133,7 +136,7 @@ public sealed class PinnedFrameRingBuffer : IDisposable
     /// </summary>
     public unsafe bool TryBeginWrite(out FrameWriteLease lease)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(IsDisposed, this);
 
         for (int i = 0; i < _slotCount; i++)
         {
@@ -159,7 +162,7 @@ public sealed class PinnedFrameRingBuffer : IDisposable
     /// <summary>Grabs the newest published frame for the consumer.</summary>
     public unsafe bool TryReadLatest(out FrameReadLease lease)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(IsDisposed, this);
 
         int slot = Volatile.Read(ref _publishedSlot);
         if (slot < 0)
@@ -224,17 +227,49 @@ public sealed class PinnedFrameRingBuffer : IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
+        // Atomic claim: the window close and the pipeline teardown can both call
+        // Dispose, and a second pass must never free the same native memory again.
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
-        _disposed = true;
+        // Let an in-flight producer/consumer finish its lease before the memory is
+        // released, otherwise a live Span<byte> would point at freed pages.
+        WaitForLeasesToDrain();
+
         for (int i = 0; i < _slotCount; i++)
             FreeSlot(i);
     }
 
+    private bool IsDisposed => Volatile.Read(ref _disposed) != 0;
+
+    private void WaitForLeasesToDrain()
+    {
+        const int maxWaitMs = 500;
+
+        for (int waited = 0; waited < maxWaitMs; waited++)
+        {
+            bool busy = false;
+            for (int i = 0; i < _slotCount; i++)
+            {
+                int state = Volatile.Read(ref _slotStates[i]);
+                if (state is SlotWriting or SlotReading)
+                {
+                    busy = true;
+                    break;
+                }
+            }
+
+            if (!busy)
+                return;
+
+            Thread.Sleep(1);
+        }
+    }
+
     private unsafe void FreeSlot(int index)
     {
-        IntPtr pointer = _slotPointers[index];
+        // Exchange to zero first so a concurrent FreeSlot sees no pointer at all.
+        IntPtr pointer = Interlocked.Exchange(ref _slotPointers[index], IntPtr.Zero);
         if (pointer == IntPtr.Zero)
             return;
 
@@ -245,7 +280,6 @@ public sealed class PinnedFrameRingBuffer : IDisposable
         }
 
         NativeMemory.AlignedFree((void*)pointer);
-        _slotPointers[index] = IntPtr.Zero;
     }
 }
 

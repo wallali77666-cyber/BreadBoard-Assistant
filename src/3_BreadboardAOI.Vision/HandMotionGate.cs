@@ -25,7 +25,8 @@ public sealed class HandMotionGate : IDisposable
 
     private readonly Mat _gray = new();
     private readonly Mat _smallCurrent = new();
-    private readonly Mat _smallPrevious = new();
+    private readonly Mat _normalizedCurrent = new();
+    private readonly Mat _normalizedPrevious = new();
     private readonly Mat _diff = new();
     private readonly Mat _threshold = new();
 
@@ -82,16 +83,23 @@ public sealed class HandMotionGate : IDisposable
 
         Cv2.Resize(_gray, _smallCurrent, ThumbnailSize, 0, 0, InterpolationFlags.Area);
 
+        // Normalise each thumbnail to the full 0..255 range before differencing.
+        // Auto-exposure or a moving shadow shifts the whole frame; without this,
+        // a uniformly brighter (but otherwise identical) board looks like motion
+        // for several frames and the gate never latches. Min/max scaling removes
+        // that global gain/offset while preserving edges and the hand blob.
+        Cv2.Normalize(_smallCurrent, _normalizedCurrent, 0, 255, NormTypes.MinMax);
+
         if (!_hasPrevious)
         {
-            _smallCurrent.CopyTo(_smallPrevious);
+            _normalizedCurrent.CopyTo(_normalizedPrevious);
             _hasPrevious = true;
             _stableSinceTimestamp = Stopwatch.GetTimestamp();
             IsBoardStable = false;
             return false;
         }
 
-        Cv2.Absdiff(_smallCurrent, _smallPrevious, _diff);
+        Cv2.Absdiff(_normalizedCurrent, _normalizedPrevious, _diff);
         Cv2.Threshold(_diff, _threshold, _pixelDeltaThreshold, 255, ThresholdTypes.Binary);
         _motionPixels = Cv2.CountNonZero(_threshold);
 
@@ -108,7 +116,7 @@ public sealed class HandMotionGate : IDisposable
             IsBoardStable = true;
         }
 
-        _smallCurrent.CopyTo(_smallPrevious);
+        _normalizedCurrent.CopyTo(_normalizedPrevious);
         return IsBoardStable;
     }
 
@@ -129,7 +137,8 @@ public sealed class HandMotionGate : IDisposable
         _disposed = true;
         _gray.Dispose();
         _smallCurrent.Dispose();
-        _smallPrevious.Dispose();
+        _normalizedCurrent.Dispose();
+        _normalizedPrevious.Dispose();
         _diff.Dispose();
         _threshold.Dispose();
     }

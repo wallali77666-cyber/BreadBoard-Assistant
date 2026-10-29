@@ -8,6 +8,8 @@
 // ============================================================================
 
 using System;
+using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -129,6 +131,141 @@ public static class ColabEndpoints
 
         return Uri.TryCreate(baseUrl, UriKind.Absolute, out Uri? uri) ? uri.Authority : "NO ENDPOINT";
     }
+
+    /// <summary>
+    /// True when the endpoint never leaves this machine (LM Studio, Ollama and
+    /// llama-server all bind to loopback). Used only for labelling, so it never
+    /// changes routing behaviour.
+    /// </summary>
+    public static bool IsLoopback(string? raw)
+    {
+        string? baseUrl = ColabSession.NormalizeBaseUrl(raw);
+        return baseUrl is not null
+               && Uri.TryCreate(baseUrl, UriKind.Absolute, out Uri? uri)
+               && uri.IsLoopback;
+    }
+
+    /// <summary>
+    /// A tutor endpoint may only carry frames over TLS. Loopback is the single
+    /// exception because LM Studio, Ollama and llama-server answer in cleartext on
+    /// 127.0.0.1 and the payload never touches a network interface.
+    /// </summary>
+    public static bool IsSecureEndpoint(string? raw)
+    {
+        string? baseUrl = ColabSession.NormalizeBaseUrl(raw);
+        if (baseUrl is null || !Uri.TryCreate(baseUrl, UriKind.Absolute, out Uri? uri))
+            return false;
+
+        if (uri.IsLoopback)
+            return true;
+
+        return string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static readonly string[] KnownTunnelSuffixes =
+    [
+        ".trycloudflare.com",
+        ".ngrok-free.app",
+        ".ngrok.app",
+        ".ngrok.io",
+        ".gradio.live",
+        ".localtunnel.me",
+        ".serveo.net",
+        ".loca.lt"
+    ];
+
+    /// <summary>
+    /// True for the tunnel providers the Colab notebook prints and for loopback
+    /// providers. A custom public domain is allowed (the operator pasted it), but
+    /// the UI labels it so a wrong host is visible before frames are sent.
+    /// </summary>
+    public static bool IsKnownTunnelHost(string? raw)
+    {
+        string? baseUrl = ColabSession.NormalizeBaseUrl(raw);
+        if (baseUrl is null || !Uri.TryCreate(baseUrl, UriKind.Absolute, out Uri? uri))
+            return false;
+
+        if (uri.IsLoopback)
+            return true;
+
+        string host = uri.Host;
+        foreach (string suffix in KnownTunnelSuffixes)
+        {
+            if (host.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Rejects hosts that resolve inside a private network: RFC1918, link-local,
+    /// CGNAT, multicast and IPv6 ULA/link-local. A pasted pair code must never be
+    /// able to aim the camera feed at a LAN service or a cloud metadata endpoint.
+    /// Loopback stays allowed because LM Studio / Ollama run there by design.
+    /// </summary>
+    public static bool IsPublicHost(string? raw)
+    {
+        string? baseUrl = ColabSession.NormalizeBaseUrl(raw);
+        if (baseUrl is null || !Uri.TryCreate(baseUrl, UriKind.Absolute, out Uri? uri))
+            return false;
+
+        if (uri.IsLoopback)
+            return true;
+
+        string host = uri.Host.TrimEnd('.');
+
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".local", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".home.arpa", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!IPAddress.TryParse(host, out IPAddress? address))
+            return true; // A public DNS name; the probe will resolve it.
+
+        if (address.IsIPv4MappedToIPv6)
+            address = address.MapToIPv4();
+
+        if (IPAddress.IsLoopback(address))
+            return true;
+
+        byte[] bytes = address.GetAddressBytes();
+
+        if (address.AddressFamily == AddressFamily.InterNetwork && bytes.Length == 4)
+        {
+            return !(bytes[0] == 0
+                     || bytes[0] == 10
+                     || bytes[0] == 127
+                     || (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31)
+                     || (bytes[0] == 192 && bytes[1] == 168)
+                     || (bytes[0] == 169 && bytes[1] == 254)
+                     || (bytes[0] == 100 && bytes[1] >= 64 && bytes[1] <= 127)
+                     || bytes[0] >= 224);
+        }
+
+        if (address.AddressFamily == AddressFamily.InterNetworkV6 && bytes.Length == 16)
+        {
+            bool uniqueLocal = (bytes[0] & 0xFE) == 0xFC;
+            bool linkLocal = bytes[0] == 0xFE && (bytes[1] & 0xC0) == 0x80;
+            bool multicast = bytes[0] == 0xFF;
+            bool unspecified = true;
+            for (int i = 0; i < bytes.Length; i++)
+            {
+                if (bytes[i] != 0)
+                {
+                    unspecified = false;
+                    break;
+                }
+            }
+
+            return !(uniqueLocal || linkLocal || multicast || unspecified);
+        }
+
+        return true;
+    }
 }
 
 /// <summary>JSON helpers so the app and the notebook agree on one format.</summary>
@@ -165,6 +302,9 @@ public sealed record RemoteTutorTarget(string EndpointUrl, string? ApiKey, strin
         ?? throw new InvalidOperationException($"'{EndpointUrl}' is not a usable remote endpoint.");
 
     public string DisplayHost => ColabEndpoints.DescribeHost(EndpointUrl);
+
+    /// <summary>True for LM Studio / Ollama / llama-server on this PC.</summary>
+    public bool IsLoopback => ColabEndpoints.IsLoopback(EndpointUrl);
 
     public static RemoteTutorTarget? FromSession(ColabSession? session)
     {

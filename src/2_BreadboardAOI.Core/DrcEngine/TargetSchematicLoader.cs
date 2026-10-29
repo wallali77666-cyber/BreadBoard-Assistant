@@ -16,13 +16,35 @@ namespace BreadboardAOI.Core.DrcEngine;
 public sealed record TargetNet(string Name, IReadOnlyList<string> Holes);
 
 /// <summary>Reference component placement from the schematic (used by Phase 4/5 coaching).</summary>
-public sealed record TargetComponent(string Reference, ComponentKind Kind, string Pin1HoleId, string Pin2HoleId);
+public sealed record TargetComponent(
+    string Reference,
+    ComponentKind Kind,
+    IReadOnlyList<string> PinHoleIds)
+{
+    /// <summary>First pin (pin 1), or empty when the entry declared no holes.</summary>
+    public string Pin1HoleId => PinHoleIds.Count > 0 ? PinHoleIds[0] : string.Empty;
+
+    /// <summary>
+    /// Second pin, or the first pin again for a one-pin test point. Kept for the
+    /// original two-lead callers; new code should enumerate <see cref="PinHoleIds"/>.
+    /// </summary>
+    public string Pin2HoleId => PinHoleIds.Count > 1 ? PinHoleIds[1] : Pin1HoleId;
+
+    public int PinCount => PinHoleIds.Count;
+
+    public bool IsTestPoint => PinHoleIds.Count == 1;
+}
 
 /// <summary>Parsed reference netlist.</summary>
 public sealed record TargetSchematic(
     string Name,
     IReadOnlyList<TargetNet> Nets,
-    IReadOnlyList<TargetComponent> Components);
+    IReadOnlyList<TargetComponent> Components,
+    IReadOnlyList<string>? Warnings = null)
+{
+    /// <summary>True when the file loaded but some entries were skipped or unusable.</summary>
+    public bool HasWarnings => Warnings is { Count: > 0 };
+}
 
 /// <summary>A single dashed green air-wire from an anchor hole to an unrouted target hole.</summary>
 public readonly record struct RatsnestVector(HoleCoord From, HoleCoord To, string NetName);
@@ -52,13 +74,18 @@ public static class TargetSchematicLoader
         if (dto is null)
             throw new JsonException("Target netlist JSON deserialized to null.");
 
+        var warnings = new List<string>(0);
+
         var nets = new List<TargetNet>(dto.Nets?.Count ?? 0);
         if (dto.Nets is not null)
         {
             foreach (NetDto net in dto.Nets)
             {
                 if (string.IsNullOrWhiteSpace(net.Name) || net.Holes is null || net.Holes.Count == 0)
+                {
+                    warnings.Add($"A net named '{net.Name ?? "(missing)"}' has no holes and was skipped.");
                     continue;
+                }
 
                 var holes = new List<string>(net.Holes.Count);
                 foreach (string? hole in net.Holes)
@@ -69,6 +96,8 @@ public static class TargetSchematicLoader
 
                 if (holes.Count > 0)
                     nets.Add(new TargetNet(net.Name.Trim(), holes));
+                else
+                    warnings.Add($"Net '{net.Name}' had no usable hole ids and was skipped.");
             }
         }
 
@@ -77,27 +106,53 @@ public static class TargetSchematicLoader
         {
             foreach (ComponentDto component in dto.Components)
             {
-                if (string.IsNullOrWhiteSpace(component.Ref)
-                    || string.IsNullOrWhiteSpace(component.Pin1)
-                    || string.IsNullOrWhiteSpace(component.Pin2))
+                if (string.IsNullOrWhiteSpace(component.Ref))
                 {
+                    warnings.Add("A component without a reference was skipped.");
+                    continue;
+                }
+
+                // "pins" carries DIP-8..DIP-40 packages in pin order; the legacy
+                // "pin1"/"pin2" pair is still accepted, and a lone pin is a test point.
+                var pinHoles = new List<string>(4);
+                if (component.Pins is { Count: > 0 })
+                {
+                    foreach (string? pin in component.Pins)
+                    {
+                        if (!string.IsNullOrWhiteSpace(pin))
+                            pinHoles.Add(pin.Trim());
+                    }
+                }
+                else
+                {
+                    if (!string.IsNullOrWhiteSpace(component.Pin1))
+                        pinHoles.Add(component.Pin1.Trim());
+                    if (!string.IsNullOrWhiteSpace(component.Pin2))
+                        pinHoles.Add(component.Pin2.Trim());
+                }
+
+                if (pinHoles.Count == 0)
+                {
+                    warnings.Add($"Component '{component.Ref}' has no usable pin holes and was skipped.");
                     continue;
                 }
 
                 var kind = ComponentKind.Unknown;
-                if (!string.IsNullOrWhiteSpace(component.Kind))
-                    Enum.TryParse(component.Kind, ignoreCase: true, out kind);
+                if (!string.IsNullOrWhiteSpace(component.Kind)
+                    && !Enum.TryParse(component.Kind, ignoreCase: true, out kind))
+                {
+                    warnings.Add($"Component '{component.Ref}' has unknown kind '{component.Kind}'.");
+                }
 
                 components.Add(new TargetComponent(
                     component.Ref.Trim(),
                     kind,
-                    component.Pin1.Trim(),
-                    component.Pin2.Trim()));
+                    pinHoles));
             }
         }
 
         string name = string.IsNullOrWhiteSpace(dto.Name) ? "unnamed_target" : dto.Name.Trim();
-        return new TargetSchematic(name, nets, components);
+        return new TargetSchematic(name, nets, components, warnings.Count == 0 ? null : warnings);
     }
 
     public static TargetSchematic LoadFromFile(string path)
@@ -129,7 +184,11 @@ public static class TargetSchematicLoader
             schematic = LoadFromFile(path);
             return true;
         }
-        catch (Exception ex) when (ex is IOException or JsonException or ArgumentException)
+        catch (Exception ex) when (ex is IOException
+                                       or UnauthorizedAccessException
+                                       or System.Security.SecurityException
+                                       or JsonException
+                                       or ArgumentException)
         {
             error = ex.Message;
             return false;
@@ -253,5 +312,8 @@ public static class TargetSchematicLoader
         public string? Pin1 { get; set; }
 
         public string? Pin2 { get; set; }
+
+        /// <summary>Optional pin-ordered hole list for DIPs, modules and test points.</summary>
+        public List<string?>? Pins { get; set; }
     }
 }

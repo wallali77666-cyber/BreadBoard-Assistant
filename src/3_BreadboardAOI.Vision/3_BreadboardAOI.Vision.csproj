@@ -12,8 +12,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\2_BreadboardAOI.Core\2_BreadboardAOI.Core.csproj" />
     <ProjectReference Include="..\1_BreadboardAOI.Hardware\1_BreadboardAOI.Hardware.csproj" />
+    <ProjectReference Include="..\2_BreadboardAOI.Core\2_BreadboardAOI.Core.csproj" />
   </ItemGroup>
 
 </Project>

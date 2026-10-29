@@ -124,6 +124,28 @@ public sealed class PinMatrixLookup : IHoleSnapper
         return true;
     }
 
+    /// <summary>Hole at a deterministic table index (0..829).</summary>
+    public bool TryGetHoleAt(int index, out HoleCoord hole)
+    {
+        hole = default;
+        if ((uint)index >= (uint)_holes.Length)
+            return false;
+
+        hole = _holes[index];
+        return true;
+    }
+
+    /// <summary>Index of a hole in the deterministic 830-entry table. Used by the DRC engine
+    /// to track per-hole lead occupancy without hashing strings every frame.</summary>
+    public bool TryGetHoleIndex(string? holeId, out int index)
+    {
+        index = -1;
+        if (string.IsNullOrWhiteSpace(holeId))
+            return false;
+
+        return _indexByHoleId.TryGetValue(holeId.Trim(), out index);
+    }
+
     public bool TryGetHole(char row, int column, out HoleCoord hole)
     {
         hole = default;

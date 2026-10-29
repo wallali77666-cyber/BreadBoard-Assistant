@@ -26,11 +26,14 @@
              ZONE 1 — COMMAND BAR
              ================================================================ -->
         <Border Grid.Row="0" Style="{StaticResource ToolbarBorderStyle}">
-            <DockPanel LastChildFill="False" Margin="10,6">
-                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Width="4" Height="22" Margin="0,0,10,0"
+            <DockPanel LastChildFill="False" Margin="10,5">
+                <StackPanel DockPanel.Dock="Left"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center"
+                            Margin="0,0,16,0">
+                    <Border Width="4" Height="26" Margin="0,0,10,0"
                             Background="{StaticResource AccentBlueBrush}" />
-                    <StackPanel Margin="0,0,14,0" VerticalAlignment="Center">
+                    <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="{Binding AppTitle}"
                                    FontFamily="{StaticResource UiFontFamily}"
                                    FontSize="12" FontWeight="SemiBold"
@@ -38,38 +41,70 @@
                         <TextBlock Text="{Binding AppSubtitle}" FontSize="9"
                                    Style="{StaticResource StatusTextStyle}" />
                     </StackPanel>
-
-                    <Border Style="{StaticResource ToolbarSeparatorStyle}" />
-
-                    <ToggleButton Content="DEMO MODE"
-                                  Style="{StaticResource ToolbarToggleButtonStyle}"
-                                  IsChecked="{Binding DemoModeEnabled, Mode=TwoWay}"
-                                  ToolTip="Inject a deterministic faulty circuit so the DRC engine and tutor can be exercised without a camera." />
-
-                    <Button Content="REPLAY DIAGNOSTIC"
-                            Style="{StaticResource ToolbarButtonStyle}"
-                            Command="{Binding ReplayDiagnosticCommand}" />
-
-                    <Button Content="TEST ALARM"
-                            Style="{StaticResource ToolbarButtonStyle}"
-                            Command="{Binding TestAlarmCommand}" />
-
-                    <ToggleButton Content="MUTE VOICE"
-                                  Style="{StaticResource ToolbarToggleButtonStyle}"
-                                  IsChecked="{Binding IsVoiceMuted, Mode=TwoWay}" />
-
-                    <Border Style="{StaticResource ToolbarSeparatorStyle}" />
-
-                    <Button Content="{Binding CameraLabel}"
-                            Style="{StaticResource ToolbarButtonStyle}"
-                            Command="{Binding CycleCameraCommand}"
-                            ToolTip="Cycle Synthetic board → Camera 0 → Camera 1." />
-
-                    <Button Content="LOAD IMAGE"
-                            Style="{StaticResource ToolbarButtonStyle}"
-                            Command="{Binding LoadImageFileCommand}"
-                            ToolTip="Replay a breadboard photo (.png / .jpg) instead of a live camera. You can also drag a photo onto the CAD viewport." />
                 </StackPanel>
+
+                <WrapPanel DockPanel.Dock="Left"
+                           Orientation="Horizontal"
+                           VerticalAlignment="Center">
+
+                    <!-- INSPECT -->
+                    <StackPanel Margin="0,0,10,0">
+                        <TextBlock Text="INSPECT" Style="{StaticResource ToolbarGroupLabelStyle}" />
+                        <StackPanel Orientation="Horizontal">
+                            <ToggleButton Content="DEMO MODE"
+                                          Style="{StaticResource ToolbarToggleButtonStyle}"
+                                          IsChecked="{Binding DemoModeEnabled, Mode=TwoWay}"
+                                          ToolTip="Inject a deterministic faulty circuit so the DRC engine and tutor can be exercised without a camera." />
+                            <ToggleButton Content="X-RAY"
+                                          Style="{StaticResource ToolbarToggleButtonStyle}"
+                                          IsChecked="{Binding ShowAllStrips, Mode=TwoWay}"
+                                          ToolTip="Reveal all 126 conductive clips behind the board so shorts are easy to see." />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <Border Style="{StaticResource ToolbarSeparatorStyle}" Margin="0,2,10,0" />
+
+                    <!-- IMAGE -->
+                    <StackPanel Margin="0,0,10,0">
+                        <TextBlock Text="IMAGE" Style="{StaticResource ToolbarGroupLabelStyle}" />
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="{Binding CameraLabel}"
+                                    Style="{StaticResource ToolbarButtonStyle}"
+                                    Command="{Binding CycleCameraCommand}"
+                                    ToolTip="Cycle Synthetic board → Camera 0 → Camera 1." />
+                            <Button Content="LOAD IMAGE"
+                                    Style="{StaticResource ToolbarButtonStyle}"
+                                    Command="{Binding LoadImageFileCommand}"
+                                    ToolTip="Replay a breadboard photo as the camera frame. You can also drag a photo onto the CAD viewport." />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <Border Style="{StaticResource ToolbarSeparatorStyle}" Margin="0,2,10,0" />
+
+                    <!-- DIAGNOSE -->
+                    <StackPanel Margin="0,0,10,0">
+                        <TextBlock Text="DIAGNOSE" Style="{StaticResource ToolbarGroupLabelStyle}" />
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="REPLAY DIAGNOSTIC"
+                                    Style="{StaticResource ToolbarButtonStyle}"
+                                    Command="{Binding ReplayDiagnosticCommand}" />
+                            <Button Content="TEST ALARM"
+                                    Style="{StaticResource ToolbarButtonStyle}"
+                                    Command="{Binding TestAlarmCommand}" />
+                            <ToggleButton Content="MUTE VOICE"
+                                          Style="{StaticResource ToolbarToggleButtonStyle}"
+                                          IsChecked="{Binding IsVoiceMuted, Mode=TwoWay}" />
+                        </StackPanel>
+                    </StackPanel>
+                </WrapPanel>
+
+                <Button DockPanel.Dock="Right"
+                        Content="PANELS"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        VerticalAlignment="Center"
+                        Margin="8,0,0,0"
+                        Command="{Binding RestoreDocksCommand}"
+                        ToolTip="Restore both tool docks and open the VIEW layout panel. Works after WIDE CANVAS hides them." />
             </DockPanel>
         </Border>
 
@@ -78,17 +113,21 @@
              ================================================================ -->
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="270" />
+                <ColumnDefinition Width="{Binding LeftDockColumnWidth}" />
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="338" />
+                <ColumnDefinition Width="{Binding RightDockColumnWidth}" />
             </Grid.ColumnDefinitions>
 
             <!-- LEFT DOCK -->
             <Border Grid.Column="0"
                     Background="{StaticResource PanelBackgroundBrush}"
                     BorderBrush="{StaticResource BorderBrush}"
-                    BorderThickness="0,0,1,0">
-                <TabControl Style="{StaticResource DockTabControlStyle}">
+                    BorderThickness="0,0,1,0"
+                    Visibility="{Binding IsLeftDockVisible, Converter={StaticResource BoolToVis}}">
+                <TabControl x:Name="LeftDockTabs"
+                            Style="{StaticResource DockTabControlStyle}"
+                            SelectionChanged="OnLeftDockTabChanged"
+                            SelectedIndex="{Binding SelectedLeftTabIndex, Mode=TwoWay}">
                     <!-- ============================ SCENE ============================ -->
                     <TabItem Header="SCENE" Style="{StaticResource DockTabItemStyle}">
                         <ScrollViewer VerticalScrollBarVisibility="Auto"
@@ -129,12 +168,18 @@
                                     <CheckBox Content="Show X-ray metal clips"
                                               Style="{StaticResource LayerCheckBoxStyle}"
                                               IsChecked="{Binding ShowXRayStrips, Mode=TwoWay}" />
+                                    <CheckBox Content="Show all 126 clips (X-ray)"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding ShowAllStrips, Mode=TwoWay}" />
                                     <CheckBox Content="Show KiCad ratsnest arrows"
                                               Style="{StaticResource LayerCheckBoxStyle}"
                                               IsChecked="{Binding ShowRatsnestArrows, Mode=TwoWay}" />
-                                    <CheckBox Content="Show component boxes"
+                                    <CheckBox Content="Show CAD detection boxes"
                                               Style="{StaticResource LayerCheckBoxStyle}"
                                               IsChecked="{Binding ShowComponentBoxes, Mode=TwoWay}" />
+                                    <CheckBox Content="Show realistic part symbols"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding ShowRealisticParts, Mode=TwoWay}" />
                                     <CheckBox Content="Show component labels"
                                               Style="{StaticResource LayerCheckBoxStyle}"
                                               IsChecked="{Binding ShowComponentLabels, Mode=TwoWay}" />
@@ -144,7 +189,7 @@
                                     <CheckBox Content="Show telemetry HUD"
                                               Style="{StaticResource LayerCheckBoxStyle}"
                                               IsChecked="{Binding ShowTelemetry, Mode=TwoWay}" />
-                                    <CheckBox Content="Camera underlay"
+                                    <CheckBox Content="Show camera / photo underlay"
                                               Style="{StaticResource LayerCheckBoxStyle}"
                                               IsChecked="{Binding ShowCameraUnderlay, Mode=TwoWay}" />
                                 </StackPanel>
@@ -167,8 +212,249 @@
                         </ScrollViewer>
                     </TabItem>
 
-                    <!-- ========================== REMOTE AI ========================== -->
-                    <TabItem Header="REMOTE AI" Style="{StaticResource DockTabItemStyle}">
+                    <!-- =========================== BUILDER =========================== -->
+                    <TabItem Header="BUILDER" Style="{StaticResource DockTabItemStyle}">
+                        <ScrollViewer x:Name="BuilderScroll"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel>
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                <Border Style="{StaticResource DockHeaderBorderStyle}">
+                                    <DockPanel LastChildFill="False">
+                                        <TextBlock Text="X-RAY CIRCUIT BUILDER" Style="{StaticResource DockHeaderTextStyle}" />
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Text="{Binding CircuitSummary}"
+                                                   Style="{StaticResource StatusTextStyle}" />
+                                    </DockPanel>
+                                </Border>
+
+                                <StackPanel Margin="12,8,12,10">
+                                    <ToggleButton Content="BUILD MODE"
+                                                  Style="{StaticResource ToolbarToggleButtonStyle}"
+                                                  HorizontalAlignment="Left"
+                                                  IsChecked="{Binding IsBuildMode, Mode=TwoWay}"
+                                                  ToolTip="Hand the netlist to the builder. The DRC then judges only the parts below." />
+
+                                    <TextBlock Text="Left click a tie point for lead 1, then a second tie point for lead 2. Right click removes the last part touching that hole."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,6,0,0" />
+
+                                    <TextBlock Text="PART PALETTE"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,10,0,3" />
+                                    <ListBox Style="{StaticResource WorkstationListBoxStyle}"
+                                             ItemContainerStyle="{StaticResource PaletteListItemStyle}"
+                                             ItemsSource="{Binding BuildPartOptions}"
+                                             SelectedItem="{Binding SelectedPartOption, Mode=TwoWay}"
+                                             Focusable="False"
+                                             MaxHeight="168">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding Label}" Style="{StaticResource ScenarioTitleTextStyle}" />
+                                                    <TextBlock Text="{Binding Hint}"
+                                                               Style="{StaticResource ScenarioDetailTextStyle}" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+
+                                    <TextBlock Text="QUICK PRESET / IC TYPE"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,8,0,3" />
+                                    <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                              ItemsSource="{Binding PartValuePresets}"
+                                              SelectedItem="{Binding SelectedPartValuePreset, Mode=TwoWay}"
+                                              DisplayMemberPath="Label"
+                                              ToolTip="One click fills the value, the KiCad symbol and the DIP pin count. Pick RESISTOR for 220R / 10K, or IC for NE555P / LM358 / 74LS00 / CD4017 / ATmega328P." />
+
+                                    <TextBlock Text="FOOTPRINT"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,8,0,3" />
+                                    <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                              ItemsSource="{Binding PinCountOptions}"
+                                              SelectedItem="{Binding SelectedPinCount, Mode=TwoWay}"
+                                              DisplayMemberPath="Label"
+                                              ToolTip="A DIP or 3-pin footprint is placed whole from a single click on pin 1." />
+
+                                    <TextBlock Text="VALUE"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,4,0,3" />
+                                    <TextBox Style="{StaticResource DockTextBoxStyle}"
+                                             Text="{Binding NewPartValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="Printed value, e.g. 4K7, 10uF, NE555P. Blank uses the kind default." />
+
+                                    <TextBlock Text="KICAD SYMBOL / FOOTPRINT (OPTIONAL)"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,2,0,3" />
+                                    <DockPanel LastChildFill="True" Margin="0,0,0,2">
+                                        <Button DockPanel.Dock="Right"
+                                                Content="BROWSE"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Width="70"
+                                                Margin="6,0,0,0"
+                                                Command="{Binding BrowseNewPartSymbolCommand}"
+                                                ToolTip="Search all 22,910 symbols in the bundled KiCad library." />
+                                        <TextBox Style="{StaticResource DockTextBoxStyle}"
+                                                 Text="{Binding NewPartSymbol, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 ToolTip="Library/Symbol, e.g. Timer/NE555P. Blank uses the kind default." />
+                                    </DockPanel>
+
+                                    <TextBlock Text="LEAD 1 / LEAD 2 (CLICK OR TYPE)"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,6,0,3" />
+                                    <UniformGrid Columns="2">
+                                        <TextBox Style="{StaticResource DockTextBoxStyle}"
+                                                 Margin="0,0,3,0"
+                                                 ToolTip="A15, E20 or TOP_VCC_12. For a DIP this is pin 1."
+                                                 Text="{Binding BuildPin1Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBox Style="{StaticResource DockTextBoxStyle}"
+                                                 Margin="3,0,0,0"
+                                                 ToolTip="D15, F20 or TOP_GND_25. Not used by a DIP/3-pin footprint."
+                                                 Text="{Binding BuildPin2Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </UniformGrid>
+
+                                    <Button Content="PLACE PART"
+                                            Style="{StaticResource DockButtonStyle}"
+                                            HorizontalAlignment="Stretch"
+                                            Margin="0,4,0,0"
+                                            Command="{Binding PlaceTypedPartCommand}" />
+
+                                    <UniformGrid Columns="3" Margin="0,2,0,0">
+                                        <Button Content="CANCEL"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                ToolTip="Cancel the pending first lead."
+                                                Command="{Binding CancelPendingLeadCommand}" />
+                                        <Button Content="UNDO"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Command="{Binding UndoCircuitPartCommand}" />
+                                        <Button Content="CLEAR"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Command="{Binding ClearCircuitCommand}" />
+                                    </UniformGrid>
+
+                                    <TextBlock Text="{Binding BuilderHint}"
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,6,0,0" />
+                                </StackPanel>
+
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                <Border Style="{StaticResource DockHeaderBorderStyle}">
+                                    <TextBlock Text="PLACED PARTS" Style="{StaticResource DockHeaderTextStyle}" />
+                                </Border>
+
+                                <StackPanel Margin="12,8,12,10">
+                                    <Grid MinHeight="72">
+                                        <ListBox Style="{StaticResource WorkstationListBoxStyle}"
+                                                 ItemContainerStyle="{StaticResource DraftPartListItemStyle}"
+                                                 ItemsSource="{Binding DraftParts}"
+                                                 SelectedItem="{Binding SelectedDraftPart, Mode=TwoWay}"
+                                                 MaxHeight="174">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding Display}"
+                                                                   Style="{StaticResource MonoTelemetryTextStyle}"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding Detail}"
+                                                                   Style="{StaticResource ScenarioDetailTextStyle}"
+                                                                   TextWrapping="NoWrap"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding SymbolNote}"
+                                                                   Style="{StaticResource ScenarioDetailTextStyle}"
+                                                                   FontSize="9"
+                                                                   TextWrapping="NoWrap"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+
+                                        <TextBlock Text="No parts yet. Pick a part above, then click lead 1 and lead 2 on the board."
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"
+                                                   TextAlignment="Center"
+                                                   Margin="8,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="{x:Type TextBlock}"
+                                                       BasedOn="{StaticResource MonoSecondaryTextStyle}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding DraftParts.Count}" Value="0">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Grid>
+
+                                    <TextBlock Text="SELECTED PART VALUE / SYMBOL"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,6,0,3" />
+                                    <TextBox Style="{StaticResource DockTextBoxStyle}"
+                                             Text="{Binding EditPartValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="Printed value of the selected part, e.g. 4K7 or NE555P." />
+                                    <DockPanel LastChildFill="True" Margin="0,0,0,2">
+                                        <Button DockPanel.Dock="Right"
+                                                Content="BROWSE"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Width="70"
+                                                Margin="6,0,0,0"
+                                                Command="{Binding BrowseEditPartSymbolCommand}" />
+                                        <TextBox Style="{StaticResource DockTextBoxStyle}"
+                                                 Text="{Binding EditPartSymbol, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 ToolTip="KiCad symbol of the selected part, e.g. Timer/NE555P." />
+                                    </DockPanel>
+                                    <Button Content="APPLY VALUE / SYMBOL"
+                                            Style="{StaticResource DockButtonStyle}"
+                                            HorizontalAlignment="Stretch"
+                                            Margin="0,2,0,0"
+                                            Command="{Binding ApplyPartEditsCommand}" />
+
+                                    <UniformGrid Columns="1" Margin="0,4,0,0">
+                                        <Button Content="REMOVE SELECTED"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                HorizontalAlignment="Stretch"
+                                                Command="{Binding RemoveSelectedCircuitPartCommand}" />
+                                        <Button Content="LOAD SELECTED DEMO"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                HorizontalAlignment="Stretch"
+                                                Margin="0,2,0,0"
+                                                ToolTip="Copies the scenario picked in the SCENE tab into the builder."
+                                                Command="{Binding LoadExampleCircuitCommand}" />
+                                    </UniformGrid>
+
+                                    <Button Content="LOAD 555 EXAMPLE"
+                                            Style="{StaticResource DockButtonStyle}"
+                                            HorizontalAlignment="Stretch"
+                                            Margin="0,2,0,0"
+                                            ToolTip="Loads the reference NE555 astable, which passes every DRC rule."
+                                            Command="{Binding Load555CircuitCommand}" />
+                                </StackPanel>
+
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                <Border Style="{StaticResource DockHeaderBorderStyle}">
+                                    <TextBlock Text="RESOLVED NETLIST" Style="{StaticResource DockHeaderTextStyle}" />
+                                </Border>
+
+                                <TextBlock Text="{Binding NetlistText}"
+                                           FontFamily="{StaticResource MonoFontFamily}"
+                                           FontSize="10"
+                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           TextWrapping="Wrap"
+                                           Margin="12,8,12,10" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+
+                    <!-- ========================== AI ROUTING ========================== -->
+                    <TabItem Header="AI ROUTING" Style="{StaticResource DockTabItemStyle}">
                         <ScrollViewer VerticalScrollBarVisibility="Auto"
                                       HorizontalScrollBarVisibility="Disabled">
                             <StackPanel>
@@ -176,14 +462,115 @@
 
                                 <Border Style="{StaticResource DockHeaderBorderStyle}">
                                     <DockPanel LastChildFill="False">
-                                        <TextBlock Text="COLAB TUTOR" Style="{StaticResource DockHeaderTextStyle}" />
+                                        <TextBlock Text="TUTOR ROUTING" Style="{StaticResource DockHeaderTextStyle}" />
                                         <TextBlock DockPanel.Dock="Right"
                                                    Text="{Binding RemoteRouteLabel}"
                                                    Style="{StaticResource StatusTextStyle}" />
                                     </DockPanel>
                                 </Border>
 
-                                <StackPanel Margin="12,8,12,14">
+                                <StackPanel Margin="12,10,12,8">
+                                    <TextBlock Text="STEP 1 · CHOOSE WHERE QWEN RUNS"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,0,0,4" />
+                                    <ListBox Style="{StaticResource WorkstationListBoxStyle}"
+                                             ItemContainerStyle="{StaticResource RouteListItemStyle}"
+                                             ItemsSource="{Binding AiRouteOptions}"
+                                             SelectedValue="{Binding SelectedAiRoute, Mode=TwoWay}"
+                                             SelectedValuePath="Method"
+                                             Focusable="False"
+                                             VirtualizingPanel.IsVirtualizing="False">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="14" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+
+                                                    <Ellipse Width="7" Height="7"
+                                                             VerticalAlignment="Top"
+                                                             Margin="0,4,0,0">
+                                                        <Ellipse.Style>
+                                                            <Style TargetType="{x:Type Ellipse}">
+                                                                <Setter Property="Fill" Value="Transparent" />
+                                                                <Setter Property="Stroke" Value="{StaticResource TextMutedBrush}" />
+                                                                <Setter Property="StrokeThickness" Value="1" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType={x:Type ListBoxItem}}}"
+                                                                                 Value="True">
+                                                                        <Setter Property="Fill" Value="{StaticResource AccentBlueBrush}" />
+                                                                        <Setter Property="Stroke" Value="{StaticResource AccentBlueBrush}" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Ellipse.Style>
+                                                    </Ellipse>
+
+                                                    <StackPanel Grid.Column="1">
+                                                        <DockPanel LastChildFill="False">
+                                                            <TextBlock Text="{Binding Title}"
+                                                                       Style="{StaticResource ScenarioTitleTextStyle}" />
+                                                            <TextBlock DockPanel.Dock="Right"
+                                                                       Text="{Binding Badge}"
+                                                                       Style="{StaticResource MonoSecondaryTextStyle}" />
+                                                        </DockPanel>
+                                                        <TextBlock Text="{Binding Summary}"
+                                                                   Style="{StaticResource ScenarioDetailTextStyle}" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </StackPanel>
+
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                <Border Style="{StaticResource DockHeaderBorderStyle}">
+                                    <TextBlock Text="{Binding SelectedAiRouteTitle}"
+                                               Style="{StaticResource DockHeaderTextStyle}" />
+                                </Border>
+
+                                <!-- LOCAL QWEN -->
+                                <StackPanel Margin="12,8,12,14"
+                                            Visibility="{Binding IsLocalQwenRoute, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="llama-server.exe runs on the RTX 3060 and streams Qwen3-VL tokens over loopback. Nothing leaves this PC."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,8" />
+
+                                    <Button Content="USE LOCAL QWEN"
+                                            Style="{StaticResource DockButtonStyle}"
+                                            HorizontalAlignment="Stretch"
+                                            Command="{Binding UseLocalTutorCommand}"
+                                            ToolTip="Clears any tunnel and sends the tutor back to llama-server on this PC." />
+
+                                    <Border Style="{StaticResource DockSeparatorStyle}" Margin="0,10,0,8" />
+
+                                    <TextBlock Text="ACTIVE TUTOR"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,0,0,2" />
+                                    <TextBlock Text="{Binding TutorBackend}"
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,4" />
+                                    <TextBlock Text="{Binding VoiceBackend}"
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock Text="Only Qwen's answers are spoken. DRC faults stay in the right-hand list as text; the critical-short alarm is the only other sound."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,8,0,0" />
+                                </StackPanel>
+
+                                <!-- COLAB TUNNEL -->
+                                <StackPanel Margin="12,8,12,14"
+                                            Visibility="{Binding IsColabRoute, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="Run the notebook, then paste the single BBAOI1|... line it prints in cell 5. The code is remembered for the next start."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,8" />
+
                                     <TextBlock Text="PAIR CODE"
                                                Style="{StaticResource StatusTextStyle}"
                                                Margin="0,0,0,3" />
@@ -198,33 +585,20 @@
                                                 Command="{Binding ConnectPairCodeCommand}" />
                                         <Button Content="DISCONNECT"
                                                 Style="{StaticResource DockButtonStyle}"
-                                                ToolTip="Forgets the saved endpoint and returns to the local tutor."
+                                                ToolTip="Forgets the tunnel and returns to local Qwen."
                                                 Command="{Binding DisconnectPairCodeCommand}" />
                                     </UniformGrid>
 
-                                    <TextBlock Text="{Binding RemoteAiStatus}"
-                                               Style="{StaticResource MonoSecondaryTextStyle}"
-                                               TextWrapping="Wrap"
-                                               Margin="0,6,0,10" />
+                                    <Border Style="{StaticResource DockSeparatorStyle}" Margin="0,10,0,8" />
 
-                                    <TextBlock Text="The notebook prints BBAOI1|https://....trycloudflare.com|key in cell 5. Paste the whole line; it is remembered for the next start."
-                                               Style="{StaticResource MonoSecondaryTextStyle}"
-                                               TextWrapping="Wrap"
-                                               Margin="0,0,0,10" />
-
-                                    <Border Style="{StaticResource DockSeparatorStyle}" />
-
-                                    <Border Style="{StaticResource DockHeaderBorderStyle}">
-                                        <DockPanel LastChildFill="False">
-                                            <TextBlock Text="GOOGLE DRIVE (OPTIONAL AUTO-CONNECT)"
-                                                       Style="{StaticResource DockHeaderTextStyle}" />
-                                            <TextBlock DockPanel.Dock="Right"
-                                                       Text="{Binding GoogleAccountStatus}"
-                                                       Style="{StaticResource StatusTextStyle}" />
-                                        </DockPanel>
-                                    </Border>
-
-                                    <TextBlock Text="Only needed if you want the app to discover the tunnel by itself. The pair code above needs no Google account."
+                                    <DockPanel LastChildFill="False" Margin="0,0,0,4">
+                                        <TextBlock Text="GOOGLE DRIVE (OPTIONAL)"
+                                                   Style="{StaticResource DockHeaderTextStyle}" />
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Text="{Binding GoogleAccountStatus}"
+                                                   Style="{StaticResource StatusTextStyle}" />
+                                    </DockPanel>
+                                    <TextBlock Text="Only needed if you want automatic tunnel discovery. The pair code above needs no Google account."
                                                Style="{StaticResource MonoSecondaryTextStyle}"
                                                TextWrapping="Wrap"
                                                Margin="0,0,0,8" />
@@ -238,7 +612,7 @@
 
                                     <TextBlock Text="CLIENT SECRET (OPTIONAL)"
                                                Style="{StaticResource StatusTextStyle}"
-                                               Margin="0,0,0,3" />
+                                               Margin="0,6,0,3" />
                                     <TextBox Style="{StaticResource DockTextBoxStyle}"
                                              Text="{Binding GoogleClientSecret, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
 
@@ -249,37 +623,280 @@
                                         <Button Content="UNLINK"
                                                 Style="{StaticResource DockButtonStyle}"
                                                 Command="{Binding UnlinkGoogleCommand}" />
-                                        <Button Content="PUBLISH SESSION"
-                                                Style="{StaticResource DockButtonStyle}"
-                                                ToolTip="Writes a one-time session key to Drive for the Colab notebook."
-                                                Command="{Binding PublishColabSessionCommand}" />
-                                        <Button Content="OPEN NOTEBOOK"
-                                                Style="{StaticResource DockButtonStyle}"
-                                                Command="{Binding OpenColabNotebookCommand}" />
-                                        <Button Content="REFRESH ENDPOINT"
-                                                Style="{StaticResource DockButtonStyle}"
-                                                Command="{Binding RefreshColabCommand}" />
-                                        <ToggleButton Content="USE COLAB AI"
-                                                      Style="{StaticResource ToolbarToggleButtonStyle}"
-                                                      IsChecked="{Binding UseColabAi, Mode=TwoWay}"
-                                                      Margin="0,0,4,4" />
                                     </UniformGrid>
 
-                                    <Border Style="{StaticResource DockSeparatorStyle}" />
+                                    <Button Content="PUBLISH SESSION"
+                                            Style="{StaticResource DockButtonStyle}"
+                                            HorizontalAlignment="Stretch"
+                                            Margin="0,2,0,0"
+                                            ToolTip="Writes a one-time session key to Drive for the Colab notebook."
+                                            Command="{Binding PublishColabSessionCommand}" />
+                                    <Button Content="OPEN NOTEBOOK"
+                                            Style="{StaticResource DockButtonStyle}"
+                                            HorizontalAlignment="Stretch"
+                                            Margin="0,2,0,0"
+                                            Command="{Binding OpenColabNotebookCommand}" />
+                                    <Button Content="REFRESH ENDPOINT"
+                                            Style="{StaticResource DockButtonStyle}"
+                                            HorizontalAlignment="Stretch"
+                                            Margin="0,2,0,0"
+                                            Command="{Binding RefreshColabCommand}" />
+                                    <ToggleButton Content="USE COLAB AI"
+                                                  Style="{StaticResource ToolbarToggleButtonStyle}"
+                                                  IsChecked="{Binding UseColabAi, Mode=TwoWay}"
+                                                  HorizontalAlignment="Left"
+                                                  Margin="0,8,0,0"
+                                                  ToolTip="Keep polling Drive for a refreshed tunnel while the notebook runs." />
+                                </StackPanel>
 
-                                    <TextBlock Text="MANUAL URL + KEY (ADVANCED)"
+                                <!-- LOCAL PROVIDER -->
+                                <StackPanel Margin="12,8,12,14"
+                                            Visibility="{Binding IsLocalProviderRoute, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="No tunnel and no download: reuse a model that is already loaded in your own LM Studio or Ollama. Nothing is installed or started by this app."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,8" />
+
+                                    <UniformGrid Columns="2">
+                                        <Button Content="LM STUDIO"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                ToolTip="Probes http://127.0.0.1:1234/v1/models"
+                                                Command="{Binding ConnectLocalProviderCommand}"
+                                                CommandParameter="lmstudio" />
+                                        <Button Content="OLLAMA"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                ToolTip="Probes http://127.0.0.1:11434/v1/models"
+                                                Command="{Binding ConnectLocalProviderCommand}"
+                                                CommandParameter="ollama" />
+                                    </UniformGrid>
+
+                                    <TextBlock Text="{Binding LocalProviderStatus}"
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,8,0,0" />
+                                    <TextBlock Text="The provider must be running with a model loaded. Its own model name is discovered automatically."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,6,0,0" />
+                                </StackPanel>
+
+                                <!-- MANUAL ENDPOINT -->
+                                <StackPanel Margin="12,8,12,14"
+                                            Visibility="{Binding IsManualRoute, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="For an advanced tunnel or a provider that is not listed. Remote hosts must use https; plain http is accepted only for 127.0.0.1."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,8" />
+
+                                    <TextBlock Text="TUNNEL URL"
                                                Style="{StaticResource StatusTextStyle}"
-                                               Margin="0,10,0,3" />
+                                               Margin="0,0,0,3" />
                                     <TextBox Style="{StaticResource DockTextBoxStyle}"
                                              ToolTip="https://random-words.trycloudflare.com"
                                              Text="{Binding ManualEndpoint, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                                    <TextBlock Text="BEARER KEY"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,6,0,3" />
                                     <TextBox Style="{StaticResource DockTextBoxStyle}"
-                                             ToolTip="Bearer key printed by the notebook."
+                                             ToolTip="Bearer key printed by the notebook; leave blank if the endpoint has none."
                                              Text="{Binding ManualApiKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
                                     <Button Content="APPLY MANUAL ENDPOINT"
                                             Style="{StaticResource DockButtonStyle}"
                                             HorizontalAlignment="Stretch"
+                                            Margin="0,2,0,0"
                                             Command="{Binding ApplyManualEndpointCommand}" />
+
+                                    <TextBlock Text="A custom public domain asks for confirmation before any crop leaves this PC."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,8,0,0" />
+                                </StackPanel>
+
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                <StackPanel Margin="12,8,12,12">
+                                    <TextBlock Text="LAST ACTION"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,0,0,3" />
+                                    <TextBlock Text="{Binding RemoteAiStatus}"
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+
+                    <!-- ============================ VIEW ============================ -->
+                    <TabItem Header="VIEW" Style="{StaticResource DockTabItemStyle}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel>
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                <Border Style="{StaticResource DockHeaderBorderStyle}">
+                                    <DockPanel LastChildFill="False">
+                                        <TextBlock Text="WORKSPACE LAYOUT" Style="{StaticResource DockHeaderTextStyle}" />
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Text="AUTO-SAVED"
+                                                   Style="{StaticResource StatusTextStyle}" />
+                                    </DockPanel>
+                                </Border>
+
+                                <StackPanel Margin="12,8,12,12">
+                                    <TextBlock Text="PRESETS"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,0,0,3" />
+
+                                    <UniformGrid Columns="2">
+                                        <Button Content="WORKSTATION"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Margin="0,0,3,2"
+                                                Command="{Binding ApplyLayoutPresetCommand}"
+                                                CommandParameter="workstation"
+                                                ToolTip="SCENE dock on the left, DRC tutor on the right, default widths." />
+                                        <Button Content="WIDE CANVAS"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Margin="3,0,0,2"
+                                                Command="{Binding ApplyLayoutPresetCommand}"
+                                                CommandParameter="canvas"
+                                                ToolTip="Hide both docks so the CAD viewport uses the full window." />
+                                        <Button Content="INSPECT FOCUS"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Margin="0,2,3,0"
+                                                Command="{Binding ApplyLayoutPresetCommand}"
+                                                CommandParameter="inspect"
+                                                ToolTip="Hide the left dock and keep the DRC / tutor dock." />
+                                        <Button Content="BUILDER FOCUS"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Margin="3,2,0,0"
+                                                Command="{Binding ApplyLayoutPresetCommand}"
+                                                CommandParameter="builder"
+                                                ToolTip="Open the BUILDER dock and hide the DRC dock." />
+                                    </UniformGrid>
+
+                                    <TextBlock Text="PANELS"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,12,0,3" />
+                                    <CheckBox Content="LEFT DOCK"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding IsLeftDockVisible, Mode=TwoWay}" />
+                                    <TextBlock Text="SCENE / BUILDER / AI ROUTING / VIEW"
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               Margin="19,0,0,5"
+                                               TextWrapping="Wrap" />
+                                    <CheckBox Content="RIGHT DOCK"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding IsRightDockVisible, Mode=TwoWay}" />
+                                    <TextBlock Text="DRC / PIN INSPECTOR / QWEN"
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               Margin="19,0,0,5"
+                                               TextWrapping="Wrap" />
+
+                                    <TextBlock Text="DOCK WIDTHS"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,12,0,4" />
+
+                                    <DockPanel LastChildFill="False" Margin="0,0,0,1">
+                                        <TextBlock Text="LEFT DOCK" Style="{StaticResource MonoSecondaryTextStyle}" />
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Text="{Binding LeftDockWidth, StringFormat={}{0:F0} PX}"
+                                                   Style="{StaticResource MonoSecondaryTextStyle}" />
+                                    </DockPanel>
+                                    <Slider Minimum="200" Maximum="460"
+                                            Style="{StaticResource DockSliderStyle}"
+                                            TickFrequency="10"
+                                            IsSnapToTickEnabled="True"
+                                            Value="{Binding LeftDockWidth, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                            ToolTip="Drag to resize the left dock. The value is remembered." />
+
+                                    <DockPanel LastChildFill="False" Margin="0,8,0,1">
+                                        <TextBlock Text="RIGHT DOCK" Style="{StaticResource MonoSecondaryTextStyle}" />
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Text="{Binding RightDockWidth, StringFormat={}{0:F0} PX}"
+                                                   Style="{StaticResource MonoSecondaryTextStyle}" />
+                                    </DockPanel>
+                                    <Slider Minimum="240" Maximum="520"
+                                            Style="{StaticResource DockSliderStyle}"
+                                            TickFrequency="10"
+                                            IsSnapToTickEnabled="True"
+                                            Value="{Binding RightDockWidth, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                            ToolTip="Drag to resize the right dock. The value is remembered." />
+
+                                    <Button Content="RESET LAYOUT"
+                                            Style="{StaticResource DockButtonStyle}"
+                                            HorizontalAlignment="Stretch"
+                                            Margin="0,12,0,0"
+                                            Command="{Binding ResetLayoutCommand}"
+                                            ToolTip="Restore the default workstation widths and show both docks." />
+
+                                    <TextBlock Text="AI VOICE (QWEN ANSWERS ONLY)"
+                                               Style="{StaticResource StatusTextStyle}"
+                                               Margin="0,14,0,4" />
+                                    <UniformGrid Columns="2">
+                                        <Button Content="AUTO"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Margin="0,0,3,2"
+                                                Command="{Binding SelectVoiceEngineCommand}"
+                                                CommandParameter="auto"
+                                                ToolTip="Prefer Piper, then Kokoro, then Windows SAPI." />
+                                        <Button Content="PIPER"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Margin="3,0,0,2"
+                                                Command="{Binding SelectVoiceEngineCommand}"
+                                                CommandParameter="piper"
+                                                ToolTip="Use the Piper voice in assets/models/piper (bmo.onnx). No pitch processing." />
+                                        <Button Content="KOKORO"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Margin="0,2,3,0"
+                                                Command="{Binding SelectVoiceEngineCommand}"
+                                                CommandParameter="kokoro"
+                                                ToolTip="Use Kokoro-82M with a natural adult voice." />
+                                        <Button Content="SAPI"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Margin="3,2,0,0"
+                                                Command="{Binding SelectVoiceEngineCommand}"
+                                                CommandParameter="sapi"
+                                                ToolTip="Use the most natural installed Windows voice." />
+                                    </UniformGrid>
+                                    <Button Content="TEST VOICE"
+                                            Style="{StaticResource DockButtonStyle}"
+                                            HorizontalAlignment="Stretch"
+                                            Margin="0,6,0,0"
+                                            Command="{Binding TestVoiceCommand}"
+                                            ToolTip="Speak a short natural test line with the active engine." />
+
+                                    <TextBlock Text="{Binding VoiceBackend}"
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,6,0,0" />
+                                    <TextBlock Text="{Binding VoiceSetupNote}"
+                                               ToolTip="{Binding VoiceSetupNote}"
+                                               MaxHeight="46"
+                                               Margin="0,4,0,0">
+                                        <TextBlock.Style>
+                                            <Style TargetType="{x:Type TextBlock}"
+                                                   BasedOn="{StaticResource MonoSecondaryTextStyle}">
+                                                <Setter Property="Foreground" Value="{StaticResource DrcWarningBrush}" />
+                                                <Setter Property="TextWrapping" Value="Wrap" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding VoiceSetupNote}" Value="">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="Only Qwen's own answers are spoken. DRC faults stay in the right-hand list as text. If the model is offline the explanation is text-only and nothing is spoken."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,4,0,0" />
+
+                                    <TextBlock Text="Presets, panel visibility and widths are saved automatically to %LOCALAPPDATA%\BreadboardAOI\workspace-layout.json. Click a tab above to choose which tool dock is active."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,8,0,0" />
                                 </StackPanel>
                             </StackPanel>
                         </ScrollViewer>
@@ -296,7 +913,7 @@
 
                 <Border Grid.Row="0" Style="{StaticResource DockHeaderBorderStyle}">
                     <DockPanel LastChildFill="False">
-                        <TextBlock Text="CAD VIEWPORT / X-RAY OVERLAY"
+                        <TextBlock Text="{Binding ViewportTitle}"
                                    Style="{StaticResource DockHeaderTextStyle}" />
                         <TextBlock DockPanel.Dock="Right"
                                    Text="{Binding HoverHoleId, StringFormat=PIN {0}}"
@@ -311,6 +928,8 @@
                                     PaintSurface="OnViewportPaintSurface"
                                     MouseMove="OnViewportMouseMove"
                                     MouseLeave="OnViewportMouseLeave"
+                                    MouseLeftButtonDown="OnViewportMouseLeftButtonDown"
+                                    MouseRightButtonDown="OnViewportMouseRightButtonDown"
                                     AllowDrop="True"
                                     DragOver="OnViewportDragOver"
                                     Drop="OnViewportDrop" />
@@ -321,7 +940,8 @@
             <Border Grid.Column="2"
                     Background="{StaticResource PanelBackgroundBrush}"
                     BorderBrush="{StaticResource BorderBrush}"
-                    BorderThickness="1,0,0,0">
+                    BorderThickness="1,0,0,0"
+                    Visibility="{Binding IsRightDockVisible, Converter={StaticResource BoolToVis}}">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -459,12 +1079,14 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
                         <Border Grid.Row="0" Style="{StaticResource DockHeaderBorderStyle}">
                             <DockPanel LastChildFill="False">
-                                <TextBlock Text="TUTOR / DIAGNOSTIC" Style="{StaticResource DockHeaderTextStyle}" />
+                                <TextBlock Text="QWEN EXPLANATION"
+                                           Style="{StaticResource DockHeaderTextStyle}" />
                                 <TextBlock DockPanel.Dock="Right" Text="{Binding DrcStatus}"
                                            Style="{StaticResource MonoSecondaryTextStyle}" />
                             </DockPanel>
@@ -472,9 +1094,14 @@
 
                         <TextBlock Grid.Row="1" Text="{Binding TutorBackend}"
                                    Style="{StaticResource StatusTextStyle}"
-                                   Margin="12,6,12,4" />
+                                   Margin="12,6,12,2" />
 
-                        <TextBox Grid.Row="2" x:Name="TranscriptBox"
+                        <TextBlock Grid.Row="2" Text="{Binding TutorLatency}"
+                                   Style="{StaticResource MonoSecondaryTextStyle}"
+                                   TextTrimming="CharacterEllipsis"
+                                   Margin="12,0,12,4" />
+
+                        <TextBox Grid.Row="3" x:Name="TranscriptBox"
                                  Style="{StaticResource ConsoleTextBoxStyle}"
                                  Margin="12,0,12,12"
                                  Text="{Binding TutorTranscript, Mode=OneWay}"
