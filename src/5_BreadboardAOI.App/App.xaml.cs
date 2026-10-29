@@ -20,6 +20,18 @@ public partial class App : Application
 
         ShutdownMode = ShutdownMode.OnMainWindowClose;
         DispatcherUnhandledException += OnDispatcherUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException += (s, args) =>
+        {
+            if (args.ExceptionObject is Exception ex)
+                TryLog(ex);
+            else
+                TryLog(new Exception($"Non-exception unhandled error: {args.ExceptionObject}"));
+        };
+        System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (s, args) =>
+        {
+            TryLog(args.Exception);
+            args.SetObserved();
+        };
     }
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)

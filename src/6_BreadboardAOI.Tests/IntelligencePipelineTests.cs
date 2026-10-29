@@ -145,6 +145,34 @@ public sealed class IntelligencePipelineTests
     }
 
     [Fact]
+    public async Task Offline_message_streams_when_rule_based_fallback_disabled()
+    {
+        var options = new QwenMoEOptions
+        {
+            EndpointUrl = "http://127.0.0.1:9/v1/chat/completions",
+            ModelPath = "assets/models/does-not-exist.gguf",
+            MmprojPath = "assets/models/does-not-exist-mmproj.gguf",
+            ServerExecutablePath = "tools/does-not-exist-llama-server.exe",
+            AutoLaunchServer = false,
+            RequestTimeoutSeconds = 1,
+            FallbackTokensPerSecond = 500
+        };
+
+        using var service = new QwenMoEService(options)
+        {
+            AllowRuleBasedFallback = false
+        };
+        var tokens = new List<string>();
+
+        await foreach (string token in service.StreamDiagnosticAsync(CreateSameStripPacket()))
+            tokens.Add(token);
+
+        tokens.Should().NotBeEmpty();
+        string answer = string.Concat(tokens);
+        answer.Should().Contain("Qwen AI is offline");
+    }
+
+    [Fact]
     public void Threads_scale_with_the_processor_count()
     {
         QwenMoEOptions.DeriveThreadsBatch(20).Should().Be(12);

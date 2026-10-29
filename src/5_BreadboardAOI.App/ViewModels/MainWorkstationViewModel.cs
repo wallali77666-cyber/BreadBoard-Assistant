@@ -504,6 +504,8 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             ApplyLayoutPreset(startLayout);
 
         if (IsEnvironmentFlagSet("BREADBOARD_START_VIEW"))
+            SelectedLeftTabIndex = 4;
+        else if (IsEnvironmentFlagSet("BREADBOARD_START_CUSTOMIZE"))
             SelectedLeftTabIndex = 3;
 
         // Create the layout file on the first run. Doing it here (rather than
@@ -579,6 +581,12 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
                 StatusLine = "LAYOUT: BUILDER FOCUS - BUILDER dock open, DRC dock hidden.";
                 break;
 
+            case "customize":
+                IsLeftDockVisible = true;
+                SelectedLeftTabIndex = 3;
+                StatusLine = "LAYOUT: CUSTOMIZE - pipeline engine toggles active.";
+                break;
+
             case "reset":
             case "workstation":
             default:
@@ -611,7 +619,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     {
         IsLeftDockVisible = true;
         IsRightDockVisible = true;
-        SelectedLeftTabIndex = 3;
+        SelectedLeftTabIndex = 4;
         StatusLine = "LAYOUT: docks restored. Pick a preset or resize them in VIEW.";
         ScheduleLayoutSave();
     }
@@ -753,6 +761,44 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     [ObservableProperty]
     private string _remoteRouteLabel = "TUTOR ROUTE: LOCAL";
 
+    // ---- Customization / Pipeline Engine Toggles ----------------------------
+
+    [ObservableProperty]
+    private bool _isOpenCvEnabled = true;
+
+    [ObservableProperty]
+    private bool _isYoloEnabled = true;
+
+    [ObservableProperty]
+    private bool _isHandGateEnabled = true;
+
+    [ObservableProperty]
+    private bool _isDrcEnabled = true;
+
+    [ObservableProperty]
+    private bool _isAlarmEnabled = true;
+
+    [ObservableProperty]
+    private bool _isCognitiveTutorEnabled = true;
+
+    [ObservableProperty]
+    private bool _isRuleBasedAdviceEnabled;
+
+    [ObservableProperty]
+    private bool _speakRuleBasedAdvice = true;
+
+    [ObservableProperty]
+    private bool _isAffinityEnabled = true;
+
+    [ObservableProperty]
+    private bool _isBmoVoiceStylingEnabled = true;
+
+    public bool IsVoiceEnabled
+    {
+        get => !IsVoiceMuted;
+        set => IsVoiceMuted = !value;
+    }
+
     // ---- AI routing: method first, then only that method's settings ---------
 
     /// <summary>The four places the Qwen tutor can run. The picker selects one.</summary>
@@ -864,7 +910,16 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
 
         _coordinator = coordinator;
         coordinator.SetVoiceMuted(IsVoiceMuted);
+        coordinator.IsOpenCvEnabled = IsOpenCvEnabled;
+        coordinator.IsYoloEnabled = IsYoloEnabled;
+        coordinator.IsHandGateEnabled = IsHandGateEnabled;
+        coordinator.IsDrcEnabled = IsDrcEnabled;
+        coordinator.IsAlarmEnabled = IsAlarmEnabled;
+        coordinator.IsCognitiveTutorEnabled = IsCognitiveTutorEnabled;
+        coordinator.IsRuleBasedAdviceEnabled = IsRuleBasedAdviceEnabled;
+        coordinator.SpeakRuleBasedAdvice = SpeakRuleBasedAdvice;
         coordinator.ReflexDrcUpdated += OnReflexDrcUpdated;
+        coordinator.TutorTurnStarted += OnTutorTurnStarted;
         coordinator.TutorTranscriptTokenReceived += OnTutorToken;
         coordinator.TutorDiagnosticCompleted += OnTutorCompleted;
         coordinator.StatusChanged += OnStatusChanged;
@@ -2221,6 +2276,15 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         });
     }
 
+    private void OnTutorTurnStarted()
+    {
+        lock (_transcriptGate)
+        {
+            _transcriptBuffer.Clear();
+            _transcriptDirty = true;
+        }
+    }
+
     private void OnTutorToken(string token)
     {
         if (string.IsNullOrEmpty(token))
@@ -2240,9 +2304,6 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     {
         lock (_transcriptGate)
         {
-            if (_transcriptBuffer.Length > 0)
-                _transcriptBuffer.AppendLine().AppendLine();
-
             _transcriptDirty = true;
         }
     }
@@ -2494,7 +2555,59 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         CommitDraft();
     }
 
-    partial void OnIsVoiceMutedChanged(bool value) => _coordinator?.SetVoiceMuted(value);
+    partial void OnIsVoiceMutedChanged(bool value)
+    {
+        _coordinator?.SetVoiceMuted(value);
+        OnPropertyChanged(nameof(IsVoiceEnabled));
+    }
+
+    partial void OnIsOpenCvEnabledChanged(bool value)
+    {
+        if (_coordinator is not null)
+            _coordinator.IsOpenCvEnabled = value;
+    }
+
+    partial void OnIsYoloEnabledChanged(bool value)
+    {
+        if (_coordinator is not null)
+            _coordinator.IsYoloEnabled = value;
+    }
+
+    partial void OnIsHandGateEnabledChanged(bool value)
+    {
+        if (_coordinator is not null)
+            _coordinator.IsHandGateEnabled = value;
+    }
+
+    partial void OnIsDrcEnabledChanged(bool value)
+    {
+        if (_coordinator is not null)
+            _coordinator.IsDrcEnabled = value;
+    }
+
+    partial void OnIsAlarmEnabledChanged(bool value)
+    {
+        if (_coordinator is not null)
+            _coordinator.IsAlarmEnabled = value;
+    }
+
+    partial void OnIsCognitiveTutorEnabledChanged(bool value)
+    {
+        if (_coordinator is not null)
+            _coordinator.IsCognitiveTutorEnabled = value;
+    }
+
+    partial void OnIsRuleBasedAdviceEnabledChanged(bool value)
+    {
+        if (_coordinator is not null)
+            _coordinator.IsRuleBasedAdviceEnabled = value;
+    }
+
+    partial void OnSpeakRuleBasedAdviceChanged(bool value)
+    {
+        if (_coordinator is not null)
+            _coordinator.SpeakRuleBasedAdvice = value;
+    }
 
     partial void OnUseColabAiChanged(bool value)
     {
@@ -2597,6 +2710,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         if (coordinator is not null)
         {
             coordinator.ReflexDrcUpdated -= OnReflexDrcUpdated;
+            coordinator.TutorTurnStarted -= OnTutorTurnStarted;
             coordinator.TutorTranscriptTokenReceived -= OnTutorToken;
             coordinator.TutorDiagnosticCompleted -= OnTutorCompleted;
             coordinator.StatusChanged -= OnStatusChanged;

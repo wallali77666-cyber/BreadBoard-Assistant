@@ -221,6 +221,14 @@ public partial class MainWindow : Window
 
     private void OnWindowClosing(object? sender, CancelEventArgs e)
     {
+        try
+        {
+            System.IO.File.AppendAllText(
+                System.IO.Path.Combine(System.IO.Path.GetTempPath(), "BreadboardAOI-closing.log"),
+                $"[{DateTimeOffset.Now:O}] OnWindowClosing invoked!\nStackTrace:\n{Environment.StackTrace}\n\n");
+        }
+        catch { }
+
         // Persist the dock layout immediately; the debounce timer may not get
         // another dispatcher turn before the process exits.
         _viewModel.SaveWorkspaceNow();

@@ -883,14 +883,16 @@ public sealed class VoiceSynthesisEngine : IDisposable
             {
                 try
                 {
-                    // SVSFParseSsml (256). Neutral pitch and a slightly slower
-                    // rate keep Zira/Aria conversational instead of clipped.
+                    // SVSFParseSsml (256). Rate 0% and pitch +1% keep Zira/David
+                    // conversational, fluent and natural instead of dragged out or robotic.
+                    int sapiPitch = _options.BmoVoice ? 1 : 0;
+                    int sapiRate = _options.BmoVoice ? 0 : 0;
                     voice.GetType().InvokeMember(
                         "Speak",
                         BindingFlags.InvokeMethod,
                         binder: null,
                         target: voice,
-                        args: new object[] { BuildSapiSsml(sentence), 256 });
+                        args: new object[] { BuildSapiSsml(sentence, sapiPitch, sapiRate), 256 });
 
                     return true;
                 }

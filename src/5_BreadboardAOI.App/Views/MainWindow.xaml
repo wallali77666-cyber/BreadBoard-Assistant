@@ -728,6 +728,163 @@
                         </ScrollViewer>
                     </TabItem>
 
+                    <!-- ============================ CUSTOMIZE ============================ -->
+                    <TabItem Header="CUSTOMIZE" Style="{StaticResource DockTabItemStyle}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel>
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                <!-- SECTION 1: PERCEPTION PIPELINE -->
+                                <Border Style="{StaticResource DockHeaderBorderStyle}">
+                                    <TextBlock Text="PERCEPTION PIPELINE (FAST REFLEX)" Style="{StaticResource DockHeaderTextStyle}" />
+                                </Border>
+
+                                <StackPanel Margin="12,8,12,12">
+                                    <CheckBox Content="OpenCV Camera &amp; Homography Warping"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding IsOpenCvEnabled, Mode=TwoWay}"
+                                              ToolTip="When disabled, skips camera grabbing and homography warping." />
+                                    <TextBlock Text="Warps 1080p camera frames into normalized 1000x500 CAD coordinate space."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="22,0,0,10" />
+
+                                    <CheckBox Content="YOLOv11s-Pose Keypoint Inference"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding IsYoloEnabled, Mode=TwoWay}"
+                                              ToolTip="When disabled, skips ONNX Runtime GPU inference." />
+                                    <TextBlock Text="Extracts component bounding boxes and Lead 1 / Lead 2 hole coordinates."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="22,0,0,10" />
+
+                                    <CheckBox Content="Hand Motion Gate (Cv2.AbsDiff)"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding IsHandGateEnabled, Mode=TwoWay}"
+                                              ToolTip="When disabled, does not wait for hands to clear the frame." />
+                                    <TextBlock Text="Holds inspection until hands are removed and the breadboard is stable for 250 ms."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="22,0,0,4" />
+                                </StackPanel>
+
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                <!-- SECTION 2: ELECTRICAL VERIFICATION -->
+                                <Border Style="{StaticResource DockHeaderBorderStyle}">
+                                    <TextBlock Text="ELECTRICAL VERIFICATION &amp; DRC" Style="{StaticResource DockHeaderTextStyle}" />
+                                </Border>
+
+                                <StackPanel Margin="12,8,12,12">
+                                    <CheckBox Content="KiCad ERC / DRC Engine"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding IsDrcEnabled, Mode=TwoWay}"
+                                              ToolTip="When disabled, clears all DRC checks and netlist resolution." />
+                                    <TextBlock Text="Union-Find jumper netlist resolution, direct short detection, and air-wire ratsnest."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="22,0,0,4" />
+                                </StackPanel>
+
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                <!-- SECTION 3: COGNITIVE TUTOR (QWEN) -->
+                                <Border Style="{StaticResource DockHeaderBorderStyle}">
+                                    <TextBlock Text="COGNITIVE TUTOR (QWEN MoE)" Style="{StaticResource DockHeaderTextStyle}" />
+                                </Border>
+
+                                <StackPanel Margin="12,8,12,12">
+                                    <CheckBox Content="Enable Cognitive Tutor Loop"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding IsCognitiveTutorEnabled, Mode=TwoWay}"
+                                              ToolTip="Dispatches changed board topology to the multimodal tutor loop." />
+                                    <TextBlock Text="Streams explanations from Qwen3-VL-30B-A3B or the connected AI provider."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="22,0,0,10" />
+
+                                    <CheckBox Content="Rule-Based Advice Fallback (When Qwen Offline)"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding IsRuleBasedAdviceEnabled, Mode=TwoWay}"
+                                              ToolTip="When Qwen is offline, generate deterministic DRC repair guidance." />
+                                    <TextBlock Text="When disabled and Qwen is offline, an explicit offline notice is displayed with zero hallucination."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="22,0,0,4" />
+                                </StackPanel>
+
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                <!-- SECTION 4: AUDIO & VOICE SYNTHESIS -->
+                                <Border Style="{StaticResource DockHeaderBorderStyle}">
+                                    <TextBlock Text="AUDIO &amp; VOICE SYNTHESIS (BMO)" Style="{StaticResource DockHeaderTextStyle}" />
+                                </Border>
+
+                                <StackPanel Margin="12,8,12,12">
+                                    <CheckBox Content="Voice Audio Output Enabled"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding IsVoiceEnabled, Mode=TwoWay}"
+                                              ToolTip="Master toggle for spoken voice tutoring." />
+                                    <TextBlock Text="Synthesizes tutor guidance aloud via Kokoro-82M, Piper, or Windows SAPI."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="22,0,0,10" />
+
+                                    <CheckBox Content="Speak Rule-Based Advice When Qwen Offline"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding SpeakRuleBasedAdvice, Mode=TwoWay}"
+                                              ToolTip="Allows the voice engine to speak deterministic DRC repair guidance." />
+                                    <TextBlock Text="Enables spoken advice during local testing without requiring the GPU Qwen model to run."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="22,0,0,10" />
+
+                                    <CheckBox Content="Emergency Short-Circuit Alarm (&lt;10ms)"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding IsAlarmEnabled, Mode=TwoWay}"
+                                              ToolTip="Plays the hardware WAV alarm on critical VCC-GND shorts." />
+                                    <TextBlock Text="Ultra-fast reflex audio alarm that bypasses the LLM to protect physical hardware."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="22,0,0,10" />
+
+                                    <CheckBox Content="BMO Natural Voice Profiling &amp; Pauses"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding IsBmoVoiceStylingEnabled, Mode=TwoWay}"
+                                              ToolTip="Natural conversational pacing, prosody pauses, and audio de-rumble." />
+                                    <TextBlock Text="Shapes synthesis with natural prosody pauses, de-rumble, and conversational rate."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="22,0,0,12" />
+
+                                    <Button Content="AUDITION VOICE (SPEAK SAMPLE)"
+                                            Style="{StaticResource DockButtonStyle}"
+                                            Command="{Binding TestVoiceCommand}"
+                                            ToolTip="Plays a natural greeting line using the active voice backend." />
+                                </StackPanel>
+
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                <!-- SECTION 5: HARDWARE ISOLATION -->
+                                <Border Style="{StaticResource DockHeaderBorderStyle}">
+                                    <TextBlock Text="HARDWARE &amp; AFFINITY" Style="{StaticResource DockHeaderTextStyle}" />
+                                </Border>
+
+                                <StackPanel Margin="12,8,12,14">
+                                    <CheckBox Content="CPU Affinity Mask Pinning"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding IsAffinityEnabled, Mode=TwoWay}"
+                                              ToolTip="Pins threads according to Intel Core i5-13600K hybrid core architecture." />
+                                    <TextBlock Text="P-Cores (0x00FFF) for Qwen AVX2 &amp; TTS; E-Cores (0x3F000 / 0xC0000) for Vision &amp; DRC."
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Margin="22,0,0,4" />
+                                </StackPanel>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+
                     <!-- ============================ VIEW ============================ -->
                     <TabItem Header="VIEW" Style="{StaticResource DockTabItemStyle}">
                         <ScrollViewer VerticalScrollBarVisibility="Auto"

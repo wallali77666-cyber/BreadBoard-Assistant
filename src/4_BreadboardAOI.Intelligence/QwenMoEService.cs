@@ -294,11 +294,17 @@ public sealed class QwenMoEService : IDisposable
     /// <summary>Which path produced the most recent answer.</summary>
     public QwenResponseMode LastMode { get; private set; } = QwenResponseMode.RuleBasedFallback;
 
+    /// <summary>
+    /// When true and Qwen is offline, yields deterministic rule-based advice.
+    /// When false, yields an explicit offline message explaining how to connect Qwen.
+    /// </summary>
+    public bool AllowRuleBasedFallback { get; set; } = true;
+
     public string? LastError { get; private set; }
 
     /// <summary>
     /// Streams the tutor answer for a DRC snapshot. Tries the GPU server first,
-    /// then transparently switches to the deterministic rule-based tutor.
+    /// then transparently switches to the deterministic rule-based tutor if enabled.
     /// </summary>
     public async IAsyncEnumerable<string> StreamDiagnosticAsync(
         DrcStatePacket state,
@@ -351,10 +357,16 @@ public sealed class QwenMoEService : IDisposable
             }
 
             if (!streamFailed)
-                LastError = "Qwen server returned an empty answer; using the rule-based fallback tutor.";
+                LastError = "Qwen server returned an empty answer; checking fallback policy.";
         }
 
         LastMode = QwenResponseMode.RuleBasedFallback;
+        if (!AllowRuleBasedFallback)
+        {
+            yield return "[Qwen AI is offline. Connect via the AI Routing tab (Local Qwen / Colab / LM Studio / Ollama), or enable Rule-Based Advice in the Customization tab.]";
+            yield break;
+        }
+
         await foreach (string token in StreamFallbackAsync(state, cancellationToken).ConfigureAwait(false))
             yield return token;
     }

@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // FILE: src/5_BreadboardAOI.App/Orchestration/InspectionPipelineCoordinator.cs
 // PURPOSE: Owns the dual-loop AOI workstation.
 //          Loop 1 (E-Cores): 60 FPS capture -> homography -> hand gate -> YOLO ->
@@ -219,6 +219,9 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     /// <summary>Full tutor answer once the stream closes.</summary>
     public event Action<string>? TutorDiagnosticCompleted;
 
+    /// <summary>Fired at the start of a fresh tutor diagnostic turn so callers can clear previous text.</summary>
+    public event Action? TutorTurnStarted;
+
     /// <summary>Latency of the last tutor turn (time to first token and total).</summary>
     public event Action<TutorTurnMetrics>? TutorTurnMeasured;
 
@@ -230,6 +233,66 @@ public sealed class InspectionPipelineCoordinator : IDisposable
 
     /// <summary>Critical short: the UI may flash the viewport in addition to the WAV alarm.</summary>
     public event Action<string>? EmergencyAlarmRaised;
+
+    private int _openCvEnabled = 1;
+    private int _yoloEnabled = 1;
+    private int _handGateEnabled = 1;
+    private int _drcEnabled = 1;
+    private int _alarmEnabled = 1;
+    private int _cognitiveTutorToggled = 1;
+    private int _speakRuleBasedAdvice = 1;
+
+    public bool IsOpenCvEnabled
+    {
+        get => Volatile.Read(ref _openCvEnabled) != 0;
+        set => Volatile.Write(ref _openCvEnabled, value ? 1 : 0);
+    }
+
+    public bool IsYoloEnabled
+    {
+        get => Volatile.Read(ref _yoloEnabled) != 0;
+        set => Volatile.Write(ref _yoloEnabled, value ? 1 : 0);
+    }
+
+    public bool IsHandGateEnabled
+    {
+        get => Volatile.Read(ref _handGateEnabled) != 0;
+        set => Volatile.Write(ref _handGateEnabled, value ? 1 : 0);
+    }
+
+    public bool IsDrcEnabled
+    {
+        get => Volatile.Read(ref _drcEnabled) != 0;
+        set => Volatile.Write(ref _drcEnabled, value ? 1 : 0);
+    }
+
+    public bool IsAlarmEnabled
+    {
+        get => Volatile.Read(ref _alarmEnabled) != 0;
+        set => Volatile.Write(ref _alarmEnabled, value ? 1 : 0);
+    }
+
+    public bool IsCognitiveTutorEnabled
+    {
+        get => Volatile.Read(ref _cognitiveTutorToggled) != 0;
+        set => Volatile.Write(ref _cognitiveTutorToggled, value ? 1 : 0);
+    }
+
+    public bool IsRuleBasedAdviceEnabled
+    {
+        get => _qwen?.AllowRuleBasedFallback ?? false;
+        set
+        {
+            if (_qwen is not null)
+                _qwen.AllowRuleBasedFallback = value;
+        }
+    }
+
+    public bool SpeakRuleBasedAdvice
+    {
+        get => Volatile.Read(ref _speakRuleBasedAdvice) != 0;
+        set => Volatile.Write(ref _speakRuleBasedAdvice, value ? 1 : 0);
+    }
 
     public InspectionPipelineOptions Options => _options;
 
@@ -740,13 +803,20 @@ public sealed class InspectionPipelineCoordinator : IDisposable
 
             try
             {
+                if (!IsOpenCvEnabled)
+                {
+                    EvaluateFrame(frame);
+                    await DelayRemainingAsync(frameStart, targetFrameMs, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
                 if (!TryCaptureWarpedFrame(ref calibrationCooldown))
                 {
                     await DelayRemainingAsync(frameStart, targetFrameMs, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
-                bool stable = _motionGate.Update(_warpedFrame);
+                bool stable = !IsHandGateEnabled || _motionGate.Update(_warpedFrame);
 
                 if (_options.EnableCameraPreviewBitmap && (frame & 1) == 0)
                     UpdateBoardBitmap();
@@ -853,7 +923,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             detections = DemoScenarioCatalog.GetDetections(scenario);
             yoloMs = 0d;
         }
-        else if (_yolo is not null)
+        else if (_yolo is not null && IsYoloEnabled)
         {
             _yolo.Infer(_warpedFrame, _yoloDetections, 1);
             detections = CollectionsMarshal.AsSpan(_yoloDetections);
@@ -866,7 +936,17 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             yoloMs = 0d;
         }
 
-        DrcStatePacket packet = _drc.EvaluateBoard(frame, yoloMs, detections, _targetSchematic);
+        DrcStatePacket packet = IsDrcEnabled
+            ? _drc.EvaluateBoard(frame, yoloMs, detections, _targetSchematic)
+            : new DrcStatePacket
+            {
+                FrameNumber = frame,
+                YoloInferenceMs = yoloMs,
+                DrcComputeMs = 0d,
+                StateHash = 0,
+                Components = Array.Empty<SnappedComponent>(),
+                Violations = Array.Empty<DrcViolation>()
+            };
 
         Interlocked.Exchange(ref _frameCount, frame);
         _lastDrcMs = packet.DrcComputeMs;
@@ -944,6 +1024,9 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             : "Critical DRC violation";
 
         EmergencyAlarmRaised?.Invoke(reason);
+
+        if (!IsAlarmEnabled)
+            return;
 
         VoiceSynthesisEngine? voice = _voice;
         if (voice is null)
@@ -1054,9 +1137,14 @@ public sealed class InspectionPipelineCoordinator : IDisposable
 
     private async Task RunTutorTurnAsync(DrcStatePacket packet, CancellationToken cancellationToken)
     {
+        if (!IsCognitiveTutorEnabled)
+            return;
+
         QwenMoEService? qwen = _qwen;
         if (qwen is null)
             return;
+
+        TutorTurnStarted?.Invoke();
 
         var splitter = new SentenceStreamSplitter();
         var transcript = new StringBuilder(320);
@@ -1088,15 +1176,14 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             TutorSentenceCompleted?.Invoke(tail);
         }
 
-        // The voice belongs to Qwen only. A rule-based fallback is a text alert
-        // in the DRC dock; speaking it would blur the difference between the
-        // deterministic checker and the model.
+        // Speak when Qwen answers from the server, or when the operator explicitly
+        // enables spoken rule-based advice fallback.
         bool answeredByQwen = qwen.LastMode == QwenResponseMode.Server;
+        bool shouldSpeak = !VoiceMuted && _voice is not null && sentences.Count > 0 &&
+                           (answeredByQwen || (SpeakRuleBasedAdvice && qwen.AllowRuleBasedFallback));
 
-        // Speak once, after the model has finished. Synthesizing inside the token
-        // loop stalls the stream and chops the voice into disconnected clips.
-        if (answeredByQwen && sentences.Count > 0 && _voice is not null && !VoiceMuted)
-            await _voice.SpeakParagraphAsync(sentences, cancellationToken).ConfigureAwait(false);
+        if (shouldSpeak)
+            await _voice!.SpeakParagraphAsync(sentences, cancellationToken).ConfigureAwait(false);
 
         if (transcript.Length > 0)
         {
