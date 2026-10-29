@@ -85,6 +85,10 @@
                     <StackPanel Margin="0,0,10,0">
                         <TextBlock Text="DIAGNOSE" Style="{StaticResource ToolbarGroupLabelStyle}" />
                         <StackPanel Orientation="Horizontal">
+                            <Button Content="ASK AI"
+                                    Style="{StaticResource ToolbarButtonStyle}"
+                                    Command="{Binding AskAiCommand}"
+                                    ToolTip="Sends the active circuit to Qwen AI for multimodal diagnostic and repair guidance." />
                             <Button Content="REPLAY DIAGNOSTIC"
                                     Style="{StaticResource ToolbarButtonStyle}"
                                     Command="{Binding ReplayDiagnosticCommand}" />
@@ -230,11 +234,25 @@
                                 </Border>
 
                                 <StackPanel Margin="12,8,12,10">
-                                    <ToggleButton Content="BUILD MODE"
-                                                  Style="{StaticResource ToolbarToggleButtonStyle}"
-                                                  HorizontalAlignment="Left"
-                                                  IsChecked="{Binding IsBuildMode, Mode=TwoWay}"
-                                                  ToolTip="Hand the netlist to the builder. The DRC then judges only the parts below." />
+                                    <DockPanel LastChildFill="False">
+                                        <ToggleButton Content="BUILD MODE"
+                                                      Style="{StaticResource ToolbarToggleButtonStyle}"
+                                                      IsChecked="{Binding IsBuildMode, Mode=TwoWay}"
+                                                      ToolTip="Hand the netlist to the builder. The DRC then judges only the parts below." />
+                                        <Button DockPanel.Dock="Right"
+                                                Content="ASK AI"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Padding="10,2"
+                                                Command="{Binding AskAiCommand}"
+                                                ToolTip="Sends the current hand-built circuit and DRC violations to Qwen AI for diagnosis." />
+                                    </DockPanel>
+
+                                    <Button Content="ASK AI TUTOR (DIAGNOSE CIRCUIT)"
+                                            Style="{StaticResource DockButtonStyle}"
+                                            HorizontalAlignment="Stretch"
+                                            Margin="0,6,0,0"
+                                            Command="{Binding AskAiCommand}"
+                                            ToolTip="Sends the current hand-built circuit and DRC violations to Qwen AI for multimodal diagnosis and repair guidance." />
 
                                     <TextBlock Text="Left click a tie point for lead 1, then a second tie point for lead 2. Right click removes the last part touching that hole."
                                                Style="{StaticResource MonoSecondaryTextStyle}"
@@ -1244,6 +1262,14 @@
                             <DockPanel LastChildFill="False">
                                 <TextBlock Text="QWEN EXPLANATION"
                                            Style="{StaticResource DockHeaderTextStyle}" />
+                                <Button DockPanel.Dock="Right"
+                                        Content="ASK AI"
+                                        Style="{StaticResource DockButtonStyle}"
+                                        Height="20"
+                                        Padding="8,1"
+                                        Margin="8,0,0,0"
+                                        Command="{Binding AskAiCommand}"
+                                        ToolTip="Request an immediate Qwen AI multimodal diagnostic for the active board state." />
                                 <TextBlock DockPanel.Dock="Right" Text="{Binding DrcStatus}"
                                            Style="{StaticResource MonoSecondaryTextStyle}" />
                             </DockPanel>

@@ -640,6 +640,11 @@ public sealed class InspectionPipelineCoordinator : IDisposable
 
         Volatile.Write(ref _manualCircuit, enabled ? 1 : 0);
         ResetTopology();
+        if (enabled)
+        {
+            long frame = Interlocked.Increment(ref _frameCount);
+            EvaluateFrame(frame);
+        }
         RaiseStatus(enabled
             ? $"X-ray builder active: the DRC judges {ManualPartCount} hand-placed part(s)."
             : "X-ray builder closed: live detections are active again.");
@@ -660,7 +665,11 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         Volatile.Write(ref _manualDetections, snapshot);
 
         if (ManualCircuitEnabled)
+        {
             Volatile.Write(ref _lastStateHash, int.MinValue);
+            long frame = Interlocked.Increment(ref _frameCount);
+            EvaluateFrame(frame);
+        }
     }
 
     private void ResetTopology()
@@ -812,6 +821,9 @@ public sealed class InspectionPipelineCoordinator : IDisposable
 
                 if (!TryCaptureWarpedFrame(ref calibrationCooldown))
                 {
+                    if (ManualCircuitEnabled)
+                        EvaluateFrame(frame);
+
                     await DelayRemainingAsync(frameStart, targetFrameMs, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
@@ -973,7 +985,9 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         if (published.HasCriticalShort)
             RaiseEmergency(published);
 
-        if (published.Components.Count > 0 || published.Violations.Count > 0)
+        // In manual / builder mode, automatic AI dispatch is suppressed.
+        // The builder runs continuous DRC only; Qwen is dispatched when the user presses "ASK AI".
+        if (!manual && (published.Components.Count > 0 || published.Violations.Count > 0))
             _cognitiveChannel.Writer.TryWrite(published);
     }
 
@@ -1232,6 +1246,34 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     {
         Volatile.Write(ref _voiceMuted, muted ? 1 : 0);
         RaiseStatus(muted ? "Voice muted: transcript only." : $"Voice unmuted: {VoiceBackendDescription}.");
+    }
+
+    /// <summary>Explicitly queues the active DRC packet into Qwen cognitive loop on demand.</summary>
+    public bool RequestAiDiagnostic()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        DrcStatePacket? packet = LatestPacket;
+        if (packet is null)
+        {
+            RaiseStatus("AI Tutor unavailable: no DRC packet yet.");
+            return false;
+        }
+
+        if (_qwen is null || _cognitiveTask is null)
+        {
+            RaiseStatus("AI Tutor unavailable: cognitive tutor loop is disabled.");
+            return false;
+        }
+
+        if (!_cognitiveChannel.Writer.TryWrite(packet))
+        {
+            RaiseStatus("AI Tutor busy: previous response is still streaming.");
+            return false;
+        }
+
+        RaiseStatus($"AI Tutor: dispatched {packet.Components.Count} part(s) and {packet.Violations.Count} DRC violation(s) to Qwen.");
+        return true;
     }
 
     /// <summary>Re-queues the current packet so the tutor speaks the latest fault again.</summary>

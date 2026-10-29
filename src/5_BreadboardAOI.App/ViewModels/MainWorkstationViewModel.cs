@@ -1458,6 +1458,32 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
 
     // ---- commands ----------------------------------------------------------
 
+    /// <summary>
+    /// Explicitly sends the active circuit and DRC violations to Qwen AI for multimodal tutoring.
+    /// In builder mode, Qwen only runs when this command is invoked.
+    /// </summary>
+    [RelayCommand]
+    private void AskAi()
+    {
+        InspectionPipelineCoordinator? coordinator = _coordinator;
+        if (coordinator is null)
+        {
+            StatusLine = "AI TUTOR: pipeline is not ready yet.";
+            return;
+        }
+
+        DrcStatePacket? packet = coordinator.LatestPacket;
+        if (packet is null || (packet.Components.Count == 0 && packet.Violations.Count == 0))
+        {
+            StatusLine = "AI TUTOR: board is empty. Place components or select a scenario first.";
+            return;
+        }
+
+        bool sent = coordinator.RequestAiDiagnostic();
+        if (sent)
+            StatusLine = $"AI TUTOR: analyzing {packet.Components.Count} component(s) and {packet.Violations.Count} DRC violation(s)...";
+    }
+
     [RelayCommand]
     private void ReplayDiagnostic()
     {
