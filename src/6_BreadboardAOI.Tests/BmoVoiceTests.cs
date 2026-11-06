@@ -34,6 +34,17 @@ public sealed class BmoVoiceTests
     }
 
     [Fact]
+    public void Normalizer_uses_conversational_contractions()
+    {
+        string spoken = SpeechTextNormalizer.Normalize(
+            "The lead is not in D15. It is in A15, and do not move the resistor.");
+
+        spoken.Should().Contain("isn't");
+        spoken.Should().Contain("It's");
+        spoken.Should().Contain("don't");
+    }
+
+    [Fact]
     public void Normalizer_does_not_add_a_period_after_a_comma()
     {
         SpeechTextNormalizer.Normalize("first,").Should().Be("first,");
@@ -77,6 +88,21 @@ public sealed class BmoVoiceTests
     }
 
     [Fact]
+    public void Sapi_ssml_gives_each_sentence_its_own_contour_and_a_breath()
+    {
+        string ssml = VoiceSynthesisEngine.BuildSapiSsml(
+            "Move the lead from D15 to D16. Then check the pin inspector.",
+            pitchPercent: -1,
+            ratePercent: -2,
+            sentenceBreakMs: 240);
+
+        ssml.Should().Contain("<break time=\"240ms\"/>");
+        ssml.Split("<prosody", StringSplitOptions.None).Length.Should().Be(3);
+        ssml.Should().Contain("pitch=\"+0%\" rate=\"-2%\"");  // opening lift
+        ssml.Should().Contain("pitch=\"-2%\" rate=\"-3%\"");  // closing settle
+    }
+
+    [Fact]
     public void Voice_options_default_to_the_natural_profile()
     {
         var options = new VoiceOptions();
@@ -84,7 +110,7 @@ public sealed class BmoVoiceTests
         options.SpeakerId.Should().Be(-1, "auto-select a natural adult Kokoro voice");
         options.BmoVoice.Should().BeTrue();
         options.BmoPitch.Should().BeApproximately(1.00f, 0.001f);
-        options.SentencePauseMs.Should().Be(220);
+        options.SentencePauseMs.Should().Be(240);
         BmoVoiceStyler.PreferredSpeakerId.Should().Be(2);
     }
 

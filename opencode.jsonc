@@ -1,0 +1,21 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "watcher": {
+    "ignore": [
+      "**/bin/**",
+      "**/obj/**",
+      "**/models/**",
+      "**/tools/**",
+      "**/*.gguf",
+      "**/*.onnx",
+      "**/*.engine",
+      "**/*.zip"
+    ]
+  },
+  "worktree": {
+    "directory": "../argon_worktrees"
+  },
+  "experimental": {
+    "location_idle_timeout": false
+  }
+}

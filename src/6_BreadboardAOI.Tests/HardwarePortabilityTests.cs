@@ -78,4 +78,32 @@ public sealed class HardwarePortabilityTests
             monitor.CanLoadQwen(out _).Should().BeFalse("mock VRAM must never green-light the MoE model");
         }
     }
+
+    [Fact]
+    public void Mask_description_and_core_counting_format_ranges_correctly()
+    {
+        CpuAffinityManager.CoreCount((nuint)0x00FFF).Should().Be(12);
+        CpuAffinityManager.CoreCount((nuint)0x3F000).Should().Be(6);
+        CpuAffinityManager.CoreCount((nuint)0xC0000).Should().Be(2);
+
+        CpuAffinityManager.DescribeMaskCores((nuint)0x00FFF).Should().Be("0..11");
+        CpuAffinityManager.DescribeMaskCores((nuint)0x3F000).Should().Be("12..17");
+        CpuAffinityManager.DescribeMaskCores((nuint)0xC0000).Should().Be("18..19");
+
+        CpuAffinityManager.DescribeRole(AffinityRole.Ai).Should().Contain("AI");
+        CpuAffinityManager.DescribeRole(AffinityRole.Vision).Should().Contain("VISION");
+        CpuAffinityManager.DescribeRole(AffinityRole.DrcUi).Should().Contain("DRC");
+    }
+
+    [Fact]
+    public void Affinity_scope_and_role_status_function_without_throwing()
+    {
+        using (var scope = CpuAffinityManager.PinCurrentThreadFor(AffinityRole.Ai))
+        {
+            scope.Should().NotBeNull();
+        }
+
+        var status = CpuAffinityManager.GetRoleStatus(AffinityRole.Ai);
+        status.Should().NotBeNull();
+    }
 }

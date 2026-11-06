@@ -1,0 +1,118 @@
+{
+    "generated_at_utc":  "2026-10-30T19:56:19.6651301Z",
+    "real_9gb_root_path":  "D:\\Breadboard assistant",
+    "ghost_workspace_path":  "D:\\BreadboardAOI_Ghost_400KB",
+    "linked_code_files":  0,
+    "copied_code_files":  124,
+    "omitted_binary_gb":  0.97,
+    "heavy_assets_index":  [
+                               {
+                                   "relative_path":  ".gitignore",
+                                   "size_mb":  0,
+                                   "extension":  ".gitignore",
+                                   "status":  "MOUNTED_IN_9GB_ROOT_DO_NOT_UPLOAD"
+                               },
+                               {
+                                   "relative_path":  "session-4028ca9a-1bb2-416d-879e-699767c31b3a.md",
+                                   "size_mb":  11.53,
+                                   "extension":  ".md",
+                                   "status":  "MOUNTED_IN_9GB_ROOT_DO_NOT_UPLOAD"
+                               },
+                               {
+                                   "relative_path":  "Icon.jpg",
+                                   "size_mb":  1.56,
+                                   "extension":  ".jpg",
+                                   "status":  "MOUNTED_IN_9GB_ROOT_DO_NOT_UPLOAD"
+                               },
+                               {
+                                   "relative_path":  "stdout.txt",
+                                   "size_mb":  0,
+                                   "extension":  ".txt",
+                                   "status":  "MOUNTED_IN_9GB_ROOT_DO_NOT_UPLOAD"
+                               },
+                               {
+                                   "relative_path":  "stderr.txt",
+                                   "size_mb":  0,
+                                   "extension":  ".txt",
+                                   "status":  "MOUNTED_IN_9GB_ROOT_DO_NOT_UPLOAD"
+                               },
+                               {
+                                   "relative_path":  "launch.bat",
+                                   "size_mb":  0,
+                                   "extension":  ".bat",
+                                   "status":  "MOUNTED_IN_9GB_ROOT_DO_NOT_UPLOAD"
+                               },
+                               {
+                                   "relative_path":  "BreadboardAOI_Setup.exe",
+                                   "size_mb":  251.97,
+                                   "extension":  ".exe",
+                                   "status":  "MOUNTED_IN_9GB_ROOT_DO_NOT_UPLOAD"
+                               },
+                               {
+                                   "relative_path":  "BreadboardAOI_Complete_Build.zip",
+                                   "size_mb":  251.29,
+                                   "extension":  ".zip",
+                                   "status":  "MOUNTED_IN_9GB_ROOT_DO_NOT_UPLOAD"
+                               },
+                               {
+                                   "relative_path":  "BreadboardAOI_Full_Setup.exe",
+                                   "size_mb":  185.69,
+                                   "extension":  ".exe",
+                                   "status":  "MOUNTED_IN_9GB_ROOT_DO_NOT_UPLOAD"
+                               },
+                               {
+                                   "relative_path":  ".ignore",
+                                   "size_mb":  0,
+                                   "extension":  ".ignore",
+                                   "status":  "MOUNTED_IN_9GB_ROOT_DO_NOT_UPLOAD"
+                               },
+                               {
+                                   "relative_path":  "src/5_BreadboardAOI.App/app.manifest",
+                                   "size_mb":  0,
+                                   "extension":  ".manifest",
+                                   "status":  "MOUNTED_IN_9GB_ROOT_DO_NOT_UPLOAD"
+                               },
+                               {
+                                   "relative_path":  "src/5_BreadboardAOI.App/Resources/app_icon.png",
+                                   "size_mb":  3.81,
+                                   "extension":  ".png",
+                                   "status":  "MOUNTED_IN_9GB_ROOT_DO_NOT_UPLOAD"
+                               },
+                               {
+                                   "relative_path":  "src/7_BreadboardAOI.Installer/Payload.zip",
+                                   "size_mb":  251.29,
+                                   "extension":  ".zip",
+                                   "status":  "MOUNTED_IN_9GB_ROOT_DO_NOT_UPLOAD"
+                               },
+                               {
+                                   "relative_path":  "assets/app_icon.png",
+                                   "size_mb":  3.81,
+                                   "extension":  ".png",
+                                   "status":  "MOUNTED_IN_9GB_ROOT_DO_NOT_UPLOAD"
+                               },
+                               {
+                                   "relative_path":  "assets/colab/BreadboardAOI_Qwen.ipynb",
+                                   "size_mb":  0.03,
+                                   "extension":  ".ipynb",
+                                   "status":  "MOUNTED_IN_9GB_ROOT_DO_NOT_UPLOAD"
+                               },
+                               {
+                                   "relative_path":  "assets/kicad/kicad-symbols-master.zip",
+                                   "size_mb":  28.13,
+                                   "extension":  ".zip",
+                                   "status":  "MOUNTED_IN_9GB_ROOT_DO_NOT_UPLOAD"
+                               },
+                               {
+                                   "relative_path":  ".github/workflows/publish-models.yml",
+                                   "size_mb":  0,
+                                   "extension":  ".yml",
+                                   "status":  "MOUNTED_IN_9GB_ROOT_DO_NOT_UPLOAD"
+                               },
+                               {
+                                   "relative_path":  "New folder/_SingleExeBuildTemp/InstallerSrc/Payload.zip",
+                                   "size_mb":  0,
+                                   "extension":  ".zip",
+                                   "status":  "MOUNTED_IN_9GB_ROOT_DO_NOT_UPLOAD"
+                               }
+                           ]
+}

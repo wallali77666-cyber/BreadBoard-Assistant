@@ -23,6 +23,9 @@ public partial class MainWindow : Window
 {
     private readonly MainWorkstationViewModel _viewModel;
     private bool _disposed;
+    private Point _panStartPoint;
+    private bool _isPanning;
+    private bool _isRightPanning;
 
     public MainWindow()
     {
@@ -36,6 +39,7 @@ public partial class MainWindow : Window
         Loaded += OnWindowLoaded;
         Closed += OnWindowClosed;
         Closing += OnWindowClosing;
+        PreviewKeyDown += OnWindowPreviewKeyDown;
 
         CompositionTarget.Rendering += OnCompositionTargetRendering;
     }
@@ -132,6 +136,15 @@ public partial class MainWindow : Window
     private void OnViewportMouseMove(object sender, MouseEventArgs e)
     {
         Point position = GetViewportPoint(e);
+        if (_isPanning)
+        {
+            float dx = (float)(position.X - _panStartPoint.X);
+            float dy = (float)(position.Y - _panStartPoint.Y);
+            _panStartPoint = position;
+            _viewModel.PanViewport(dx, dy);
+            return;
+        }
+
         _viewModel.UpdateHover(position.X, position.Y);
     }
 
@@ -150,7 +163,117 @@ public partial class MainWindow : Window
 
     private void OnViewportMouseLeave(object sender, MouseEventArgs e)
     {
-        _viewModel.ClearHover();
+        if (!_isPanning)
+            _viewModel.ClearHover();
+    }
+
+    private void OnViewportMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.MiddleButton == MouseButtonState.Pressed)
+        {
+            _isPanning = true;
+            _isRightPanning = false;
+            _panStartPoint = GetViewportPoint(e);
+            Viewport.CaptureMouse();
+            Viewport.Cursor = Cursors.SizeAll;
+            e.Handled = true;
+        }
+        else if (e.RightButton == MouseButtonState.Pressed && !_viewModel.IsBuildMode)
+        {
+            _isPanning = true;
+            _isRightPanning = true;
+            _panStartPoint = GetViewportPoint(e);
+            Viewport.CaptureMouse();
+            Viewport.Cursor = Cursors.SizeAll;
+            e.Handled = true;
+        }
+    }
+
+    private void OnViewportMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_isPanning)
+        {
+            bool middleReleased = e.MiddleButton == MouseButtonState.Released;
+            bool rightReleased = e.RightButton == MouseButtonState.Released;
+            if ((!_isRightPanning && middleReleased) || (_isRightPanning && rightReleased))
+            {
+                _isPanning = false;
+                _isRightPanning = false;
+                Viewport.ReleaseMouseCapture();
+                Viewport.Cursor = Cursors.Arrow;
+                e.Handled = true;
+            }
+        }
+    }
+
+    private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        bool isTextControl = e.OriginalSource is TextBox || e.OriginalSource is PasswordBox;
+        bool isCtrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
+        bool isShift = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
+
+        if (isCtrl && !isTextControl)
+        {
+            if (e.Key == Key.Z)
+            {
+                if (isShift)
+                    _viewModel.RedoCircuitPart();
+                else
+                    _viewModel.UndoCircuitPart();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Y)
+            {
+                _viewModel.RedoCircuitPart();
+                e.Handled = true;
+            }
+            else if (e.Key is Key.OemPlus or Key.Add)
+            {
+                _viewModel.ZoomIn();
+                e.Handled = true;
+            }
+            else if (e.Key is Key.OemMinus or Key.Subtract)
+            {
+                _viewModel.ZoomOut();
+                e.Handled = true;
+            }
+            else if (e.Key is Key.D0 or Key.NumPad0)
+            {
+                _viewModel.ResetZoom();
+                e.Handled = true;
+            }
+        }
+        if (!isTextControl && !isCtrl)
+        {
+            if (e.Key == Key.Left || e.Key == Key.A)
+            {
+                _viewModel.PanViewport(50f, 0f);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Right || e.Key == Key.D)
+            {
+                _viewModel.PanViewport(-50f, 0f);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Up || e.Key == Key.W)
+            {
+                _viewModel.PanViewport(0f, 50f);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Down || e.Key == Key.S)
+            {
+                _viewModel.PanViewport(0f, -50f);
+                e.Handled = true;
+            }
+        }
+    }
+
+    private void OnViewportMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        Point position = GetViewportPoint(e);
+        double factor = e.Delta > 0 ? 1.15 : 0.87;
+        _viewModel.ZoomCadViewport(factor, ((float)position.X, (float)position.Y));
+        e.Handled = true;
     }
 
     private void OnViewportMouseLeftButtonDown(object sender, MouseButtonEventArgs e)

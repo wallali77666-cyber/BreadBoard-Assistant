@@ -1,10 +1,10 @@
-// ============================================================================
+﻿// ============================================================================
 // FILE: src/1_BreadboardAOI.Hardware/PinnedFrameRingBuffer.cs
 // PURPOSE: Zero-copy, lock-free 3-slot triple buffer for 1080p camera frames.
 //          Slots are allocated once with NativeMemory.AlignedAlloc (64-byte
-//          aligned for AVX2) and VirtualLock-ed into physical RAM.
+//          aligned for AVX2/AVX-512) and VirtualLock-ed into physical RAM.
 // THREADING: Exactly ONE producer (camera capture thread) and ONE consumer
-//            (vision/DRC thread). No locks, no allocations on the hot path.
+//            (vision/DRC thread). Hot-path runs on E-Cores (mask 0xFF000).
 // ============================================================================
 
 using System;
@@ -18,6 +18,8 @@ namespace BreadboardAOI.Hardware;
 /// publishes it; the consumer always sees the newest complete frame. If all three
 /// slots are busy (consumer holding one, producer writing one, newest pending) the
 /// producer drops its frame instead of blocking the 60 FPS capture loop.
+/// Hot path threads are pinned to E-Cores (0xFF000) so P-Cores (0x00FFF) stay 100% free
+/// for llama-server MoE inference and Kokoro neural voice synthesis.
 /// </summary>
 public sealed class PinnedFrameRingBuffer : IDisposable
 {
@@ -27,7 +29,7 @@ public sealed class PinnedFrameRingBuffer : IDisposable
     private const int SlotReading = 3;
 
     private const int DefaultSlotCount = 3;
-    private const int Alignment = 64; // AVX2 cache-line alignment
+    private const int Alignment = 64; // AVX2/AVX-512 cache-line alignment
 
     private readonly int _width;
     private readonly int _height;
@@ -45,7 +47,7 @@ public sealed class PinnedFrameRingBuffer : IDisposable
     private long _droppedWrites;
     private int _disposed; // Interlocked: 0 = live, 1 = disposed (see Dispose).
 
-    public PinnedFrameRingBuffer(int width, int height, int bytesPerPixel = 4, int slotCount = DefaultSlotCount)
+    public PinnedFrameRingBuffer(int width = 1920, int height = 1080, int bytesPerPixel = 4, int slotCount = DefaultSlotCount)
     {
         if (width <= 0)
             throw new ArgumentOutOfRangeException(nameof(width), width, "Frame width must be positive.");
@@ -78,14 +80,14 @@ public sealed class PinnedFrameRingBuffer : IDisposable
                     if (memory is null)
                         throw new OutOfMemoryException($"Unable to allocate {_frameBytes} byte frame slot {i}.");
 
-                    // Record the slot before anything else can throw, otherwise the
-                    // catch below would leak the memory that was just handed out.
+                    // Record the slot before anything else can throw, avoiding leaks in catch
                     _slotPointers[i] = (IntPtr)memory;
                     allocated++;
 
                     NativeMemory.Clear(memory, (nuint)_frameBytes);
                 }
 
+                // Win32 VirtualLock mlock into physical RAM to prevent OS swapping to disk
                 _slotLocked[i] = CpuAffinityManager.TryLockMemory(_slotPointers[i], (nuint)_frameBytes);
             }
         }
@@ -112,7 +114,7 @@ public sealed class PinnedFrameRingBuffer : IDisposable
     /// <summary>Total frames published since construction.</summary>
     public long PublishedFrames => Interlocked.Read(ref _publishCounter);
 
-    /// <summary>Frames dropped because all slots were busy (producer must never block).</summary>
+    /// <summary>Frames dropped because all slots were busy (producer must never block the 60 FPS loop).</summary>
     public long DroppedWrites => Interlocked.Read(ref _droppedWrites);
 
     /// <summary>True when every slot was successfully VirtualLock-ed into physical RAM.</summary>
@@ -129,6 +131,38 @@ public sealed class PinnedFrameRingBuffer : IDisposable
             return true;
         }
     }
+
+    /// <summary>
+    /// Re-attempts VirtualLock on any slots that failed to lock during initialization.
+    /// </summary>
+    public bool RelockSlots()
+    {
+        bool allOk = true;
+        for (int i = 0; i < _slotCount; i++)
+        {
+            if (!_slotLocked[i] && _slotPointers[i] != IntPtr.Zero)
+            {
+                _slotLocked[i] = CpuAffinityManager.TryLockMemory(_slotPointers[i], (nuint)_frameBytes);
+            }
+
+            if (!_slotLocked[i])
+                allOk = false;
+        }
+        return allOk;
+    }
+
+    /// <summary>
+    /// Pins the calling consumer thread to E-Cores (mask 0xFF000 on the target workstation)
+    /// to isolate 60 FPS vision/DRC processing from llama-server P-Cores.
+    /// </summary>
+    public static bool PinConsumerToECores() =>
+        CpuAffinityManager.PinCurrentThreadToECores();
+
+    /// <summary>
+    /// Pins the calling producer thread to Vision E-Cores (mask 0x3F000 or 0xFF000).
+    /// </summary>
+    public static bool PinProducerToECores() =>
+        CpuAffinityManager.PinCurrentThreadToVisionECores();
 
     /// <summary>
     /// Claims a free slot for the producer. Dispose (or Publish) the lease; failing
@@ -227,13 +261,11 @@ public sealed class PinnedFrameRingBuffer : IDisposable
 
     public void Dispose()
     {
-        // Atomic claim: the window close and the pipeline teardown can both call
-        // Dispose, and a second pass must never free the same native memory again.
+        // Atomic claim: window close and pipeline teardown can both call Dispose.
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
-        // Let an in-flight producer/consumer finish its lease before the memory is
-        // released, otherwise a live Span<byte> would point at freed pages.
+        // Let in-flight producer/consumer finish leases before memory is freed
         WaitForLeasesToDrain();
 
         for (int i = 0; i < _slotCount; i++)
@@ -268,7 +300,7 @@ public sealed class PinnedFrameRingBuffer : IDisposable
 
     private unsafe void FreeSlot(int index)
     {
-        // Exchange to zero first so a concurrent FreeSlot sees no pointer at all.
+        // Exchange to zero first so concurrent FreeSlot sees no pointer at all
         IntPtr pointer = Interlocked.Exchange(ref _slotPointers[index], IntPtr.Zero);
         if (pointer == IntPtr.Zero)
             return;
@@ -315,11 +347,15 @@ public unsafe ref struct FrameWriteLease
 
     public readonly int SlotIndex => _slotIndex;
 
+    public readonly IntPtr DataPointer => (IntPtr)_data;
+
     public readonly int Stride { get; }
 
     public readonly int Width { get; }
 
     public readonly int Height { get; }
+
+    public readonly int Length => _length;
 
     /// <summary>Writable view over the full BGRA frame (Width * Height * 4 bytes).</summary>
     public readonly Span<byte> Span => _data is null ? default : new Span<byte>(_data, _length);
@@ -377,6 +413,10 @@ public unsafe ref struct FrameReadLease
 
     public readonly bool IsValid => _owner is not null && _data is not null;
 
+    public readonly int SlotIndex => _slotIndex;
+
+    public readonly IntPtr DataPointer => (IntPtr)_data;
+
     public readonly long Sequence { get; }
 
     public readonly int Stride { get; }
@@ -384,6 +424,8 @@ public unsafe ref struct FrameReadLease
     public readonly int Width { get; }
 
     public readonly int Height { get; }
+
+    public readonly int Length => _length;
 
     public readonly ReadOnlySpan<byte> Span => _data is null ? default : new ReadOnlySpan<byte>(_data, _length);
 

@@ -29,6 +29,52 @@ public static class SpeechTextNormalizer
     private static readonly Regex CommaSplitPattern = new(
         @"(?<=[,;:])\s+", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    /// <summary>
+    /// Conversational contractions. A tutor that says "do not" and "it is" in
+    /// every sentence sounds like a manual; the same advice with contractions
+    /// sounds like a person talking. Technical identifiers are untouched.
+    /// </summary>
+    private static readonly (Regex Pattern, string Replacement)[] Contractions =
+    {
+        (new Regex(@"\bdo not\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "don't"),
+        (new Regex(@"\bdoes not\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "doesn't"),
+        (new Regex(@"\bdid not\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "didn't"),
+        (new Regex(@"\bis not\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "isn't"),
+        (new Regex(@"\bare not\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "aren't"),
+        (new Regex(@"\bwas not\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "wasn't"),
+        (new Regex(@"\bwere not\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "weren't"),
+        (new Regex(@"\bcan not\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "can't"),
+        (new Regex(@"\bcannot\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "can't"),
+        (new Regex(@"\bcould not\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "couldn't"),
+        (new Regex(@"\bshould not\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "shouldn't"),
+        (new Regex(@"\bwould not\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "wouldn't"),
+        (new Regex(@"\bwill not\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "won't"),
+        (new Regex(@"\bhave not\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "haven't"),
+        (new Regex(@"\bhas not\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "hasn't"),
+        (new Regex(@"\bhad not\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "hadn't"),
+        (new Regex(@"\bIt is\b", RegexOptions.Compiled), "It's"),
+        (new Regex(@"\bThat is\b", RegexOptions.Compiled), "That's"),
+        (new Regex(@"\bThere is\b", RegexOptions.Compiled), "There's"),
+        (new Regex(@"\bHere is\b", RegexOptions.Compiled), "Here's"),
+        (new Regex(@"\bWhat is\b", RegexOptions.Compiled), "What's"),
+        (new Regex(@"\bYou are\b", RegexOptions.Compiled), "You're"),
+        (new Regex(@"\bWe are\b", RegexOptions.Compiled), "We're"),
+        (new Regex(@"\bThey are\b", RegexOptions.Compiled), "They're"),
+        (new Regex(@"\bit is\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "it's"),
+        (new Regex(@"\bthat is\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "that's"),
+        (new Regex(@"\bthere is\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "there's"),
+        (new Regex(@"\bhere is\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "here's"),
+        (new Regex(@"\bwhat is\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "what's"),
+        (new Regex(@"\byou are\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "you're"),
+        (new Regex(@"\bwe are\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "we're"),
+        (new Regex(@"\bthey are\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "they're"),
+        (new Regex(@"\bI am\b", RegexOptions.Compiled), "I'm"),
+        (new Regex(@"\bI will\b", RegexOptions.Compiled), "I'll"),
+        (new Regex(@"\blet us\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "let's"),
+        (new Regex(@"\be\.g\.", RegexOptions.Compiled | RegexOptions.IgnoreCase), "for example"),
+        (new Regex(@"\bi\.e\.", RegexOptions.Compiled | RegexOptions.IgnoreCase), "that is")
+    };
+
     private static readonly (Regex Pattern, string Replacement)[] Replacements =
     {
         // A number glued to a unit is the common case in tutor text. These
@@ -78,7 +124,9 @@ public static class SpeechTextNormalizer
         (new Regex(@"\s*=>\s*", RegexOptions.Compiled), " gives "),
         (new Regex(@"\s*==\s*", RegexOptions.Compiled), " equals "),
         (new Regex(@"\s*[×x]\s*(?=\d)", RegexOptions.Compiled), " by "),
-        (new Regex(@"\bvs\.?\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), " versus ")
+        (new Regex(@"\bvs\.?\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), " versus "),
+        (new Regex(@"(?<=\d)%", RegexOptions.Compiled), " percent"),
+        (new Regex(@"\s*&\s*", RegexOptions.Compiled), " and ")
     };
 
     /// <summary>Rewrites technical shorthand into words that read naturally.</summary>
@@ -90,6 +138,10 @@ public static class SpeechTextNormalizer
         string value = MarkdownPattern.Replace(text, " ");
 
         foreach ((Regex pattern, string replacement) in Replacements)
+            value = pattern.Replace(value, replacement);
+
+        // Contractions come last so they see clean prose rather than symbols.
+        foreach ((Regex pattern, string replacement) in Contractions)
             value = pattern.Replace(value, replacement);
 
         value = value.Replace("  ", " ", StringComparison.Ordinal);
@@ -111,6 +163,26 @@ public static class SpeechTextNormalizer
     /// </summary>
     private static bool NeedsTerminator(char value) =>
         char.IsLetterOrDigit(value) || value is ')' or ']' or '"' or '\'';
+
+    /// <summary>
+    /// Splits prose into complete sentences, preserving the terminal punctuation.
+    /// Used by the SAPI writer to give each sentence its own intonation contour.
+    /// </summary>
+    public static IReadOnlyList<string> SplitSentences(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return Array.Empty<string>();
+
+        var sentences = new List<string>(4);
+        foreach (string sentence in SentenceSplitPattern.Split(text))
+        {
+            string trimmed = sentence.Trim();
+            if (trimmed.Length > 0)
+                sentences.Add(trimmed);
+        }
+
+        return sentences;
+    }
 
     /// <summary>
     /// Splits normalized text into breath-sized clauses. Short sentences stay

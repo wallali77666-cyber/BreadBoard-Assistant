@@ -1,14 +1,15 @@
 // ============================================================================
 // FILE: src/4_BreadboardAOI.Intelligence/VoiceSynthesisEngine.cs
-// PURPOSE: Kokoro-82M neural TTS via sherpa-onnx on the AI cores, an optional
-//          Piper voice, NAudio playback, a Windows SAPI fallback when neither
-//          neural voice is installed, and a <10 ms pre-loaded dual-tone emergency
-//          alarm. The default profile is neutral and natural: no vibrato, no
-//          pitch lift, punctuation-aware pauses.
+// PURPOSE: Tutor voice playback. ElevenLabs is the primary neural voice (voice
+//          picked by the operator in the workstation), with Piper and Windows
+//          SAPI as fully local fallbacks when there is no key or no network.
+//          Text is synthesized to 24 kHz PCM and played through NAudio; nothing
+//          is written to disk. A <10 ms pre-loaded dual-tone emergency alarm is
+//          generated in memory (44.1 kHz, 16-bit PCM RIFF) so the critical-short
+//          reflex never depends on a binary asset.
 //
-// NOTE: The alarm WAV is generated in memory (44.1 kHz, 16-bit PCM RIFF), so no
-//       binary asset has to ship with the repo and a missing file never breaks
-//       the critical-short reflex.
+// NOTE: Only the Qwen answer is ever synthesized. DRC / rule-based repair text
+//       stays on screen; the coordinator decides that, not this engine.
 // ============================================================================
 
 using System;
@@ -20,15 +21,15 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using BreadboardAOI.Hardware;
 using NAudio.Wave;
-using SherpaOnnx;
 
 namespace BreadboardAOI.Intelligence;
 
 public enum VoiceBackend
 {
     None = 0,
-    Kokoro = 1,
+    ElevenLabs = 1,
     Sapi = 2,
     Piper = 3
 }
@@ -38,15 +39,25 @@ public sealed class VoiceOptions
 {
     public const int AlarmSampleRate = 44100;
 
-    public string KokoroModelPath { get; init; } = Path.Combine("assets", "models", "kokoro", "model.onnx");
+    /// <summary>ElevenLabs returns PCM16 mono at this rate for <c>pcm_24000</c>.</summary>
+    public const int ElevenLabsSampleRate = ElevenLabsVoiceClient.PcmSampleRate;
 
-    public string KokoroTokensPath { get; init; } = Path.Combine("assets", "models", "kokoro", "tokens.txt");
+    /// <summary>Secret key. Empty means ElevenLabs is unavailable and local fallbacks run.</summary>
+    public string ElevenLabsApiKey { get; set; } = string.Empty;
 
-    public string KokoroDataDir { get; init; } = Path.Combine("assets", "models", "kokoro", "espeak-ng-data");
+    /// <summary>Selected voice id from the account catalog.</summary>
+    public string ElevenLabsVoiceId { get; set; } = string.Empty;
 
-    public string KokoroLexiconPath { get; init; } = Path.Combine("assets", "models", "kokoro", "lexicon-us-en.txt");
+    /// <summary>Display name of the selected voice, for the status line only.</summary>
+    public string ElevenLabsVoiceName { get; set; } = string.Empty;
 
-    public string KokoroDictDir { get; init; } = Path.Combine("assets", "models", "kokoro", "dict");
+    public string ElevenLabsModelId { get; set; } = ElevenLabsVoiceClient.DefaultModelId;
+
+    public string ElevenLabsBaseUrl { get; init; } = ElevenLabsVoiceClient.DefaultBaseUrl;
+
+    public double ElevenLabsStability { get; init; } = 0.45;
+
+    public double ElevenLabsSimilarity { get; init; } = 0.80;
 
     /// <summary>
     /// Piper CLI executable. The default folder is also where the voice model
@@ -66,31 +77,34 @@ public sealed class VoiceOptions
     /// <summary>Piper speaker id, or -1 to leave the choice to the voice's JSON.</summary>
     public int PiperSpeakerId { get; init; } = -1;
 
+    public int SpeakerId => PiperSpeakerId;
+
+    public string KokoroModelPath { get; init; } = string.Empty;
+    public string KokoroTokensPath { get; init; } = string.Empty;
+    public string KokoroDataDir { get; init; } = string.Empty;
+    public string KokoroLexiconPath { get; init; } = string.Empty;
+    public string KokoroDictDir { get; init; } = string.Empty;
+
     /// <summary>Piper length scale; above 1 speaks a little more slowly.</summary>
-    public float PiperLengthScale { get; init; } = 1.03f;
+    public float PiperLengthScale { get; init; } = 1.04f;
 
     public float PiperNoiseScale { get; init; } = 0.667f;
 
     public float PiperNoiseW { get; init; } = 0.8f;
 
     /// <summary>Silence Piper inserts between its own sentence splits, in milliseconds.</summary>
-    public int PiperSentenceSilenceMs { get; init; } = 260;
+    public int PiperSentenceSilenceMs { get; init; } = 280;
 
     public string AlarmWavPath { get; init; } = Path.Combine("assets", "audio_reflex", "alarm_vcc_gnd_short.wav");
 
-    /// <summary>
-    /// Kokoro speaker id, or -1 to pick a natural adult profile automatically.
-    /// The engine clamps the value to the model's speaker count.
-    /// </summary>
-    public int SpeakerId { get; init; } = -1;
-
-    public float Speed { get; init; } = 0.98f;
+    /// <summary>Speech rate multiplier. Applies to Piper and to ElevenLabs v2.5 models.</summary>
+    public float Speed { get; init; } = 0.97f;
 
     /// <summary>Silence inserted after a comma or an unpunctuated clause, in milliseconds.</summary>
-    public int ClausePauseMs { get; init; } = 70;
+    public int ClausePauseMs { get; init; } = 85;
 
     /// <summary>Silence inserted after a full stop / question / exclamation mark, in milliseconds.</summary>
-    public int SentencePauseMs { get; init; } = 220;
+    public int SentencePauseMs { get; init; } = 240;
 
     /// <summary>
     /// When true, speech gets the natural finishing profile: de-rumble, a little
@@ -111,25 +125,28 @@ public sealed class VoiceOptions
 
         return new VoiceOptions
         {
-            KokoroModelPath = ReadString("KOKORO_MODEL") ?? Path.Combine("assets", "models", "kokoro", "model.onnx"),
-            KokoroTokensPath = ReadString("KOKORO_TOKENS") ?? Path.Combine("assets", "models", "kokoro", "tokens.txt"),
-            KokoroDataDir = ReadString("KOKORO_DATA_DIR") ?? Path.Combine("assets", "models", "kokoro", "espeak-ng-data"),
-            KokoroLexiconPath = ReadString("KOKORO_LEXICON") ?? Path.Combine("assets", "models", "kokoro", "lexicon-us-en.txt"),
-            KokoroDictDir = ReadString("KOKORO_DICT_DIR") ?? Path.Combine("assets", "models", "kokoro", "dict"),
+            ElevenLabsApiKey = ReadString("ELEVENLABS_KEY")
+                               ?? Environment.GetEnvironmentVariable("ELEVENLABS_API_KEY")?.Trim()
+                               ?? string.Empty,
+            ElevenLabsVoiceId = ReadString("ELEVENLABS_VOICE_ID") ?? string.Empty,
+            ElevenLabsVoiceName = ReadString("ELEVENLABS_VOICE_NAME") ?? string.Empty,
+            ElevenLabsModelId = ReadString("ELEVENLABS_MODEL_ID") ?? ElevenLabsVoiceClient.DefaultModelId,
+            ElevenLabsBaseUrl = ReadString("ELEVENLABS_BASE_URL") ?? ElevenLabsVoiceClient.DefaultBaseUrl,
+            ElevenLabsStability = ReadDouble("ELEVENLABS_STABILITY") ?? 0.45,
+            ElevenLabsSimilarity = ReadDouble("ELEVENLABS_SIMILARITY") ?? 0.80,
             PiperExePath = ReadString("PIPER_EXE") ?? Path.Combine("assets", "models", "piper", "piper.exe"),
             PiperModelPath = ReadString("PIPER_MODEL") ?? Path.Combine("assets", "models", "piper", "bmo.onnx"),
             PiperConfigPath = ReadString("PIPER_CONFIG") ?? string.Empty,
             PreferredBackend = VoiceEnginePreferences.Parse(ReadString("BACKEND")),
             PiperSpeakerId = ReadInt("PIPER_SPEAKER") ?? -1,
-            PiperLengthScale = ReadFloat("PIPER_LENGTH_SCALE") ?? 1.03f,
+            PiperLengthScale = ReadFloat("PIPER_LENGTH_SCALE") ?? 1.04f,
             PiperNoiseScale = ReadFloat("PIPER_NOISE_SCALE") ?? 0.667f,
             PiperNoiseW = ReadFloat("PIPER_NOISE_W") ?? 0.8f,
-            PiperSentenceSilenceMs = ReadInt("PIPER_SENTENCE_SILENCE_MS") ?? 260,
+            PiperSentenceSilenceMs = ReadInt("PIPER_SENTENCE_SILENCE_MS") ?? 280,
             AlarmWavPath = ReadString("ALARM_WAV") ?? Path.Combine("assets", "audio_reflex", "alarm_vcc_gnd_short.wav"),
-            SpeakerId = ReadInt("SPEAKER") ?? -1,
-            Speed = ReadFloat("SPEED") ?? 0.98f,
-            ClausePauseMs = ReadInt("CLAUSE_PAUSE_MS") ?? 70,
-            SentencePauseMs = ReadInt("SENTENCE_PAUSE_MS") ?? 220,
+            Speed = ReadFloat("SPEED") ?? 0.97f,
+            ClausePauseMs = ReadInt("CLAUSE_PAUSE_MS") ?? 85,
+            SentencePauseMs = ReadInt("SENTENCE_PAUSE_MS") ?? 240,
             BmoVoice = ReadBool("BMO") ?? true,
             BmoPitch = ReadFloat("PITCH") ?? BmoVoiceStyler.DefaultPitchFactor,
             NumThreads = ReadInt("THREADS") ?? Math.Clamp(processors / 2, 1, 8),
@@ -148,6 +165,19 @@ public sealed class VoiceOptions
         return clone;
     }
 
+    /// <summary>Returns a copy bound to another ElevenLabs key, voice or model.</summary>
+    public VoiceOptions WithElevenLabs(string apiKey, string voiceId, string modelId, string voiceName = "")
+    {
+        VoiceOptions clone = (VoiceOptions)MemberwiseClone();
+        clone.ElevenLabsApiKey = apiKey?.Trim() ?? string.Empty;
+        clone.ElevenLabsVoiceId = voiceId?.Trim() ?? string.Empty;
+        clone.ElevenLabsModelId = string.IsNullOrWhiteSpace(modelId)
+            ? ElevenLabsVoiceClient.DefaultModelId
+            : modelId.Trim();
+        clone.ElevenLabsVoiceName = voiceName?.Trim() ?? string.Empty;
+        return clone;
+    }
+
     private static string? ReadString(string suffix)
     {
         string? value = Environment.GetEnvironmentVariable("BREADBOARD_VOICE_" + suffix);
@@ -161,6 +191,11 @@ public sealed class VoiceOptions
 
     private static float? ReadFloat(string suffix) =>
         float.TryParse(ReadString(suffix), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float value)
+            ? value
+            : null;
+
+    private static double? ReadDouble(string suffix) =>
+        double.TryParse(ReadString(suffix), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double value)
             ? value
             : null;
 
@@ -181,8 +216,7 @@ public sealed class VoiceOptions
 
 /// <summary>
 /// Serializes all speech so the tutor voice never overlaps the emergency alarm.
-/// Missing Piper/Kokoro files degrade through the remaining engines and finally
-/// to a silent no-op, so the workstation always starts.
+/// ElevenLabs is preferred; Piper and SAPI keep the app speaking offline.
 /// </summary>
 public sealed class VoiceSynthesisEngine : IDisposable
 {
@@ -191,10 +225,9 @@ public sealed class VoiceSynthesisEngine : IDisposable
     private readonly object _alarmSync = new();
     private readonly byte[] _alarmWavBytes;
 
-    private OfflineTts? _tts;
+    private ElevenLabsVoiceClient? _elevenLabs;
     private PiperTtsEngine? _piper;
     private object? _sapiVoice;
-    private int _resolvedSpeakerId = -1;
     private string _sapiVoiceName = string.Empty;
     private bool _sapiSsmlSupported = true;
     private bool _disposed;
@@ -204,11 +237,6 @@ public sealed class VoiceSynthesisEngine : IDisposable
         _options = options ?? VoiceOptions.FromEnvironment();
         string baseDirectory = AppContext.BaseDirectory;
 
-        KokoroModelPath = LocalPathResolver.Resolve(_options.KokoroModelPath, baseDirectory);
-        KokoroTokensPath = LocalPathResolver.Resolve(_options.KokoroTokensPath, baseDirectory);
-        KokoroDataDir = LocalPathResolver.ResolveDirectory(_options.KokoroDataDir, baseDirectory);
-        KokoroLexiconPath = LocalPathResolver.Resolve(_options.KokoroLexiconPath, baseDirectory);
-        KokoroDictDir = LocalPathResolver.ResolveDirectory(_options.KokoroDictDir, baseDirectory);
         PiperExePath = LocalPathResolver.Resolve(_options.PiperExePath, baseDirectory);
         PiperModelPath = LocalPathResolver.Resolve(_options.PiperModelPath, baseDirectory);
         PiperConfigPath = string.IsNullOrWhiteSpace(_options.PiperConfigPath)
@@ -227,22 +255,12 @@ public sealed class VoiceSynthesisEngine : IDisposable
     /// <summary>Requested engine; may differ from <see cref="Backend"/> after a fallback.</summary>
     public VoiceEnginePreference PreferredBackend => _options.PreferredBackend;
 
-    /// <summary>Human-readable description of the active voice, e.g. "KOKORO · NATURAL #2".</summary>
+    /// <summary>Human-readable description of the active voice, e.g. "ELEVENLABS / Rachel".</summary>
     public string VoiceProfileName { get; private set; } = "SILENT";
 
     public bool IsAvailable => Backend != VoiceBackend.None;
 
     public string? LastError { get; private set; }
-
-    public string KokoroModelPath { get; }
-
-    public string KokoroTokensPath { get; }
-
-    public string KokoroDataDir { get; }
-
-    public string KokoroLexiconPath { get; }
-
-    public string KokoroDictDir { get; }
 
     public string PiperExePath { get; }
 
@@ -256,6 +274,57 @@ public sealed class VoiceSynthesisEngine : IDisposable
     public string AlarmWavPath { get; }
 
     public bool HasAlarmClip => _alarmWavBytes.Length > 44;
+
+    /// <summary>Lists the ElevenLabs voices for the supplied key (never throws).</summary>
+    public Task<IReadOnlyList<ElevenLabsVoice>> ListVoicesAsync(
+        string apiKey,
+        CancellationToken cancellationToken = default)
+    {
+        _elevenLabs ??= new ElevenLabsVoiceClient();
+        return _elevenLabs.ListVoicesAsync(apiKey, _options.ElevenLabsBaseUrl, cancellationToken);
+    }
+
+    /// <summary>Last catalog/transport failure from ElevenLabs.</summary>
+    public string? VoiceCatalogError => _elevenLabs?.LastError;
+
+    /// <summary>True when a key and a voice are configured for the cloud voice.</summary>
+    public bool HasElevenLabsVoice =>
+        ElevenLabsVoiceClient.HasApiKey(_options.ElevenLabsApiKey)
+        && !string.IsNullOrWhiteSpace(_options.ElevenLabsVoiceId);
+
+    /// <summary>
+    /// Applies a new key/voice/model at runtime and immediately makes ElevenLabs
+    /// the active engine when the configuration is complete.
+    /// </summary>
+    public async Task<bool> ApplyElevenLabsSettingsAsync(
+        string apiKey,
+        string voiceId,
+        string modelId,
+        string voiceName = "",
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        await _speechGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+
+            _options = _options.WithElevenLabs(apiKey, voiceId, modelId, voiceName);
+
+            bool complete = HasElevenLabsVoice;
+            if (complete)
+                _options = _options.WithPreferredBackend(VoiceEnginePreference.ElevenLabs);
+
+            DisposeBackends();
+            InitializeBackend();
+            return Backend != VoiceBackend.None;
+        }
+        finally
+        {
+            _speechGate.Release();
+        }
+    }
 
     /// <summary>
     /// Switches the live engine without recreating the coordinator. Waits for any
@@ -327,7 +396,7 @@ public sealed class VoiceSynthesisEngine : IDisposable
         }
     }
 
-    /// <summary>Speaks one complete sentence or paragraph with Kokoro (preferred) or SAPI.</summary>
+    /// <summary>Speaks one complete sentence or paragraph with the active engine.</summary>
     public async Task<bool> SpeakSentenceAsync(string sentence, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(sentence))
@@ -344,8 +413,8 @@ public sealed class VoiceSynthesisEngine : IDisposable
         {
             return Backend switch
             {
+                VoiceBackend.ElevenLabs => await SpeakElevenLabsAsync(spoken, cancellationToken).ConfigureAwait(false),
                 VoiceBackend.Piper => await SpeakPiperAsync(spoken, cancellationToken).ConfigureAwait(false),
-                VoiceBackend.Kokoro => await SpeakKokoroAsync(spoken, cancellationToken).ConfigureAwait(false),
                 VoiceBackend.Sapi => await SpeakSapiAsync(spoken, cancellationToken).ConfigureAwait(false),
                 _ => false
             };
@@ -423,14 +492,11 @@ public sealed class VoiceSynthesisEngine : IDisposable
                     CollectNote(notes);
                     break;
 
-                case VoiceEnginePreference.Kokoro:
-                    if (TryCreateKokoro())
+                case VoiceEnginePreference.ElevenLabs:
+                    if (TryCreateElevenLabs())
                     {
-                        Backend = VoiceBackend.Kokoro;
-                        _resolvedSpeakerId = ResolveSpeakerId(_tts!);
-                        VoiceProfileName = _options.BmoVoice
-                            ? $"KOKORO · NATURAL #{_resolvedSpeakerId}"
-                            : $"KOKORO #{_resolvedSpeakerId}";
+                        Backend = VoiceBackend.ElevenLabs;
+                        VoiceProfileName = BuildElevenLabsProfileName();
                         FinalizeNotes(notes);
                         return;
                     }
@@ -471,10 +537,10 @@ public sealed class VoiceSynthesisEngine : IDisposable
     private static IReadOnlyList<VoiceEnginePreference> GetBackendOrder(VoiceEnginePreference preference) =>
         preference switch
         {
-            VoiceEnginePreference.Piper => new[] { VoiceEnginePreference.Piper, VoiceEnginePreference.Kokoro, VoiceEnginePreference.Sapi },
-            VoiceEnginePreference.Kokoro => new[] { VoiceEnginePreference.Kokoro, VoiceEnginePreference.Piper, VoiceEnginePreference.Sapi },
-            VoiceEnginePreference.Sapi => new[] { VoiceEnginePreference.Sapi, VoiceEnginePreference.Piper, VoiceEnginePreference.Kokoro },
-            _ => new[] { VoiceEnginePreference.Piper, VoiceEnginePreference.Kokoro, VoiceEnginePreference.Sapi }
+            VoiceEnginePreference.Piper => new[] { VoiceEnginePreference.Piper, VoiceEnginePreference.ElevenLabs, VoiceEnginePreference.Sapi },
+            VoiceEnginePreference.ElevenLabs => new[] { VoiceEnginePreference.ElevenLabs, VoiceEnginePreference.Piper, VoiceEnginePreference.Sapi },
+            VoiceEnginePreference.Sapi => new[] { VoiceEnginePreference.Sapi, VoiceEnginePreference.Piper, VoiceEnginePreference.ElevenLabs },
+            _ => new[] { VoiceEnginePreference.ElevenLabs, VoiceEnginePreference.Piper, VoiceEnginePreference.Sapi }
         };
 
     private void CollectNote(List<string> notes)
@@ -508,55 +574,114 @@ public sealed class VoiceSynthesisEngine : IDisposable
         return $"PIPER / {voice}";
     }
 
-    private bool TryCreateKokoro()
+    private bool TryCreateElevenLabs()
     {
-        bool assetsPresent =
-            File.Exists(KokoroModelPath)
-            && File.Exists(KokoroTokensPath)
-            && Directory.Exists(KokoroDataDir);
-
-        if (!assetsPresent)
+        if (!ElevenLabsVoiceClient.HasApiKey(_options.ElevenLabsApiKey))
         {
-            LastError = $"Kokoro TTS files not found. Expected '{KokoroModelPath}'.";
+            LastError = "ElevenLabs API key is not set. Paste the key in AI VOICE to use the cloud voice.";
             return false;
         }
 
-        try
+        if (string.IsNullOrWhiteSpace(_options.ElevenLabsVoiceId))
         {
-            var config = new OfflineTtsConfig();
-            config.Model.Vits.Model = KokoroModelPath;
-            config.Model.Vits.Tokens = KokoroTokensPath;
-            config.Model.Vits.DataDir = KokoroDataDir;
-            config.Model.Vits.Lexicon = File.Exists(KokoroLexiconPath) ? KokoroLexiconPath : string.Empty;
-            config.Model.Vits.DictDir = Directory.Exists(KokoroDictDir) ? KokoroDictDir : string.Empty;
-            config.Model.NumThreads = Math.Max(1, _options.NumThreads);
-            config.Model.Provider = "cpu";
-
-            _tts = new OfflineTts(config);
-            return true;
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            _tts?.Dispose();
-            _tts = null;
-            LastError = $"Kokoro TTS could not load ({ex.Message}).";
+            LastError = "ElevenLabs is configured but no voice is selected. Refresh the voice list and pick one.";
             return false;
         }
+
+        _elevenLabs ??= new ElevenLabsVoiceClient();
+        return true;
+    }
+
+    private string BuildElevenLabsProfileName()
+    {
+        string voice = string.IsNullOrWhiteSpace(_options.ElevenLabsVoiceName)
+            ? _options.ElevenLabsVoiceId
+            : _options.ElevenLabsVoiceName;
+
+        string model = string.IsNullOrWhiteSpace(_options.ElevenLabsModelId)
+            ? ElevenLabsVoiceClient.DefaultModelId
+            : _options.ElevenLabsModelId;
+
+        return $"ELEVENLABS / {voice} / {model}";
     }
 
     /// <summary>
-    /// -1/auto selects a natural adult speaker, otherwise the first voice. An
-    /// explicit BREADBOARD_VOICE_SPEAKER always wins.
+    /// Speaks through ElevenLabs. A transport failure (offline laptop, expired
+    /// quota) falls back to the local voice for that utterance so the operator
+    /// still hears the answer; the error stays in <see cref="LastError"/>.
     /// </summary>
-    private int ResolveSpeakerId(OfflineTts tts)
+    private async Task<bool> SpeakElevenLabsAsync(string text, CancellationToken cancellationToken)
     {
-        int available = Math.Max(1, tts.NumSpeakers);
-        int requested = _options.SpeakerId;
+        ElevenLabsVoiceClient? client = _elevenLabs;
+        if (client is null)
+            return false;
 
-        if (requested < 0)
-            requested = BmoVoiceStyler.PreferredSpeakerId;
+        try
+        {
+            ElevenLabsAudio audio = await client.SynthesizePcmAsync(
+                _options.ElevenLabsApiKey,
+                _options.ElevenLabsBaseUrl,
+                _options.ElevenLabsVoiceId,
+                _options.ElevenLabsModelId,
+                text,
+                speed: Math.Clamp(_options.Speed, 0.7f, 1.2f),
+                stability: _options.ElevenLabsStability,
+                similarityBoost: _options.ElevenLabsSimilarity,
+                cancellationToken).ConfigureAwait(false);
 
-        return Math.Clamp(requested, 0, available - 1);
+            if (audio.Pcm.Length == 0)
+            {
+                LastError = "ElevenLabs returned no audio.";
+                return false;
+            }
+
+            return await PlayPcmAsync(audio.Pcm, audio.SampleRate, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (ElevenLabsException ex)
+        {
+            LastError = ex.Message;
+            return await SpeakLocalFallbackAsync(text, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
+        {
+            LastError = $"ElevenLabs unavailable: {ex.Message}";
+            return await SpeakLocalFallbackAsync(text, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Piper first, then SAPI. Never recurses into ElevenLabs.</summary>
+    private async Task<bool> SpeakLocalFallbackAsync(string text, CancellationToken cancellationToken)
+    {
+        if (_piper is null && HasPiperVoice)
+            _piper = new PiperTtsEngine(PiperExePath, PiperModelPath, PiperConfigPath);
+
+        if (_piper is not null)
+        {
+            try
+            {
+                if (await SpeakPiperAsync(text, cancellationToken).ConfigureAwait(false))
+                    return true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException)
+            {
+                LastError = $"Piper fallback failed: {ex.Message}";
+            }
+        }
+
+        if (_options.EnableSapiFallback)
+        {
+            if (_sapiVoice is null)
+                TryCreateSapi();
+
+            if (_sapiVoice is not null)
+                return await SpeakSapiAsync(text, cancellationToken).ConfigureAwait(false);
+        }
+
+        return false;
     }
 
     private bool TryCreateSapi()
@@ -588,10 +713,6 @@ public sealed class VoiceSynthesisEngine : IDisposable
         }
     }
 
-    /// <summary>
-    /// Picks the most natural installed en-US voice. Aria, Jenny, Samantha,
-    /// Hazel and Zira are preferred; child and novelty voices are rejected.
-    /// </summary>
     private void SelectSapiVoice(object voice)
     {
         try
@@ -661,7 +782,6 @@ public sealed class VoiceSynthesisEngine : IDisposable
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            // Voice enumeration is an optimisation: the default voice still speaks.
             _sapiVoiceName = string.Empty;
         }
     }
@@ -739,96 +859,7 @@ public sealed class VoiceSynthesisEngine : IDisposable
             return false;
         }
 
-        // The Piper model already carries its own voice; the DSP pitch lift is
-        // intentionally skipped on this backend.
         return await PlayPcmAsync(pcm, sampleRate, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task<bool> SpeakKokoroAsync(string text, CancellationToken cancellationToken)
-    {
-        OfflineTts? tts = _tts;
-        if (tts is null)
-            return false;
-
-        IReadOnlyList<string> chunks = SpeechTextNormalizer.SplitForProsody(text, normalize: false);
-        if (chunks.Count == 0)
-            return false;
-
-        float speed = Math.Clamp(_options.Speed, 0.5f, 2.0f);
-        float pitchFactor = _options.BmoVoice
-            ? Math.Clamp(_options.BmoPitch, 0.85f, 1.35f)
-            : 1f;
-        int sentencePauseMs = Math.Clamp(_options.SentencePauseMs, 0, 800);
-        int commaPauseMs = Math.Clamp(_options.ClausePauseMs, 0, 400);
-        int clausePauseMs = Math.Max(commaPauseMs, 65);
-        int speakerId = _resolvedSpeakerId >= 0
-            ? _resolvedSpeakerId
-            : ResolveSpeakerId(tts);
-
-        return await Task.Run(async () =>
-        {
-            // Synthesize each clause, shape it, join the PCM with punctuation-
-            // aware silence and play once. Restarting WaveOutEvent per sentence
-            // is what makes synthesized tutors sound choppy and robotic.
-            var speech = new List<float>(24000 * 4);
-            int sampleRate = 24000;
-            string? previousChunk = null;
-
-            foreach (string chunk in chunks)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                OfflineTtsGeneratedAudio audio;
-                try
-                {
-                    audio = tts.Generate(chunk, speed, speakerId);
-                }
-                catch (Exception ex) when (ex is not OutOfMemoryException && speakerId != 0)
-                {
-                    // Older Kokoro exports only expose a handful of speakers.
-                    // Fall back to the first voice once instead of losing speech.
-                    speakerId = 0;
-                    _resolvedSpeakerId = 0;
-                    audio = tts.Generate(chunk, speed, speakerId);
-                }
-
-                try
-                {
-                    if (audio.NumSamples <= 0)
-                        continue;
-
-                    sampleRate = audio.SampleRate;
-                    float[] styled = BmoVoiceStyler.Apply(audio.Samples, sampleRate, pitchFactor);
-                    if (styled.Length == 0)
-                        continue;
-
-                    if (speech.Count > 0 && previousChunk is not null)
-                    {
-                        int pauseMs = BmoVoiceStyler.PauseAfter(
-                            previousChunk,
-                            sentencePauseMs,
-                            commaPauseMs,
-                            clausePauseMs);
-
-                        AppendSilence(speech, sampleRate, pauseMs);
-                    }
-
-                    speech.AddRange(styled);
-                    previousChunk = chunk;
-                }
-                finally
-                {
-                    audio.Dispose();
-                }
-            }
-
-            if (speech.Count == 0)
-                return false;
-
-            BmoVoiceStyler.NormalizeForPlayback(speech, sampleRate: sampleRate);
-            byte[] pcm = ConvertToPcm16(speech);
-            return await PlayPcmAsync(pcm, sampleRate, cancellationToken).ConfigureAwait(false);
-        }, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<bool> PlayPcmAsync(byte[] pcm, int sampleRate, CancellationToken cancellationToken)
@@ -859,16 +890,6 @@ public sealed class VoiceSynthesisEngine : IDisposable
         return await completion.Task.ConfigureAwait(false);
     }
 
-    private static void AppendSilence(List<float> destination, int sampleRate, int milliseconds)
-    {
-        if (milliseconds <= 0)
-            return;
-
-        int samples = Math.Max(1, sampleRate * milliseconds / 1000);
-        for (int i = 0; i < samples; i++)
-            destination.Add(0f);
-    }
-
     private Task<bool> SpeakSapiAsync(string sentence, CancellationToken cancellationToken)
     {
         object? voice = _sapiVoice;
@@ -877,22 +898,25 @@ public sealed class VoiceSynthesisEngine : IDisposable
 
         return Task.Run(() =>
         {
+            using var affinity = CpuAffinityManager.PinCurrentThreadFor(AffinityRole.Ai);
             cancellationToken.ThrowIfCancellationRequested();
 
             if (_options.BmoVoice && _sapiSsmlSupported)
             {
                 try
                 {
-                    // SVSFParseSsml (256). Rate 0% and pitch +1% keep Zira/David
-                    // conversational, fluent and natural instead of dragged out or robotic.
-                    int sapiPitch = _options.BmoVoice ? 1 : 0;
-                    int sapiRate = _options.BmoVoice ? 0 : 0;
+                    int sapiPitch = _options.BmoVoice ? -1 : 0;
+                    int sapiRate = _options.BmoVoice ? -2 : 0;
                     voice.GetType().InvokeMember(
                         "Speak",
                         BindingFlags.InvokeMethod,
                         binder: null,
                         target: voice,
-                        args: new object[] { BuildSapiSsml(sentence, sapiPitch, sapiRate), 256 });
+                        args: new object[]
+                        {
+                            BuildSapiSsml(sentence, sapiPitch, sapiRate, _options.SentencePauseMs),
+                            256
+                        });
 
                     return true;
                 }
@@ -908,8 +932,6 @@ public sealed class VoiceSynthesisEngine : IDisposable
 
             try
             {
-                // SVSFDefault (0) blocks until the utterance completes, which keeps
-                // the semaphore ordering identical to the Kokoro path.
                 voice.GetType().InvokeMember(
                     "Speak",
                     BindingFlags.InvokeMethod,
@@ -934,26 +956,72 @@ public sealed class VoiceSynthesisEngine : IDisposable
 
     /// <summary>
     /// Wraps one normalized utterance in the small SSML subset Windows SAPI
-    /// accepts. Public so the exact pitch/rate and escaping are testable without
-    /// an audio device.
+    /// accepts. Public so the exact contour and escaping are testable without an audio device.
     /// </summary>
-    public static string BuildSapiSsml(string text, int pitchPercent = 0, int ratePercent = -3)
+    public static string BuildSapiSsml(
+        string text,
+        int pitchPercent = 0,
+        int ratePercent = -3,
+        int sentenceBreakMs = 240)
     {
         ArgumentNullException.ThrowIfNull(text);
 
-        string escaped = EscapeXml(text);
-        string pitch = FormatSapiPercent(pitchPercent);
-        string rate = FormatSapiPercent(ratePercent);
+        IReadOnlyList<string> sentences = SpeechTextNormalizer.SplitSentences(text);
+        var builder = new StringBuilder(text.Length + 128);
+        builder.Append("<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"en-US\">");
 
-        return string.Concat(
-            "<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"en-US\">",
-            "<prosody pitch=\"",
-            pitch,
-            "%\" rate=\"",
-            rate,
-            "%\">",
-            escaped,
-            "</prosody></speak>");
+        if (sentences.Count == 0)
+        {
+            AppendSapiProsody(builder, EscapeXml(text), pitchPercent, ratePercent);
+        }
+        else
+        {
+            int breakMs = Math.Clamp(sentenceBreakMs, 0, 800);
+
+            for (int i = 0; i < sentences.Count; i++)
+            {
+                string sentence = sentences[i];
+                char terminator = sentence[^1];
+                int pitch = pitchPercent + SapiPitchContour(i, sentences.Count, terminator);
+                int rate = ratePercent;
+
+                if (sentences.Count > 1 && i == sentences.Count - 1 && terminator != '?')
+                    rate -= 1;
+
+                AppendSapiProsody(builder, EscapeXml(sentence), pitch, rate);
+
+                if (i < sentences.Count - 1 && breakMs > 0)
+                    builder.Append("<break time=\"").Append(breakMs).Append("ms\"/>");
+            }
+        }
+
+        builder.Append("</speak>");
+        return builder.ToString();
+    }
+
+    private static void AppendSapiProsody(StringBuilder builder, string escaped, int pitch, int rate)
+    {
+        builder.Append("<prosody pitch=\"")
+               .Append(FormatSapiPercent(pitch))
+               .Append("%\" rate=\"")
+               .Append(FormatSapiPercent(rate))
+               .Append("%\">")
+               .Append(escaped)
+               .Append("</prosody>");
+    }
+
+    private static int SapiPitchContour(int index, int count, char terminator)
+    {
+        if (count <= 1)
+            return 0;
+
+        if (index == 0)
+            return 1;
+
+        if (index == count - 1)
+            return terminator == '?' ? 1 : -1;
+
+        return 0;
     }
 
     private static string FormatSapiPercent(int value)
@@ -995,22 +1063,6 @@ public sealed class VoiceSynthesisEngine : IDisposable
         }
 
         return builder.ToString();
-    }
-
-    private static byte[] ConvertToPcm16(List<float> samples)
-    {
-        if (samples.Count == 0)
-            return Array.Empty<byte>();
-
-        byte[] pcm = new byte[samples.Count * sizeof(short)];
-        for (int i = 0; i < samples.Count; i++)
-        {
-            float value = float.IsFinite(samples[i]) ? Math.Clamp(samples[i], -1f, 1f) : 0f;
-            short quantized = (short)Math.Round(value * short.MaxValue);
-            BinaryPrimitives.WriteInt16LittleEndian(pcm.AsSpan(i * sizeof(short), sizeof(short)), quantized);
-        }
-
-        return pcm;
     }
 
     private static byte[] LoadAlarmClip(string configuredPath)
@@ -1089,8 +1141,6 @@ public sealed class VoiceSynthesisEngine : IDisposable
 
     private void DisposeBackends()
     {
-        _tts?.Dispose();
-        _tts = null;
         _piper = null;
 
         if (_sapiVoice is not null)
@@ -1108,7 +1158,6 @@ public sealed class VoiceSynthesisEngine : IDisposable
             _sapiVoice = null;
         }
 
-        _resolvedSpeakerId = -1;
         _sapiVoiceName = string.Empty;
         _sapiSsmlSupported = true;
         Backend = VoiceBackend.None;
@@ -1123,6 +1172,8 @@ public sealed class VoiceSynthesisEngine : IDisposable
         _disposed = true;
 
         DisposeBackends();
+        _elevenLabs?.Dispose();
+        _elevenLabs = null;
         _speechGate.Dispose();
     }
 }

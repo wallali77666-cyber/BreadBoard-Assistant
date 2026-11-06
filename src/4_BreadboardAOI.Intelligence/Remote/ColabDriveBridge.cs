@@ -240,6 +240,23 @@ public static class RemoteEndpointProbe
     {
         ArgumentNullException.ThrowIfNull(http);
 
+        // LM Studio, Ollama, and local OpenAI endpoints only support /v1/models (calling /health logs an error in LM Studio)
+        if (ColabEndpoints.IsLoopback(endpointUrl))
+        {
+            bool isLlamaServer = Uri.TryCreate(endpointUrl, UriKind.Absolute, out Uri? loopbackUri) && loopbackUri.Port == 8089;
+            if (!isLlamaServer)
+            {
+                string? chat = ColabEndpoints.BuildChatEndpoint(endpointUrl);
+                if (chat is not null && chat.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase))
+                {
+                    string modelsUrl = chat[..^"/chat/completions".Length] + "/models";
+                    RemoteProbeResult? modelsRes = await TryGetAsync(http, modelsUrl, apiKey, cancellationToken).ConfigureAwait(false);
+                    return modelsRes ?? RemoteProbeResult.Offline("NOT REACHABLE");
+                }
+                return RemoteProbeResult.Offline("NO ENDPOINT");
+            }
+        }
+
         string? healthUrl = ColabEndpoints.BuildHealthEndpoint(endpointUrl);
         if (healthUrl is null)
             return RemoteProbeResult.Offline("NO ENDPOINT");
@@ -249,11 +266,11 @@ public static class RemoteEndpointProbe
             return direct;
 
         // Some proxies expose only the OpenAI surface, so fall back to /v1/models.
-        string? chat = ColabEndpoints.BuildChatEndpoint(endpointUrl);
-        if (chat is null)
+        string? chatFallback = ColabEndpoints.BuildChatEndpoint(endpointUrl);
+        if (chatFallback is null)
             return RemoteProbeResult.Offline("NO ENDPOINT");
 
-        string models = chat[..^"/chat/completions".Length] + "/models";
+        string models = chatFallback[..^"/chat/completions".Length] + "/models";
         RemoteProbeResult? viaModels = await TryGetAsync(http, models, apiKey, cancellationToken).ConfigureAwait(false);
         return viaModels ?? RemoteProbeResult.Offline("TUNNEL UNREACHABLE");
     }

@@ -1,223 +1,166 @@
-# AGENTS.md — BreadboardAOI Master Engineering Specification (For DeepSeek / OpenCode)
+# Breadboard AOI â€” Swarm Master Specification (AGENTS.md)
 
-## 1. Your Role & Operational Mandate
-You are the **Principal C# Implementation Agent** operating inside OpenCode under a Senior Systems Architect. You are building **`BreadboardAOI`**, a native Windows (.NET 8) **Automated Optical Inspection (AOI)** and **Real-Time Circuit Verification Workstation** for solderless breadboards.
+## 1. 9GB ZERO-DATA INVARIANTS (STRICT)
+1. Never run ead_file, cat, or base64 reads on *.gguf, *.onnx, *.engine, *.zip, *.db, or models/**.
+2. Inspect @PROJECT_9GB_MANIFEST.json and @LIVE_WORKSPACE_MAP.json for paths and sizes of heavy binary assets.
+3. Edit files in-place using existing namespaces (BreadboardAOI.*).
 
-### Core Workflow Rules for DeepSeek in OpenCode:
-1. **Never Hallucinate Packages or APIs:** Use ONLY the locked NuGet packages and versions defined in Section 3.
-2. **Compile & Verify Every Step:** After creating or editing any file, always run `dotnet build --configuration Release` via the terminal tool to verify `0 Warnings, 0 Errors` before moving to the next task.
-3. **Respect the Dual-Loop Hardware Split:** Never block the 60 FPS Vision/DRC loop with LLM or TTS calls. Always communicate between the Fast Reflex Loop and the Cognitive MoE Loop using `System.Threading.Channels`.
-4. **Zero-Allocation Hot Path:** Inside the 60 FPS loop (`Camera -> Homography -> YOLO -> PinMatrix -> DRC -> SkiaSharp`), do NOT allocate new heap objects (`new List<>()`, LINQ `.Select()`, or boxed structs) per frame. Pre-allocate buffers or use `Span<T>`, `ArrayPool<T>`, and `readonly record struct`.
+## 2. DISCOVERED CODE TREE (150 Files)
+- $(@{path=AGENTS.md; size_kb=34; last_modified=2026-10-30 21:23:14; symbols=}.path) (34 KB, Modified: 2026-10-30 21:23:14)
+- $(@{path=Directory.Build.props; size_kb=0.5; last_modified=2026-10-27 05:59:38; symbols=}.path) (0.5 KB, Modified: 2026-10-27 05:59:38)
+- $(@{path=BreadboardAOI.sln; size_kb=4.9; last_modified=2026-10-29 22:58:40; symbols=}.path) (4.9 KB, Modified: 2026-10-29 22:58:40)
+- $(@{path=README.md; size_kb=26.8; last_modified=2026-10-29 15:36:14; symbols=}.path) (26.8 KB, Modified: 2026-10-29 15:36:14)
+- $(@{path=Build-GoogleStyle-Installer.ps1; size_kb=7.2; last_modified=2026-10-30 14:04:40; symbols=}.path) (7.2 KB, Modified: 2026-10-30 14:04:40)
+- $(@{path=Build-SingleFile-FullSetupExe.ps1; size_kb=62.5; last_modified=2026-10-30 13:46:24; symbols=}.path) (62.5 KB, Modified: 2026-10-30 13:46:24)
+- $(@{path=Uninstall-BreadboardAOI.ps1; size_kb=1.6; last_modified=2026-10-30 14:03:28; symbols=}.path) (1.6 KB, Modified: 2026-10-30 14:03:28)
+- $(@{path=Initialize-Swarm-ZeroData.ps1; size_kb=27.8; last_modified=2026-10-30 21:26:02; symbols=}.path) (27.8 KB, Modified: 2026-10-30 21:26:02)
+- $(@{path=PROJECT_9GB_MANIFEST.json; size_kb=6.5; last_modified=2026-10-30 19:56:20; symbols=}.path) (6.5 KB, Modified: 2026-10-30 19:56:20)
+- $(@{path=opencode.jsonc; size_kb=0.4; last_modified=2026-10-30 19:56:20; symbols=}.path) (0.4 KB, Modified: 2026-10-30 19:56:20)
+- $(@{path=Sync-NewFiles-And-Replan.ps1; size_kb=7.4; last_modified=2026-10-30 21:23:02; symbols=}.path) (7.4 KB, Modified: 2026-10-30 21:23:02)
+- $(@{path=LIVE_WORKSPACE_MAP.json; size_kb=101.7; last_modified=2026-10-30 21:23:14; symbols=}.path) (101.7 KB, Modified: 2026-10-30 21:23:14)
+- $(@{path=Initialize-Swarm-ZeroData - Copy.ps1; size_kb=1.9; last_modified=2026-10-30 21:30:00; symbols=}.path) (1.9 KB, Modified: 2026-10-30 21:30:00)
+- $(@{path=Setup-ArgonWebBridge.ps1; size_kb=8.5; last_modified=2026-10-30 22:11:58; symbols=}.path) (8.5 KB, Modified: 2026-10-30 22:11:58)
+- $(@{path=src/2_BreadboardAOI.Core/2_BreadboardAOI.Core.csproj; size_kb=0.3; last_modified=2026-10-27 05:59:38; symbols=}.path) (0.3 KB, Modified: 2026-10-27 05:59:38)
+- $(@{path=src/2_BreadboardAOI.Core/Contracts/AoiDataContracts.cs; size_kb=6.3; last_modified=2026-10-30 22:10:50; symbols=ns:BreadboardAOI.Core.Contracts, type:ComponentKind, type:DrcSeverity, type:ViolationCode, type:DrcStatePacket}.path) (6.3 KB, Modified: 2026-10-30 22:10:50)  # [ns:BreadboardAOI.Core.Contracts, type:ComponentKind, type:DrcSeverity, type:ViolationCode, type:DrcStatePacket]
+- $(@{path=src/2_BreadboardAOI.Core/Contracts/ComponentCatalog.cs; size_kb=11.1; last_modified=2026-10-30 22:10:50; symbols=ns:BreadboardAOI.Core.Contracts}.path) (11.1 KB, Modified: 2026-10-30 22:10:50)  # [ns:BreadboardAOI.Core.Contracts]
+- $(@{path=src/2_BreadboardAOI.Core/DrcEngine/ElectricalRulesChecker.cs; size_kb=52; last_modified=2026-10-30 22:10:50; symbols=ns:BreadboardAOI.Core.DrcEngine, type:ElectricalRulesChecker}.path) (52 KB, Modified: 2026-10-30 22:10:50)  # [ns:BreadboardAOI.Core.DrcEngine, type:ElectricalRulesChecker]
+- $(@{path=src/2_BreadboardAOI.Core/DrcEngine/TargetSchematicLoader.cs; size_kb=11.2; last_modified=2026-10-28 06:20:58; symbols=ns:BreadboardAOI.Core.DrcEngine, type:TargetNet, type:TargetComponent, type:TargetSchematic, type:SchematicDto, type:NetDto, type:ComponentDto}.path) (11.2 KB, Modified: 2026-10-28 06:20:58)  # [ns:BreadboardAOI.Core.DrcEngine, type:TargetNet, type:TargetComponent, type:TargetSchematic, type:SchematicDto, type:NetDto, type:ComponentDto]
+- $(@{path=src/2_BreadboardAOI.Core/DrcEngine/NetlistReport.cs; size_kb=4.1; last_modified=2026-10-27 11:04:06; symbols=ns:BreadboardAOI.Core.DrcEngine, type:NetGroup}.path) (4.1 KB, Modified: 2026-10-27 11:04:06)  # [ns:BreadboardAOI.Core.DrcEngine, type:NetGroup]
+- $(@{path=src/2_BreadboardAOI.Core/DrcEngine/IcPinoutCatalog.cs; size_kb=9; last_modified=2026-10-29 18:56:10; symbols=ns:BreadboardAOI.Core.DrcEngine, type:IcDefinition}.path) (9 KB, Modified: 2026-10-29 18:56:10)  # [ns:BreadboardAOI.Core.DrcEngine, type:IcDefinition]
+- $(@{path=src/2_BreadboardAOI.Core/DrcEngine/SensorPinoutCatalog.cs; size_kb=21.6; last_modified=2026-10-29 22:15:22; symbols=ns:BreadboardAOI.Core.DrcEngine, type:SensorPinType, type:SensorPinSpec, type:SensorDefinition}.path) (21.6 KB, Modified: 2026-10-29 22:15:22)  # [ns:BreadboardAOI.Core.DrcEngine, type:SensorPinType, type:SensorPinSpec, type:SensorDefinition]
+- $(@{path=src/2_BreadboardAOI.Core/DrcEngine/DevBoardAndModuleRuleEngine.cs; size_kb=29.7; last_modified=2026-10-30 22:10:50; symbols=ns:BreadboardAOI.Core.DrcEngine, type:DevBoardPinFunction, type:DevBoardPinSpec, type:DevBoardDefinition}.path) (29.7 KB, Modified: 2026-10-30 22:10:50)  # [ns:BreadboardAOI.Core.DrcEngine, type:DevBoardPinFunction, type:DevBoardPinSpec, type:DevBoardDefinition]
+- $(@{path=src/2_BreadboardAOI.Core/Geometry/PinMatrixLookup.cs; size_kb=13.8; last_modified=2026-10-30 22:10:50; symbols=ns:BreadboardAOI.Core.Geometry, type:IHoleSnapper, type:PinMatrixLookup}.path) (13.8 KB, Modified: 2026-10-30 22:10:50)  # [ns:BreadboardAOI.Core.Geometry, type:IHoleSnapper, type:PinMatrixLookup]
+- $(@{path=src/2_BreadboardAOI.Core/Geometry/BreadboardSpec.cs; size_kb=7.4; last_modified=2026-10-27 06:04:06; symbols=ns:BreadboardAOI.Core.Geometry}.path) (7.4 KB, Modified: 2026-10-27 06:04:06)  # [ns:BreadboardAOI.Core.Geometry]
+- $(@{path=src/2_BreadboardAOI.Core/Geometry/ResistorColorCode.cs; size_kb=5.3; last_modified=2026-10-29 21:30:40; symbols=ns:BreadboardAOI.Core.Geometry}.path) (5.3 KB, Modified: 2026-10-29 21:30:40)  # [ns:BreadboardAOI.Core.Geometry]
+- $(@{path=src/2_BreadboardAOI.Core/Design/CircuitDraft.cs; size_kb=17.8; last_modified=2026-10-29 21:16:36; symbols=ns:BreadboardAOI.Core.Design, type:CircuitDraft}.path) (17.8 KB, Modified: 2026-10-29 21:16:36)  # [ns:BreadboardAOI.Core.Design, type:CircuitDraft]
+- $(@{path=src/2_BreadboardAOI.Core/Design/DemoCircuitCatalog.cs; size_kb=6.5; last_modified=2026-10-27 11:04:40; symbols=ns:BreadboardAOI.Core.Design, type:DemoScenario}.path) (6.5 KB, Modified: 2026-10-27 11:04:40)  # [ns:BreadboardAOI.Core.Design, type:DemoScenario]
+- $(@{path=src/2_BreadboardAOI.Core/Design/FootprintPlacer.cs; size_kb=5.8; last_modified=2026-10-27 15:35:44; symbols=ns:BreadboardAOI.Core.Design}.path) (5.8 KB, Modified: 2026-10-27 15:35:44)  # [ns:BreadboardAOI.Core.Design]
+- $(@{path=src/2_BreadboardAOI.Core/KiCad/KicadSymbol.cs; size_kb=5.7; last_modified=2026-10-28 05:06:56; symbols=ns:BreadboardAOI.Core.KiCad, type:KicadGraphicKind, type:KicadFillStyle, type:KicadGraphic, type:KicadSymbol}.path) (5.7 KB, Modified: 2026-10-28 05:06:56)  # [ns:BreadboardAOI.Core.KiCad, type:KicadGraphicKind, type:KicadFillStyle, type:KicadGraphic, type:KicadSymbol]
+- $(@{path=src/2_BreadboardAOI.Core/KiCad/KicadSymbolParser.cs; size_kb=15.9; last_modified=2026-10-28 05:09:58; symbols=ns:BreadboardAOI.Core.KiCad, type:SExprNode}.path) (15.9 KB, Modified: 2026-10-28 05:09:58)  # [ns:BreadboardAOI.Core.KiCad, type:SExprNode]
+- $(@{path=src/2_BreadboardAOI.Core/KiCad/KicadSymbolLibrary.cs; size_kb=14.9; last_modified=2026-10-29 19:08:50; symbols=ns:BreadboardAOI.Core.KiCad, type:KicadSymbolLibrary}.path) (14.9 KB, Modified: 2026-10-29 19:08:50)  # [ns:BreadboardAOI.Core.KiCad, type:KicadSymbolLibrary]
+- $(@{path=src/2_BreadboardAOI.Core/KiCad/FastImageToKicadEngine.cs; size_kb=32.3; last_modified=2026-10-30 22:10:50; symbols=ns:BreadboardAOI.Core.KiCad, type:FastImageToKicadOptions, type:KicadSchematicResult, type:FastImageToKicadEngine, type:SchematicPlacement}.path) (32.3 KB, Modified: 2026-10-30 22:10:50)  # [ns:BreadboardAOI.Core.KiCad, type:FastImageToKicadOptions, type:KicadSchematicResult, type:FastImageToKicadEngine, type:SchematicPlacement]
+- $(@{path=src/3_BreadboardAOI.Vision/3_BreadboardAOI.Vision.csproj; size_kb=0.7; last_modified=2026-10-29 09:43:48; symbols=}.path) (0.7 KB, Modified: 2026-10-29 09:43:48)
+- $(@{path=src/3_BreadboardAOI.Vision/CameraCaptureService.cs; size_kb=12.4; last_modified=2026-10-27 07:21:20; symbols=ns:BreadboardAOI.Vision, type:CameraSource, type:CameraCaptureService}.path) (12.4 KB, Modified: 2026-10-27 07:21:20)  # [ns:BreadboardAOI.Vision, type:CameraSource, type:CameraCaptureService]
+- $(@{path=src/3_BreadboardAOI.Vision/HandMotionGate.cs; size_kb=5.4; last_modified=2026-10-28 06:35:06; symbols=ns:BreadboardAOI.Vision, type:HandMotionGate}.path) (5.4 KB, Modified: 2026-10-28 06:35:06)  # [ns:BreadboardAOI.Vision, type:HandMotionGate]
+- $(@{path=src/3_BreadboardAOI.Vision/YoloPoseInferenceEngine.cs; size_kb=18.1; last_modified=2026-10-27 11:57:58; symbols=ns:BreadboardAOI.Vision, type:YoloPoseOptions, type:YoloPoseInferenceEngine}.path) (18.1 KB, Modified: 2026-10-27 11:57:58)  # [ns:BreadboardAOI.Vision, type:YoloPoseOptions, type:YoloPoseInferenceEngine]
+- $(@{path=src/3_BreadboardAOI.Vision/MicroCropExtractor.cs; size_kb=3; last_modified=2026-10-27 06:15:08; symbols=ns:BreadboardAOI.Vision, type:MicroCropExtractor}.path) (3 KB, Modified: 2026-10-27 06:15:08)  # [ns:BreadboardAOI.Vision, type:MicroCropExtractor]
+- $(@{path=src/3_BreadboardAOI.Vision/HomographyCalibrator.cs; size_kb=17.6; last_modified=2026-10-28 06:32:58; symbols=ns:BreadboardAOI.Vision, type:HomographyCalibrator}.path) (17.6 KB, Modified: 2026-10-28 06:32:58)  # [ns:BreadboardAOI.Vision, type:HomographyCalibrator]
+- $(@{path=src/4_BreadboardAOI.Intelligence/4_BreadboardAOI.Intelligence.csproj; size_kb=0.6; last_modified=2026-10-27 05:59:38; symbols=}.path) (0.6 KB, Modified: 2026-10-27 05:59:38)
+- $(@{path=src/4_BreadboardAOI.Intelligence/DiagnosticPromptBuilder.cs; size_kb=8.3; last_modified=2026-10-30 07:38:28; symbols=ns:BreadboardAOI.Intelligence}.path) (8.3 KB, Modified: 2026-10-30 07:38:28)  # [ns:BreadboardAOI.Intelligence]
+- $(@{path=src/4_BreadboardAOI.Intelligence/SentenceStreamSplitter.cs; size_kb=5; last_modified=2026-10-27 06:28:58; symbols=ns:BreadboardAOI.Intelligence, type:SentenceStreamSplitter}.path) (5 KB, Modified: 2026-10-27 06:28:58)  # [ns:BreadboardAOI.Intelligence, type:SentenceStreamSplitter]
+- $(@{path=src/4_BreadboardAOI.Intelligence/QwenMoEService.cs; size_kb=56.8; last_modified=2026-10-30 17:00:28; symbols=ns:BreadboardAOI.Intelligence, type:QwenResponseMode, type:QwenStreamKind, type:QwenMoEOptions, type:QwenMoEService}.path) (56.8 KB, Modified: 2026-10-30 17:00:28)  # [ns:BreadboardAOI.Intelligence, type:QwenResponseMode, type:QwenStreamKind, type:QwenMoEOptions, type:QwenMoEService]
+- $(@{path=src/4_BreadboardAOI.Intelligence/VoiceSynthesisEngine.cs; size_kb=44; last_modified=2026-10-30 09:04:18; symbols=ns:BreadboardAOI.Intelligence, type:VoiceBackend, type:VoiceOptions, type:VoiceSynthesisEngine}.path) (44 KB, Modified: 2026-10-30 09:04:18)  # [ns:BreadboardAOI.Intelligence, type:VoiceBackend, type:VoiceOptions, type:VoiceSynthesisEngine]
+- $(@{path=src/4_BreadboardAOI.Intelligence/SpeechTextNormalizer.cs; size_kb=11.9; last_modified=2026-10-30 08:02:16; symbols=ns:BreadboardAOI.Intelligence}.path) (11.9 KB, Modified: 2026-10-30 08:02:16)  # [ns:BreadboardAOI.Intelligence]
+- $(@{path=src/4_BreadboardAOI.Intelligence/BmoVoiceStyler.cs; size_kb=8.4; last_modified=2026-10-29 16:11:30; symbols=ns:BreadboardAOI.Intelligence}.path) (8.4 KB, Modified: 2026-10-29 16:11:30)  # [ns:BreadboardAOI.Intelligence]
+- $(@{path=src/4_BreadboardAOI.Intelligence/VoiceEnginePreferences.cs; size_kb=2.8; last_modified=2026-10-29 16:12:30; symbols=ns:BreadboardAOI.Intelligence, type:VoiceEnginePreference}.path) (2.8 KB, Modified: 2026-10-29 16:12:30)  # [ns:BreadboardAOI.Intelligence, type:VoiceEnginePreference]
+- $(@{path=src/4_BreadboardAOI.Intelligence/PiperTtsEngine.cs; size_kb=10.6; last_modified=2026-10-30 09:04:18; symbols=ns:BreadboardAOI.Intelligence, type:PiperTtsEngine}.path) (10.6 KB, Modified: 2026-10-30 09:04:18)  # [ns:BreadboardAOI.Intelligence, type:PiperTtsEngine]
+- $(@{path=src/4_BreadboardAOI.Intelligence/Remote/ColabSession.cs; size_kb=12; last_modified=2026-10-30 14:01:28; symbols=ns:BreadboardAOI.Intelligence.Remote, type:ColabSession, type:RemoteTutorTarget, type:RemoteTutorRoute}.path) (12 KB, Modified: 2026-10-30 14:01:28)  # [ns:BreadboardAOI.Intelligence.Remote, type:ColabSession, type:RemoteTutorTarget, type:RemoteTutorRoute]
+- $(@{path=src/4_BreadboardAOI.Intelligence/Remote/GoogleOAuthClient.cs; size_kb=24.8; last_modified=2026-10-27 07:14:42; symbols=ns:BreadboardAOI.Intelligence.Remote, type:GoogleOAuthOptions, type:GoogleTokenSet, type:GoogleOAuthClient}.path) (24.8 KB, Modified: 2026-10-27 07:14:42)  # [ns:BreadboardAOI.Intelligence.Remote, type:GoogleOAuthOptions, type:GoogleTokenSet, type:GoogleOAuthClient]
+- $(@{path=src/4_BreadboardAOI.Intelligence/Remote/GoogleTokenStore.cs; size_kb=7.6; last_modified=2026-10-27 11:57:20; symbols=ns:BreadboardAOI.Intelligence.Remote, type:GoogleTokenStore, type:GoogleClientConfig, type:GoogleClientConfigStore}.path) (7.6 KB, Modified: 2026-10-27 11:57:20)  # [ns:BreadboardAOI.Intelligence.Remote, type:GoogleTokenStore, type:GoogleClientConfig, type:GoogleClientConfigStore]
+- $(@{path=src/4_BreadboardAOI.Intelligence/Remote/ColabDriveBridge.cs; size_kb=13.1; last_modified=2026-10-30 17:00:28; symbols=ns:BreadboardAOI.Intelligence.Remote, type:ColabFileRef, type:ColabDriveBridge, type:RemoteProbeResult}.path) (13.1 KB, Modified: 2026-10-30 17:00:28)  # [ns:BreadboardAOI.Intelligence.Remote, type:ColabFileRef, type:ColabDriveBridge, type:RemoteProbeResult]
+- $(@{path=src/4_BreadboardAOI.Intelligence/Remote/ColabPairCode.cs; size_kb=5.4; last_modified=2026-10-28 06:21:42; symbols=ns:BreadboardAOI.Intelligence.Remote}.path) (5.4 KB, Modified: 2026-10-28 06:21:42)  # [ns:BreadboardAOI.Intelligence.Remote]
+- $(@{path=src/4_BreadboardAOI.Intelligence/Remote/ManualEndpointStore.cs; size_kb=3.9; last_modified=2026-10-27 11:12:10; symbols=ns:BreadboardAOI.Intelligence.Remote, type:ManualEndpointStore, type:ManualEndpointFile}.path) (3.9 KB, Modified: 2026-10-27 11:12:10)  # [ns:BreadboardAOI.Intelligence.Remote, type:ManualEndpointStore, type:ManualEndpointFile]
+- $(@{path=src/4_BreadboardAOI.Intelligence/Remote/LocalAiProviders.cs; size_kb=5.9; last_modified=2026-10-30 17:00:28; symbols=ns:BreadboardAOI.Intelligence.Remote, type:LocalAiPreset}.path) (5.9 KB, Modified: 2026-10-30 17:00:28)  # [ns:BreadboardAOI.Intelligence.Remote, type:LocalAiPreset]
+- $(@{path=src/4_BreadboardAOI.Intelligence/Remote/DpapiProtector.cs; size_kb=5; last_modified=2026-10-27 11:57:02; symbols=ns:BreadboardAOI.Intelligence.Remote}.path) (5 KB, Modified: 2026-10-27 11:57:02)  # [ns:BreadboardAOI.Intelligence.Remote]
+- $(@{path=src/1_BreadboardAOI.Hardware/1_BreadboardAOI.Hardware.csproj; size_kb=0.3; last_modified=2026-10-27 05:59:38; symbols=}.path) (0.3 KB, Modified: 2026-10-27 05:59:38)
+- $(@{path=src/1_BreadboardAOI.Hardware/CpuAffinityManager.cs; size_kb=17; last_modified=2026-10-30 09:04:18; symbols=ns:BreadboardAOI.Hardware, type:AffinityRole}.path) (17 KB, Modified: 2026-10-30 09:04:18)  # [ns:BreadboardAOI.Hardware, type:AffinityRole]
+- $(@{path=src/1_BreadboardAOI.Hardware/PinnedFrameRingBuffer.cs; size_kb=12.3; last_modified=2026-10-27 14:47:14; symbols=ns:BreadboardAOI.Hardware, type:PinnedFrameRingBuffer}.path) (12.3 KB, Modified: 2026-10-27 14:47:14)  # [ns:BreadboardAOI.Hardware, type:PinnedFrameRingBuffer]
+- $(@{path=src/1_BreadboardAOI.Hardware/VramBudgetMonitor.cs; size_kb=10; last_modified=2026-10-27 06:18:08; symbols=ns:BreadboardAOI.Hardware, type:VramBudgetMonitor}.path) (10 KB, Modified: 2026-10-27 06:18:08)  # [ns:BreadboardAOI.Hardware, type:VramBudgetMonitor]
+- $(@{path=src/5_BreadboardAOI.App/5_BreadboardAOI.App.csproj; size_kb=2.2; last_modified=2026-10-30 13:56:36; symbols=}.path) (2.2 KB, Modified: 2026-10-30 13:56:36)
+- $(@{path=src/5_BreadboardAOI.App/App.xaml; size_kb=0.5; last_modified=2026-10-27 06:50:22; symbols=}.path) (0.5 KB, Modified: 2026-10-27 06:50:22)
+- $(@{path=src/5_BreadboardAOI.App/App.xaml.cs; size_kb=3.7; last_modified=2026-10-30 13:56:16; symbols=ns:BreadboardAOI.App, type:App}.path) (3.7 KB, Modified: 2026-10-30 13:56:16)  # [ns:BreadboardAOI.App, type:App]
+- $(@{path=src/5_BreadboardAOI.App/Views/MainWindow.xaml.cs; size_kb=8.3; last_modified=2026-10-29 16:56:38; symbols=ns:BreadboardAOI.App.Views, type:MainWindow}.path) (8.3 KB, Modified: 2026-10-29 16:56:38)  # [ns:BreadboardAOI.App.Views, type:MainWindow]
+- $(@{path=src/5_BreadboardAOI.App/Views/MainWindow.xaml; size_kb=151.9; last_modified=2026-10-30 22:23:46; symbols=}.path) (151.9 KB, Modified: 2026-10-30 22:23:46)
+- $(@{path=src/5_BreadboardAOI.App/Views/SymbolPickerDialog.xaml; size_kb=5.4; last_modified=2026-10-29 09:47:48; symbols=}.path) (5.4 KB, Modified: 2026-10-29 09:47:48)
+- $(@{path=src/5_BreadboardAOI.App/Views/SymbolPickerDialog.xaml.cs; size_kb=3.4; last_modified=2026-10-28 05:16:44; symbols=ns:BreadboardAOI.App.Views, type:SymbolPickerDialog}.path) (3.4 KB, Modified: 2026-10-28 05:16:44)  # [ns:BreadboardAOI.App.Views, type:SymbolPickerDialog]
+- $(@{path=src/5_BreadboardAOI.App/Views/AiVisionInspectionWindow.xaml; size_kb=46.5; last_modified=2026-10-30 14:04:52; symbols=}.path) (46.5 KB, Modified: 2026-10-30 14:04:52)
+- $(@{path=src/5_BreadboardAOI.App/Views/AiVisionInspectionWindow.xaml.cs; size_kb=55.4; last_modified=2026-10-30 14:04:52; symbols=ns:BreadboardAOI.App.Views, type:AiVisionInspectionWindow}.path) (55.4 KB, Modified: 2026-10-30 14:04:52)  # [ns:BreadboardAOI.App.Views, type:AiVisionInspectionWindow]
+- $(@{path=src/5_BreadboardAOI.App/Orchestration/InspectionPipelineCoordinator.cs; size_kb=53.8; last_modified=2026-10-30 22:20:56; symbols=ns:BreadboardAOI.App.Orchestration, type:InspectionPipelineOptions, type:InspectionPipelineCoordinator}.path) (53.8 KB, Modified: 2026-10-30 22:20:56)  # [ns:BreadboardAOI.App.Orchestration, type:InspectionPipelineOptions, type:InspectionPipelineCoordinator]
+- $(@{path=src/5_BreadboardAOI.App/Rendering/SkiaArOverlayRenderer.cs; size_kb=55.7; last_modified=2026-10-30 22:22:50; symbols=ns:BreadboardAOI.App.Rendering, type:OverlayLayerSettings, type:SkiaArOverlayRenderer}.path) (55.7 KB, Modified: 2026-10-30 22:22:50)  # [ns:BreadboardAOI.App.Rendering, type:OverlayLayerSettings, type:SkiaArOverlayRenderer]
+- $(@{path=src/5_BreadboardAOI.App/Rendering/SkiaArOverlayRenderer.Parts.cs; size_kb=84.1; last_modified=2026-10-29 21:59:06; symbols=ns:BreadboardAOI.App.Rendering, type:SkiaArOverlayRenderer}.path) (84.1 KB, Modified: 2026-10-29 21:59:06)  # [ns:BreadboardAOI.App.Rendering, type:SkiaArOverlayRenderer]
+- $(@{path=src/5_BreadboardAOI.App/Themes/SpectrumDarkTheme.xaml; size_kb=46.1; last_modified=2026-10-30 09:34:16; symbols=}.path) (46.1 KB, Modified: 2026-10-30 09:34:16)
+- $(@{path=src/5_BreadboardAOI.App/ViewModels/MainWorkstationViewModel.cs; size_kb=140.4; last_modified=2026-10-30 22:23:26; symbols=ns:BreadboardAOI.App.ViewModels, type:DemoScenarioItem, type:AiRouteMethod, type:AiRouteOption, type:CameraOption, type:BuildPartOption, type:PinCountOption, type:PartValuePreset, type:DraftPartRow, type:ViolationRow, type:MainWorkstationViewModel}.path) (140.4 KB, Modified: 2026-10-30 22:23:26)  # [ns:BreadboardAOI.App.ViewModels, type:DemoScenarioItem, type:AiRouteMethod, type:AiRouteOption, type:CameraOption, type:BuildPartOption, type:PinCountOption, type:PartValuePreset, type:DraftPartRow, type:ViolationRow, type:MainWorkstationViewModel]
+- $(@{path=src/5_BreadboardAOI.App/Workspace/WorkspaceLayoutStore.cs; size_kb=2.8; last_modified=2026-10-28 10:18:02; symbols=ns:BreadboardAOI.App.Workspace, type:WorkspaceLayoutState}.path) (2.8 KB, Modified: 2026-10-28 10:18:02)  # [ns:BreadboardAOI.App.Workspace, type:WorkspaceLayoutState]
+- $(@{path=src/5_BreadboardAOI.App/Workspace/VoiceSettingsStore.cs; size_kb=3.3; last_modified=2026-10-28 10:52:52; symbols=ns:BreadboardAOI.App.Workspace, type:VoiceSettingsState}.path) (3.3 KB, Modified: 2026-10-28 10:52:52)  # [ns:BreadboardAOI.App.Workspace, type:VoiceSettingsState]
+- $(@{path=src/6_BreadboardAOI.Tests/6_BreadboardAOI.Tests.csproj; size_kb=1.1; last_modified=2026-10-29 09:43:48; symbols=}.path) (1.1 KB, Modified: 2026-10-29 09:43:48)
+- $(@{path=src/6_BreadboardAOI.Tests/PinMatrixLookupTests.cs; size_kb=4.4; last_modified=2026-10-30 22:10:50; symbols=ns:BreadboardAOI.Tests, type:PinMatrixLookupTests}.path) (4.4 KB, Modified: 2026-10-30 22:10:50)  # [ns:BreadboardAOI.Tests, type:PinMatrixLookupTests]
+- $(@{path=src/6_BreadboardAOI.Tests/ElectricalRulesCheckerTests.cs; size_kb=14.9; last_modified=2026-10-30 22:10:50; symbols=ns:BreadboardAOI.Tests, type:ElectricalRulesCheckerTests}.path) (14.9 KB, Modified: 2026-10-30 22:10:50)  # [ns:BreadboardAOI.Tests, type:ElectricalRulesCheckerTests]
+- $(@{path=src/6_BreadboardAOI.Tests/VisionPipelineTests.cs; size_kb=8.1; last_modified=2026-10-28 06:35:42; symbols=ns:BreadboardAOI.Tests, type:VisionPipelineTests}.path) (8.1 KB, Modified: 2026-10-28 06:35:42)  # [ns:BreadboardAOI.Tests, type:VisionPipelineTests]
+- $(@{path=src/6_BreadboardAOI.Tests/HardwarePortabilityTests.cs; size_kb=4.1; last_modified=2026-10-30 09:02:48; symbols=ns:BreadboardAOI.Tests, type:HardwarePortabilityTests}.path) (4.1 KB, Modified: 2026-10-30 09:02:48)  # [ns:BreadboardAOI.Tests, type:HardwarePortabilityTests]
+- $(@{path=src/6_BreadboardAOI.Tests/IntelligencePipelineTests.cs; size_kb=19.9; last_modified=2026-10-30 14:40:26; symbols=ns:BreadboardAOI.Tests, type:IntelligencePipelineTests, type:StubHttpHandler}.path) (19.9 KB, Modified: 2026-10-30 14:40:26)  # [ns:BreadboardAOI.Tests, type:IntelligencePipelineTests, type:StubHttpHandler]
+- $(@{path=src/6_BreadboardAOI.Tests/RemoteColabTests.cs; size_kb=11; last_modified=2026-10-27 07:13:08; symbols=ns:BreadboardAOI.Tests, type:RemoteColabTests, type:StubHandler}.path) (11 KB, Modified: 2026-10-27 07:13:08)  # [ns:BreadboardAOI.Tests, type:RemoteColabTests, type:StubHandler]
+- $(@{path=src/6_BreadboardAOI.Tests/CameraCaptureServiceTests.cs; size_kb=4.5; last_modified=2026-10-27 07:22:52; symbols=ns:BreadboardAOI.Tests, type:CameraCaptureServiceTests}.path) (4.5 KB, Modified: 2026-10-27 07:22:52)  # [ns:BreadboardAOI.Tests, type:CameraCaptureServiceTests]
+- $(@{path=src/6_BreadboardAOI.Tests/RemotePairingTests.cs; size_kb=7.3; last_modified=2026-10-28 06:22:08; symbols=ns:BreadboardAOI.Tests, type:RemotePairingTests}.path) (7.3 KB, Modified: 2026-10-28 06:22:08)  # [ns:BreadboardAOI.Tests, type:RemotePairingTests]
+- $(@{path=src/6_BreadboardAOI.Tests/CircuitDraftTests.cs; size_kb=6.8; last_modified=2026-10-29 21:42:34; symbols=ns:BreadboardAOI.Tests, type:CircuitDraftTests}.path) (6.8 KB, Modified: 2026-10-29 21:42:34)  # [ns:BreadboardAOI.Tests, type:CircuitDraftTests]
+- $(@{path=src/6_BreadboardAOI.Tests/DemoScenarioDrcTests.cs; size_kb=2.4; last_modified=2026-10-27 11:06:38; symbols=ns:BreadboardAOI.Tests, type:DemoScenarioDrcTests}.path) (2.4 KB, Modified: 2026-10-27 11:06:38)  # [ns:BreadboardAOI.Tests, type:DemoScenarioDrcTests]
+- $(@{path=src/6_BreadboardAOI.Tests/LocalAiProviderTests.cs; size_kb=6; last_modified=2026-10-30 14:38:16; symbols=ns:BreadboardAOI.Tests, type:LocalAiProviderTests}.path) (6 KB, Modified: 2026-10-30 14:38:16)  # [ns:BreadboardAOI.Tests, type:LocalAiProviderTests]
+- $(@{path=src/6_BreadboardAOI.Tests/ReviewRemediationTests.cs; size_kb=14.3; last_modified=2026-10-28 06:21:06; symbols=ns:BreadboardAOI.Tests, type:ReviewRemediationTests}.path) (14.3 KB, Modified: 2026-10-28 06:21:06)  # [ns:BreadboardAOI.Tests, type:ReviewRemediationTests]
+- $(@{path=src/6_BreadboardAOI.Tests/KicadSymbolLibraryTests.cs; size_kb=4.8; last_modified=2026-10-28 05:09:02; symbols=ns:BreadboardAOI.Tests, type:KicadSymbolLibraryTests}.path) (4.8 KB, Modified: 2026-10-28 05:09:02)  # [ns:BreadboardAOI.Tests, type:KicadSymbolLibraryTests]
+- $(@{path=src/6_BreadboardAOI.Tests/MultiPinFootprintTests.cs; size_kb=9.2; last_modified=2026-10-29 16:14:56; symbols=ns:BreadboardAOI.Tests, type:MultiPinFootprintTests}.path) (9.2 KB, Modified: 2026-10-29 16:14:56)  # [ns:BreadboardAOI.Tests, type:MultiPinFootprintTests]
+- $(@{path=src/6_BreadboardAOI.Tests/BmoVoiceTests.cs; size_kb=4.4; last_modified=2026-10-30 08:02:06; symbols=ns:BreadboardAOI.Tests, type:BmoVoiceTests}.path) (4.4 KB, Modified: 2026-10-30 08:02:06)  # [ns:BreadboardAOI.Tests, type:BmoVoiceTests]
+- $(@{path=src/6_BreadboardAOI.Tests/PiperTtsTests.cs; size_kb=14.3; last_modified=2026-10-28 10:54:52; symbols=ns:BreadboardAOI.Tests, type:PiperTtsTests}.path) (14.3 KB, Modified: 2026-10-28 10:54:52)  # [ns:BreadboardAOI.Tests, type:PiperTtsTests]
+- $(@{path=src/6_BreadboardAOI.Tests/ComponentClassificationTests.cs; size_kb=7.3; last_modified=2026-10-29 19:56:22; symbols=ns:BreadboardAOI.Tests, type:ComponentClassificationTests}.path) (7.3 KB, Modified: 2026-10-29 19:56:22)  # [ns:BreadboardAOI.Tests, type:ComponentClassificationTests]
+- $(@{path=src/6_BreadboardAOI.Tests/IcDrcEngineTests.cs; size_kb=11.5; last_modified=2026-10-29 18:58:22; symbols=ns:BreadboardAOI.Tests, type:IcDrcEngineTests}.path) (11.5 KB, Modified: 2026-10-29 18:58:22)  # [ns:BreadboardAOI.Tests, type:IcDrcEngineTests]
+- $(@{path=src/6_BreadboardAOI.Tests/SensorDrcEngineTests.cs; size_kb=14; last_modified=2026-10-29 22:27:30; symbols=ns:BreadboardAOI.Tests, type:SensorDrcEngineTests}.path) (14 KB, Modified: 2026-10-29 22:27:30)  # [ns:BreadboardAOI.Tests, type:SensorDrcEngineTests]
+- $(@{path=src/6_BreadboardAOI.Tests/AvometerPowerTests.cs; size_kb=2.6; last_modified=2026-10-29 22:30:16; symbols=ns:BreadboardAOI.Tests, type:AvometerPowerTests}.path) (2.6 KB, Modified: 2026-10-29 22:30:16)  # [ns:BreadboardAOI.Tests, type:AvometerPowerTests]
+- $(@{path=src/6_BreadboardAOI.Tests/FastImageToKicadEngineTests.cs; size_kb=5.5; last_modified=2026-10-30 22:10:50; symbols=ns:BreadboardAOI.Tests, type:FastImageToKicadEngineTests}.path) (5.5 KB, Modified: 2026-10-30 22:10:50)  # [ns:BreadboardAOI.Tests, type:FastImageToKicadEngineTests]
+- $(@{path=src/6_BreadboardAOI.Tests/DevBoardRuleEngineTests.cs; size_kb=11; last_modified=2026-10-30 22:10:50; symbols=ns:BreadboardAOI.Tests, type:DevBoardRuleEngineTests}.path) (11 KB, Modified: 2026-10-30 22:10:50)  # [ns:BreadboardAOI.Tests, type:DevBoardRuleEngineTests]
+- $(@{path=src/7_BreadboardAOI.Installer/7_BreadboardAOI.Installer.csproj; size_kb=1.4; last_modified=2026-10-30 12:08:52; symbols=}.path) (1.4 KB, Modified: 2026-10-30 12:08:52)
+- $(@{path=src/7_BreadboardAOI.Installer/App.xaml; size_kb=0.3; last_modified=2026-10-29 22:55:48; symbols=}.path) (0.3 KB, Modified: 2026-10-29 22:55:48)
+- $(@{path=src/7_BreadboardAOI.Installer/App.xaml.cs; size_kb=0.1; last_modified=2026-10-29 22:55:52; symbols=ns:BreadboardAOI.Installer, type:App}.path) (0.1 KB, Modified: 2026-10-29 22:55:52)  # [ns:BreadboardAOI.Installer, type:App]
+- $(@{path=src/7_BreadboardAOI.Installer/MainWindow.xaml; size_kb=18.8; last_modified=2026-10-30 12:25:28; symbols=}.path) (18.8 KB, Modified: 2026-10-30 12:25:28)
+- $(@{path=src/7_BreadboardAOI.Installer/MainWindow.xaml.cs; size_kb=36.1; last_modified=2026-10-30 14:10:30; symbols=ns:BreadboardAOI.Installer, type:MainWindow}.path) (36.1 KB, Modified: 2026-10-30 14:10:30)  # [ns:BreadboardAOI.Installer, type:MainWindow]
+- $(@{path=assets/models/README.md; size_kb=4.5; last_modified=2026-10-28 11:11:00; symbols=}.path) (4.5 KB, Modified: 2026-10-28 11:11:00)
+- $(@{path=assets/audio_reflex/README.md; size_kb=0.6; last_modified=2026-10-27 07:24:46; symbols=}.path) (0.6 KB, Modified: 2026-10-27 07:24:46)
+- $(@{path=assets/schematics/target_555_blinker_netlist.json; size_kb=1.3; last_modified=2026-10-27 06:06:18; symbols=}.path) (1.3 KB, Modified: 2026-10-27 06:06:18)
+- $(@{path=assets/colab/README.md; size_kb=8; last_modified=2026-10-27 09:02:06; symbols=}.path) (8 KB, Modified: 2026-10-27 09:02:06)
+- $(@{path=assets/kicad/NOTICE.md; size_kb=1.4; last_modified=2026-10-29 09:52:52; symbols=}.path) (1.4 KB, Modified: 2026-10-29 09:52:52)
+- $(@{path=assets/kicad/LICENSE-kicad.md; size_kb=2.1; last_modified=2026-10-27 11:49:40; symbols=}.path) (2.1 KB, Modified: 2026-10-27 11:49:40)
+- $(@{path=docs/OBJECTIVES.md; size_kb=7.9; last_modified=2026-10-29 15:37:02; symbols=}.path) (7.9 KB, Modified: 2026-10-29 15:37:02)
+- $(@{path=docs/COMMANDS.md; size_kb=8.5; last_modified=2026-10-29 15:36:32; symbols=}.path) (8.5 KB, Modified: 2026-10-29 15:36:32)
+- $(@{path=dist/test_app/BreadboardAOI.App.deps.json; size_kb=24.8; last_modified=2026-10-30 13:49:50; symbols=}.path) (24.8 KB, Modified: 2026-10-30 13:49:50)
+- $(@{path=dist/test_app/BreadboardAOI.App.runtimeconfig.json; size_kb=0.6; last_modified=2026-10-30 13:49:50; symbols=}.path) (0.6 KB, Modified: 2026-10-30 13:49:50)
+- $(@{path=dist/test_app/assets/kicad/NOTICE.md; size_kb=1.4; last_modified=2026-10-29 09:52:52; symbols=}.path) (1.4 KB, Modified: 2026-10-29 09:52:52)
+- $(@{path=dist/test_app/assets/kicad/LICENSE-kicad.md; size_kb=2.1; last_modified=2026-10-27 11:49:40; symbols=}.path) (2.1 KB, Modified: 2026-10-27 11:49:40)
+- $(@{path=dist/test_extract/BreadboardAOI.App.deps.json; size_kb=24.8; last_modified=2026-10-30 14:03:04; symbols=}.path) (24.8 KB, Modified: 2026-10-30 14:03:04)
+- $(@{path=dist/test_extract/BreadboardAOI.App.runtimeconfig.json; size_kb=0.6; last_modified=2026-10-30 14:03:04; symbols=}.path) (0.6 KB, Modified: 2026-10-30 14:03:04)
+- $(@{path=dist/test_extract/Uninstall-BreadboardAOI.ps1; size_kb=1.6; last_modified=2026-10-30 13:45:08; symbols=}.path) (1.6 KB, Modified: 2026-10-30 13:45:08)
+- $(@{path=dist/test_extract/assets/kicad/NOTICE.md; size_kb=1.4; last_modified=2026-10-29 09:52:52; symbols=}.path) (1.4 KB, Modified: 2026-10-29 09:52:52)
+- $(@{path=dist/test_extract/assets/kicad/LICENSE-kicad.md; size_kb=2.1; last_modified=2026-10-27 11:49:40; symbols=}.path) (2.1 KB, Modified: 2026-10-27 11:49:40)
+- $(@{path=dist/app_payload/BreadboardAOI.App.deps.json; size_kb=24.8; last_modified=2026-10-30 16:59:14; symbols=}.path) (24.8 KB, Modified: 2026-10-30 16:59:14)
+- $(@{path=dist/app_payload/BreadboardAOI.App.runtimeconfig.json; size_kb=0.6; last_modified=2026-10-30 16:59:14; symbols=}.path) (0.6 KB, Modified: 2026-10-30 16:59:14)
+- $(@{path=dist/app_payload/Uninstall-BreadboardAOI.ps1; size_kb=1.6; last_modified=2026-10-30 14:03:28; symbols=}.path) (1.6 KB, Modified: 2026-10-30 14:03:28)
+- $(@{path=dist/app_payload/assets/kicad/LICENSE-kicad.md; size_kb=2.1; last_modified=2026-10-27 11:49:40; symbols=}.path) (2.1 KB, Modified: 2026-10-27 11:49:40)
+- $(@{path=dist/app_payload/assets/kicad/NOTICE.md; size_kb=1.4; last_modified=2026-10-29 09:52:52; symbols=}.path) (1.4 KB, Modified: 2026-10-29 09:52:52)
+- $(@{path=BreadboardAOI_Complete_Build/BreadboardAOI.App.deps.json; size_kb=29.5; last_modified=2026-10-29 18:06:58; symbols=}.path) (29.5 KB, Modified: 2026-10-29 18:06:58)
+- $(@{path=BreadboardAOI_Complete_Build/BreadboardAOI.App.runtimeconfig.json; size_kb=0.6; last_modified=2026-10-29 09:48:46; symbols=}.path) (0.6 KB, Modified: 2026-10-29 09:48:46)
+- $(@{path=BreadboardAOI_Complete_Build/win-x64/BreadboardAOI.App.deps.json; size_kb=24.8; last_modified=2026-10-27 08:45:10; symbols=}.path) (24.8 KB, Modified: 2026-10-27 08:45:10)
+- $(@{path=BreadboardAOI_Complete_Build/win-x64/BreadboardAOI.App.runtimeconfig.json; size_kb=0.6; last_modified=2026-10-27 08:45:10; symbols=}.path) (0.6 KB, Modified: 2026-10-27 08:45:10)
+- $(@{path=BreadboardAOI_Complete_Build/assets/kicad/LICENSE-kicad.md; size_kb=2.1; last_modified=2026-10-27 11:49:40; symbols=}.path) (2.1 KB, Modified: 2026-10-27 11:49:40)
+- $(@{path=BreadboardAOI_Complete_Build/assets/kicad/NOTICE.md; size_kb=1.4; last_modified=2026-10-29 09:52:52; symbols=}.path) (1.4 KB, Modified: 2026-10-29 09:52:52)
+- $(@{path=New folder/Build-SingleFile-FullSetupExe.ps1; size_kb=6.9; last_modified=2026-10-30 19:46:30; symbols=}.path) (6.9 KB, Modified: 2026-10-30 19:46:30)
+- $(@{path=New folder/_SingleExeBuildTemp/PayloadWorkspace/Directory.Build.props; size_kb=0.3; last_modified=2026-10-30 19:45:14; symbols=}.path) (0.3 KB, Modified: 2026-10-30 19:45:14)
+- $(@{path=New folder/_SingleExeBuildTemp/PayloadWorkspace/Launch-BreadboardAOI.ps1; size_kb=0.8; last_modified=2026-10-30 19:45:14; symbols=}.path) (0.8 KB, Modified: 2026-10-30 19:45:14)
+- $(@{path=New folder/_SingleExeBuildTemp/PayloadWorkspace/0_Shared_Contracts/BreadboardAOI.Shared/BreadboardAOI.Shared.csproj; size_kb=0.2; last_modified=2026-10-30 19:45:14; symbols=}.path) (0.2 KB, Modified: 2026-10-30 19:45:14)
+- $(@{path=New folder/_SingleExeBuildTemp/PayloadWorkspace/0_Shared_Contracts/BreadboardAOI.Shared/NetworkContracts.cs; size_kb=1.8; last_modified=2026-10-30 19:45:14; symbols=ns:BreadboardAOI.Shared, type:FrameInspectionRequest, type:ArOverlayResponse}.path) (1.8 KB, Modified: 2026-10-30 19:45:14)  # [ns:BreadboardAOI.Shared, type:FrameInspectionRequest, type:ArOverlayResponse]
+- $(@{path=New folder/_SingleExeBuildTemp/PayloadWorkspace/1_Laptop_Thin_Client/BreadboardAOI.LaptopApp/BreadboardAOI.LaptopApp.csproj; size_kb=0.9; last_modified=2026-10-30 19:45:14; symbols=}.path) (0.9 KB, Modified: 2026-10-30 19:45:14)
+- $(@{path=New folder/_SingleExeBuildTemp/PayloadWorkspace/1_Laptop_Thin_Client/BreadboardAOI.LaptopApp/appsettings.json; size_kb=0.2; last_modified=2026-10-30 19:45:14; symbols=}.path) (0.2 KB, Modified: 2026-10-30 19:45:14)
+- $(@{path=New folder/_SingleExeBuildTemp/PayloadWorkspace/2_Desktop_Heavy_Server/BreadboardAOI.DesktopServer/BreadboardAOI.DesktopServer.csproj; size_kb=1.2; last_modified=2026-10-30 19:45:14; symbols=}.path) (1.2 KB, Modified: 2026-10-30 19:45:14)
+- $(@{path=New folder/_SingleExeBuildTemp/PayloadWorkspace/2_Desktop_Heavy_Server/grammars/datasheet_netlist.gbnf; size_kb=0.5; last_modified=2026-10-30 19:45:14; symbols=}.path) (0.5 KB, Modified: 2026-10-30 19:45:14)
+- $(@{path=New folder/_SingleExeBuildTemp/PayloadWorkspace/2_Desktop_Heavy_Server/cache/dev_boards/esp32_devkit_v1.json; size_kb=0.6; last_modified=2026-10-30 19:45:14; symbols=}.path) (0.6 KB, Modified: 2026-10-30 19:45:14)
+- $(@{path=New folder/_SingleExeBuildTemp/InstallerSrc/BreadboardAOI.Installer.csproj; size_kb=1.1; last_modified=2026-10-30 19:45:14; symbols=}.path) (1.1 KB, Modified: 2026-10-30 19:45:14)
+- $(@{path=New folder/_SingleExeBuildTemp/InstallerSrc/App.xaml; size_kb=0.3; last_modified=2026-10-30 19:45:14; symbols=}.path) (0.3 KB, Modified: 2026-10-30 19:45:14)
+- $(@{path=New folder/_SingleExeBuildTemp/InstallerSrc/App.xaml.cs; size_kb=0.1; last_modified=2026-10-30 19:45:14; symbols=ns:BreadboardAOI.Installer, type:App}.path) (0.1 KB, Modified: 2026-10-30 19:45:14)  # [ns:BreadboardAOI.Installer, type:App]
+- $(@{path=New folder/_SingleExeBuildTemp/InstallerSrc/MainWindow.xaml; size_kb=17.6; last_modified=2026-10-30 19:45:14; symbols=}.path) (17.6 KB, Modified: 2026-10-30 19:45:14)
+- $(@{path=New folder/_SingleExeBuildTemp/InstallerSrc/MainWindow.xaml.cs; size_kb=25.1; last_modified=2026-10-30 19:45:14; symbols=ns:BreadboardAOI.Installer, type:MainWindow}.path) (25.1 KB, Modified: 2026-10-30 19:45:14)  # [ns:BreadboardAOI.Installer, type:MainWindow]
+- $(@{path=_SwarmBridge/Apply-ArgonOutputs.ps1; size_kb=2.4; last_modified=2026-10-30 22:10:42; symbols=}.path) (2.4 KB, Modified: 2026-10-30 22:10:42)
+- $(@{path=_SwarmBridge/ANTIGRAVITY_FLASH_PROMPT.md; size_kb=6.1; last_modified=2026-10-30 21:51:20; symbols=}.path) (6.1 KB, Modified: 2026-10-30 21:51:20)
+- $(@{path=_SwarmBridge/ARGON_FIX_ROUND.md; size_kb=7.7; last_modified=2026-10-30 22:20:54; symbols=}.path) (7.7 KB, Modified: 2026-10-30 22:20:54)
 
----
-
-## 2. Target Hardware & Hybrid CPU/GPU Allocation Strategy
-This software is engineered for a specific local workstation. Every thread and memory buffer must be tuned to these exact physical limits:
-
-* **CPU:** Intel Core i5-13600K (Hybrid Architecture: **6 P-Cores / 12 Threads @ 5.1 GHz** + **8 E-Cores / 8 Threads @ 3.9 GHz** = 20 Logical Processors).
-  * **Logical Processors `0..11` (P-Cores, Affinity Mask `0x00FFF`):** Dedicated EXCLUSIVELY to `Qwen3-VL-30B-A3B` AVX2 matrix math (DDR4 offloaded experts) and `SherpaOnnx` neural TTS synthesis.
-  * **Logical Processors `12..17` (E-Cores, Affinity Mask `0x3F000`):** Dedicated to 60 FPS `OpenCvSharp4` camera capture, ArUco homography warping, and `YOLOv11-Pose` pre/post-processing.
-  * **Logical Processors `18..19` (E-Cores, Affinity Mask `0xC0000`):** Dedicated to the sub-millisecond `ElectricalRulesChecker` (KiCad DRC engine) and the 60 FPS `SkiaSharp` CAD UI thread.
-* **GPU:** NVIDIA GeForce RTX 3060 (**12 GB GDDR6 VRAM** @ 360 GB/s).
-  * **VRAM Budget:**
-    * `YOLOv11s-Pose` (FP16 TensorRT/CUDA): **~450 MB**
-    * `SkiaSharp` DirectX/OpenGL SwapChain: **~350 MB**
-    * `Qwen3-VL-30B-A3B-Instruct` (`Q4_K_M` GGUF + `mmproj-f16.gguf` + `q8_0` KV Cache): **~10,600 MB** (`--n-gpu-layers 99 --n-cpu-moe 22`)
-    * OS Reserve Buffer: **~600 MB**
-* **System RAM:** **32 GB DDR4-3200 MHz** (~51.2 GB/s dual-channel).
-  * Holds **~9.4 GB** of offloaded Sparse MoE routed experts from `Qwen3-VL-30B-A3B` pinned in physical RAM via `--mlock` / Win32 `VirtualLock` so Windows never pages weights to the NVMe SSD.
-  * Because `Qwen3-VL-30B-A3B` activates only **3B parameters per token**, the i5-13600K P-Cores only stream ~1.0–1.5 GB of weights from DDR4 per token, sustaining **18–22 tokens/sec**.
-
----
-
-## 3. Manager-Locked Tech Stack & NuGet Packages
-When generating `.csproj` files, use these exact libraries and versions. Do NOT substitute them with older wrappers (like `Emgu.CV` or `System.Drawing.Common`).
-
-### Global Project Properties (`Directory.Build.props`)
-```xml
-<Project>
-  <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
-    <LangVersion>12.0</LangVersion>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <PlatformTarget>x64</PlatformTarget>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <TieredPGO>true</TieredPGO>
-    <Optimize>true</Optimize>
-  </PropertyGroup>
-</Project>
-```
-
-### Approved NuGet Matrix per Project
-| Project | Package ID | Version | Purpose |
-| :--- | :--- | :--- | :--- |
-| **`1_BreadboardAOI.Hardware`** | *(Pure Win32 P/Invoke)* | N/A | `kernel32.dll` (`SetThreadAffinityMask`, `VirtualLock`), `nvml.dll` |
-| **`2_BreadboardAOI.Core`** | `System.Text.Json` | `8.0.5` | Zero-dependency PinMatrix, Union-Find Netlist, KiCad ERC/DRC Engine |
-| **`3_BreadboardAOI.Vision`** | `OpenCvSharp4` | `4.10.0.20240616` | Camera capture, ArUco detection, `WarpPerspective`, `AbsDiff` hand gate |
-| **`3_BreadboardAOI.Vision`** | `OpenCvSharp4.runtime.win` | `4.10.0.20240616` | Native C++ AVX2 OpenCV binaries for Windows x64 |
-| **`3_BreadboardAOI.Vision`** | `Microsoft.ML.OnnxRuntime.Gpu` | `1.19.2` | Runs `yolov11s_breadboard_pose_fp16.onnx` on RTX 3060 CUDA/TensorRT |
-| **`4_BreadboardAOI.Intelligence`** | `org.k2fsa.sherpa.onnx` | `1.10.30` | Ultra-fast local CPU neural TTS (`Kokoro-82M` / `Piper` ONNX) |
-| **`4_BreadboardAOI.Intelligence`** | `NAudio` | `2.2.1` | Low-latency `WaveOutEvent` audio playback (<10ms short alarms + TTS stream) |
-| **`5_BreadboardAOI.App`** | `SkiaSharp` | `2.88.8` | Hardware-accelerated 2D CAD overlay rendering (X-Ray strips, Ratsnest) |
-| **`5_BreadboardAOI.App`** | `SkiaSharp.Views.WPF` | `2.88.8` | Hosts `SKElement` / `SKGLElement` inside the WPF Workstation UI |
-| **`5_BreadboardAOI.App`** | `CommunityToolkit.Mvvm` | `8.3.2` | Source-generated, high-performance MVVM bindings (`[ObservableProperty]`) |
-| **`6_BreadboardAOI.Tests`** | `xunit` & `FluentAssertions` | `2.9.2` / `6.12.1` | Automated unit testing for the PinMatrix and KiCad DRC engine |
-
-> **Note on `Qwen3-VL-30B-A3B` Integration:** Instead of fighting out-of-date C# GGUF bindings for brand-new Qwen3-VL vision projectors, `QwenMoEService.cs` manages the official CUDA-compiled `llama-server.exe` binary as a persistent background child process pinned to P-Cores (`0x00FFF`) and communicates with it over local loopback HTTP SSE (`[http://127.0.0.1:8089/v1/chat/completions](http://127.0.0.1:8089/v1/chat/completions)`) using `SocketsHttpHandler`.
-
----
-
-## 4. Solution File Structure (`BreadboardAOI.sln`)
-Maintain this exact directory tree:
-
-```text
-BreadboardAOI/
-├── AGENTS.md                                  # This specification file
-├── Directory.Build.props                      # Global .NET 8 x64 + AVX2 + Unsafe configuration
-├── BreadboardAOI.sln                          # Master Solution
-├── assets/
-│   ├── models/                                # Placeholders/paths for YOLO ONNX, Qwen3-VL GGUF, Kokoro ONNX
-│   ├── audio_reflex/                          # Pre-generated WAV files for <10ms short-circuit alarms
-│   └── schematics/
-│       └── target_555_blinker_netlist.json    # Reference KiCad-style target netlist
-└── src/
-    ├── 1_BreadboardAOI.Hardware/
-    │   ├── 1_BreadboardAOI.Hardware.csproj
-    │   ├── CpuAffinityManager.cs              # P/Invoke SetThreadAffinityMask (P-Cores vs E-Cores)
-    │   ├── PinnedFrameRingBuffer.cs           # Lock-free 3-slot NativeMemory ring buffer for 1080p frames
-    │   └── VramBudgetMonitor.cs               # Queries nvml.dll for live RTX 3060 12GB VRAM telemetry
-    │
-    ├── 2_BreadboardAOI.Core/
-    │   ├── 2_BreadboardAOI.Core.csproj
-    │   ├── Contracts/
-    │   │   └── AoiDataContracts.cs            # Immutable structs: HoleCoord, DetectedComponent, DrcViolation, DrcStatePacket
-    │   ├── Geometry/
-    │   │   ├── BreadboardSpec.cs              # 830-tie-point physical constants (63 cols, rows A-E & F-J, 4 rails)
-    │   │   └── PinMatrixLookup.cs             # O(1) spatial hash grid snapping (px, py) in 1000x500 space to HoleCoord
-    │   └── DrcEngine/
-    │       ├── ElectricalRulesChecker.cs      # Union-Find jumper merger + KiCad ERC/DRC rules
-    │       └── TargetSchematicLoader.cs       # Loads target JSON netlist and computes Ratsnest air-wire vectors
-    │
-    ├── 3_BreadboardAOI.Vision/
-    │   ├── 3_BreadboardAOI.Vision.csproj
-    │   ├── CameraCaptureService.cs            # 60 FPS E-Core frame grabber into PinnedFrameRingBuffer
-    │   ├── HomographyCalibrator.cs            # ArUco 4-corner detection + Cv2.WarpPerspective to 1000x500
-    │   ├── HandMotionGate.cs                  # Cv2.AbsDiff motion blocker; fires after 250ms of board stability
-    │   ├── YoloPoseInferenceEngine.cs         # ONNX Runtime GPU inference outputting box + Lead1/Lead2 keypoints
-    │   └── MicroCropExtractor.cs              # Slices 256x256 PNG around faulty/new components for fast Qwen prefill
-    │
-    ├── 4_BreadboardAOI.Intelligence/
-    │   ├── 4_BreadboardAOI.Intelligence.csproj
-    │   ├── QwenMoEService.cs                  # Launches & streams from llama-server.exe on P-Cores (0x00FFF)
-    │   ├── DiagnosticPromptBuilder.cs         # Combines DRC JSON + 256x256 crop into a concise 2-sentence tutor prompt
-    │   ├── SentenceStreamSplitter.cs          # Yields complete sentences on '.', '!', '?' from incoming token stream
-    │   └── VoiceSynthesisEngine.cs            # SherpaOnnx (Kokoro) + NAudio WaveOutEvent + <10ms emergency WAV reflex
-    │
-    ├── 5_BreadboardAOI.App/
-    │   ├── 5_BreadboardAOI.App.csproj
-    │   ├── App.xaml & App.xaml.cs
-    │   ├── Themes/
-    │   │   └── SpectrumDarkTheme.xaml         # Adobe Spectrum / Visual Studio Dark workstation dictionary
-    │   ├── Orchestration/
-    │   │   └── InspectionPipelineCoordinator.cs # Dual-Loop Channel coordinator (60 FPS E-Core vs Async P-Core MoE)
-    │   ├── Rendering/
-    │   │   └── SkiaArOverlayRenderer.cs       # 60 FPS CAD viewport: Pasteboard, rulers, X-Ray strips, Ratsnest arrows
-    │   ├── ViewModels/
-    │   │   └── MainWorkstationViewModel.cs    # Binds telemetry, layer toggles, DRC table, and live voice transcript
-    │   └── Views/
-    │       └── MainWindow.xaml & .cs          # 4-Zone Docking Workstation UI
-    │
-    ├── 6_BreadboardAOI.Tests/
-    │   ├── 6_BreadboardAOI.Tests.csproj
-    │   ├── PinMatrixLookupTests.cs            # Verifies coordinate snapping accuracy across all 830 holes
-    │   └── ElectricalRulesCheckerTests.cs     # Verifies VCC-GND shorts, Same-Strip shorts, and Floating Pins
-```
-
----
-
-## 5. Non-Negotiable Architecture & Design Laws
-
-### Law 1: How the PinMatrix + KiCad DRC Engine Must Work
-1. **Warped Coordinate Space (`1000 x 500` pixels):**
-   * Top Power Rails: `StripTopVcc = 1` (`Y = 25`), `StripTopGnd = 2` (`Y = 45`).
-   * Bottom Power Rails: `StripBotVcc = 3` (`Y = 455`), `StripBotGnd = 4` (`Y = 475`).
-   * Terminal Strips: 63 columns (`Col 1..63`, spaced evenly from `X = 40` to `X = 960`, pitch $\approx 14.83\text{ px}$).
-   * Upper Half (`Rows A..E`, `Y = 95..175`): Each 5-hole vertical column (`A1..E1` through `A63..E63`) shares a single internal metal clip (`StripId = 101..163`).
-   * Center IC Trench: `Y = 175..225` (non-conductive divider).
-   * Lower Half (`Rows F..J`, `Y = 225..305`): Each 5-hole vertical column (`F1..J1` through `F63..J63`) shares a single internal metal clip (`StripId = 201..263`).
-2. **Union-Find Netlist Resolution:**
-   * Every `JumperWire` detected between `Hole1` and `Hole2` calls `UnionStrips(Hole1.StripId, Hole2.StripId)`.
-   * Always keep Power Rail IDs (`1..4`) as the canonical root when merging sets so any strip connected to power via a chain of jumpers automatically resolves to `NET_VCC` or `NET_GND`.
-3. **The 4 Mandatory DRC Rules:**
-   * `ErcVccGndDirectShort (100)` [`Critical`]: `FindRootNet(StripTopVcc) == FindRootNet(StripTopGnd)` (or bottom rails). Must fire the hardware WAV alarm in `< 10 ms`.
-   * `ErcSameStripShort (101)` [`Critical`]: A non-jumper component has `FindRootNet(Pin1Hole.StripId) == FindRootNet(Pin2Hole.StripId)`. Compute `SuggestedTargetHole` as the nearest adjacent unpopulated strip in the same row (`Col + 1`) so `SkiaArOverlayRenderer` draws the green corrective Ratsnest arrow.
-   * `ErcFloatingLead (102)` [`Warning`]: A non-jumper component lead sits on a resolved net where total connected terminals across the entire board `== 1`.
-   * `DrcSchematicNetMismatch (200)` [`Warning`]: Component connectivity graph does not match `target_555_blinker_netlist.json`.
-
-### Law 2: Strict Workstation UI Specification (NO "AI Design" Tropes)
-The application must look and feel like **Adobe InDesign / Visual Studio 2022 / KiCad**—an industrial engineering workstation:
-* **NO** purple/blue gradients, **NO** glowing neon buttons, **NO** rounded `16px` chat bubbles, **NO** consumer "AI assistant" avatars.
-* **Color Tokens (`SpectrumDarkTheme.xaml`):**
-  * `PasteboardBrush`: `#141414` (Matte dark surround behind the 1000x500 breadboard canvas)
-  * `PanelBackgroundBrush`: `#1E1E1E` (Dock panels)
-  * `ToolbarSurfaceBrush`: `#252526` (Top command bar & panel headers)
-  * `BorderBrush`: `#333337` (`1px` crisp structural borders everywhere; `CornerRadius="0"` or `"2"`)
-  * `AccentBlueBrush`: `#007ACC` (Active tool selection & focus border)
-  * `DrcPassBrush`: `#2D9D78` | `DrcWarningBrush`: `#E68619` | `DrcCriticalBrush`: `#D7373F`
-* **Typography:**
-  * Panel Headers & Menus: `Segoe UI`, `11px` SemiBold, Uppercase tracking for dock headers (`NETLIST & LAYERS`, `DRC VIOLATIONS`, `PIN INSPECTOR`).
-  * Coordinates, Net IDs & Telemetry: `Cascadia Mono` or `Consolas`, `11px`.
-* **CAD Viewport Features (`SkiaArOverlayRenderer.cs`):**
-  * Top horizontal pixel/column ruler (`Cols 1..63`) and left vertical row ruler (`+, -, A..E, F..J, +, -`) rendered in `#252526` with `#888888` ticks.
-  * Toggleable layers from the Left Dock: `Show Pin Matrix Dots`, `Show X-Ray Metal Clips`, `Show KiCad Ratsnest Arrows`, `Show Component Boxes`.
-* **Single 2D canvas (v0.9.x):** the viewport is the simulated breadboard only. There is no schematic sheet, no `SCHEMATIC` / `SPLIT` view mode, no `.kicad_sch` export and no photo→shapes importer. `LOAD IMAGE` replays a photo as the camera frame; a photo is never converted into parts. Parts come from the builder and the demo catalogue.
-* **Command bar groups:** `INSPECT` (demo / X-ray), `IMAGE` (camera / load), `DIAGNOSE` (replay / alarm / mute), with `PANELS` on the right. Left dock tabs are `SCENE`, `BUILDER`, `AI ROUTING`, `VIEW`.
-
----
-
-## 6. Phased Execution Plan & Task List for OpenCode
-
-Execute these 5 phases in exact sequential order. Do not skip ahead until the current phase builds cleanly and passes its verification gate.
-
-### PHASE 1: Solution Scaffolding, Data Contracts & Hardware Isolation
-* **Task 1.1:** Create `Directory.Build.props`, `BreadboardAOI.sln`, and all 6 `.csproj` files with the exact NuGet packages from Section 3.
-* **Task 1.2:** Implement `src/2_BreadboardAOI.Core/Contracts/AoiDataContracts.cs` containing `ComponentKind`, `DrcSeverity`, `ViolationCode`, `HoleCoord`, `DetectedComponent`, `SnappedComponent`, `DrcViolation`, and `DrcStatePacket`.
-* **Task 1.3:** Implement `src/1_BreadboardAOI.Hardware/CpuAffinityManager.cs` (Win32 `SetThreadAffinityMask` with `PCoresMask = 0x00FFF`, `ECoresVisionMask = 0x3F000`, `ECoresDrcUiMask = 0xC0000`) and `PinnedFrameRingBuffer.cs` (unmanaged 3-slot triple buffer using `NativeMemory.AlignedAlloc`).
-* **Verification Gate 1:** Run `dotnet build` and verify all 6 projects compile with `0 errors`.
-
-### PHASE 2: The 830-Point PinMatrix & Deterministic KiCad DRC Engine
-* **Task 2.1:** Implement `BreadboardSpec.cs` and `PinMatrixLookup.cs` in `2_BreadboardAOI.Core/Geometry/`. Generate all 830 holes (`A1..E63`, `F1..J63`, plus top/bottom power rails) in `1000x500` coordinate space and provide an O(1) / fast spatial lookup `TrySnapToHole(float px, float py, out HoleCoord hole, float maxRadius = 11.5f)`.
-* **Task 2.2:** Implement `ElectricalRulesChecker.cs` and `TargetSchematicLoader.cs` in `2_BreadboardAOI.Core/DrcEngine/`. Implement Union-Find jumper merging, `ErcVccGndDirectShort`, `ErcSameStripShort` (with automatic adjacent empty strip lookup for `SuggestedTargetHole`), `ErcFloatingLead`, and `DrcSchematicNetMismatch`.
-* **Task 2.3:** Create unit tests in `6_BreadboardAOI.Tests/PinMatrixLookupTests.cs` and `ElectricalRulesCheckerTests.cs`. Test:
-  1. Snapping pixel coordinates to `E15` and `A15` and verifying both share `StripId = 115`.
-  2. Bridging `StripTopVcc` to `A12` via a `JumperWire` and verifying `Strip 112` resolves to `NET_VCC`.
-  3. Placing an LED with both legs in `A15` and `D15` and verifying `ErcSameStripShort` is emitted with `SuggestedTargetHole = D16` in `< 0.1 ms`.
-* **Verification Gate 2:** Run `dotnet test` and confirm 100% of unit tests pass.
-
-### PHASE 3: OpenCV Homography, Hand Motion Gate & YOLOv11-Pose Engine
-* **Task 3.1:** Implement `HomographyCalibrator.cs` using `OpenCvSharp4`. Detect 4 corner ArUco markers (`PredefinedDictionaryName.Dict4X4_50`, IDs `0, 1, 2, 3`), compute the $3 \times 3$ perspective transform, and warp incoming camera frames into a pre-allocated `1000x500` `Mat`. Include a fallback Synthetic Test Pattern generator so the app runs on machines without a physical camera attached.
-* **Task 3.2:** Implement `HandMotionGate.cs` using `Cv2.AbsDiff` and non-zero pixel count. Lock the frame and emit `IsBoardStable = true` only after motion stays below threshold for `250 ms`.
-* **Task 3.3:** Implement `YoloPoseInferenceEngine.cs` using `Microsoft.ML.OnnxRuntime.Gpu` (`SessionOptions.AppendExecutionProvider_CUDA(0)` with CPU fallback if model file is missing) and `MicroCropExtractor.cs` (crops a `256x256` PNG around any component with a violation).
-* **Verification Gate 3:** Run `dotnet build` and verify zero unmanaged memory leaks or compiler warnings.
-
-### PHASE 4: Qwen3-VL-30B-A3B MoE Service & Low-Latency Voice Engine
-* **Task 4.1:** Implement `QwenMoEService.cs` in `4_BreadboardAOI.Intelligence`.
-  * Launch `llama-server.exe` pinned to `CpuAffinityManager.PCoresMask (0x00FFF)` with arguments:
-    `--model "assets/models/Qwen3-VL-30B-A3B-Instruct-Q4_K_M.gguf" --mmproj "assets/models/mmproj-Qwen3-VL-30B-f16.gguf" --n-gpu-layers 99 --n-cpu-moe 22 --flash-attn --cache-type-k q8_0 --cache-type-v q8_0 --ctx-size 4096 --threads 6 --threads-batch 12 --mlock --port 8089`
-  * Stream multimodal chat completions (sending the `256x256` base64 PNG crop + structured DRC JSON report) via `IAsyncEnumerable<string>`.
-* **Task 4.2:** Implement `DiagnosticPromptBuilder.cs`, `SentenceStreamSplitter.cs`, and `VoiceSynthesisEngine.cs`.
-  * `VoiceSynthesisEngine` must provide `PlayEmergencyReflexAlarm()` (`< 10 ms` pre-loaded WAV playback via `NAudio`) and `SpeakSentenceAsync(string sentence)` (using `SherpaOnnx` `OfflineTts` on P-Cores).
-* **Verification Gate 4:** Build `4_BreadboardAOI.Intelligence` and verify graceful handling when model files are not yet downloaded on disk.
-
-### PHASE 5: Adobe Spectrum / Visual Studio Dark Workstation UI & SkiaSharp CAD Viewport
-* **Task 5.1:** Create `Themes/SpectrumDarkTheme.xaml` implementing the `#141414` pasteboard, `#1E1E1E` panels, `#252526` headers, and `1px #333337` borders.
-* **Task 5.2:** Complete `SkiaArOverlayRenderer.cs` with:
-  * Top & Left CAD rulers showing pixel ticks and breadboard column/row labels (`1..63`, `A..J`).
-  * Optional green PinMatrix calibration dots on all 830 holes.
-  * Translucent red X-Ray strip capsules (`#D7373F`) over shorted 5-hole conductive strips.
-  * Precision CAD crosshairs on offending holes and dashed green KiCad Ratsnest arrows (`#2D9D78`) pointing to `SuggestedTargetHole`.
-  * Interactive mouse-hover pin inspector (snaps mouse cursor `(X, Y)` to `PinMatrixLookup` and highlights the entire 5-hole strip under the cursor).
-* **Task 5.3:** Build `InspectionPipelineCoordinator.cs`, `MainWorkstationViewModel.cs`, and `MainWindow.xaml`.
-  * Add a **"Simulate Faulty Circuit (Demo Mode)"** toggle button in the top toolbar that injects realistic `DetectedComponent[]` scenarios (1: Same-Strip LED Short on Row 15, 2: Direct VCC-GND Jumper Short, 3: Floating Resistor Lead, 4: Valid 555 Timer Circuit) so the entire DRC engine, SkiaSharp CAD overlay, and Qwen3-VL prompt inspector can be tested immediately upon launch.
-* **Verification Gate 5:** Run `dotnet test` and `dotnet build --configuration Release`. Ensure all tests pass and the WPF executable builds cleanly.
+## 3. ADAPTIVE TEAM OWNERSHIP MATRIX
+- **Argon-1 (Core & KiCad Compiler):** Owns src/2_BreadboardAOI.Core/ (1.27mm Sugiyama/Manhattan routing, PinMatrix, Disjoint-Set netlists, .kicad_sch generator).
+- **Argon-2 (Vision & Wire Tracker):** Owns src/3_BreadboardAOI.Vision/ (OpenCV ArUco warp, 250ms stillness gate, YOLOv11-Pose, PaddleOCR, WireInsertionTracker.cs).
+- **Argon-3 (Datasheet & MoE Brain):** Owns src/4_BreadboardAOI.Intelligence/ (Alldatasheet 250KB Range fetcher, Qwen3-VL GBNF service, DevBoard GPIO rules, Kokoro Opus audio).
+- **Argon-4 (Hardware & Installer):** Owns src/1_BreadboardAOI.Hardware/ (P/E-Core affinity masks, memory locking) and src/7_BreadboardAOI.Installer/ (single-file installer).
+- **Flash 3.8 Antigravity (UI & Pipeline Coordinator):** Owns src/5_BreadboardAOI.App/ (SkiaSharp 60FPS AR canvas, WebSocket, Named Pipe IPC).
+- **OpenCode DeepSeek V4 (Terminal Build Gate):** Audits src/6_BreadboardAOI.Tests/, manages solution build, and runs dotnet build -c Release.

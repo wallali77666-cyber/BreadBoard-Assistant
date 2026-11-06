@@ -1,9 +1,8 @@
 // ============================================================================
 // FILE: src/2_BreadboardAOI.Core/Contracts/AoiDataContracts.cs
-// AUTHOR: Senior Systems Architect
+// AUTHOR: Senior Systems Architect & Argon-1 Compiler Lead
 // PURPOSE: Immutable, zero-allocation data contracts shared across Vision, 
-//          DRC Graph Engine, SkiaSharp CAD Viewport, and Qwen3-VL Tutor.
-// RULE FOR JUNIORS: Do NOT change struct field types without a PR review.
+//          DRC Graph Engine, KiCad 1.27mm Compiler, Skia CAD Viewport, and Tutor.
 // ============================================================================
 
 using System;
@@ -19,14 +18,22 @@ public enum ComponentKind : byte
     Led = 3,
     Capacitor = 4,
     IntegratedCircuit = 5,
-    PushButton = 6
+    PushButton = 6,
+    Diode = 7,
+    Transistor = 8,
+    Potentiometer = 9,
+    VoltageRegulator = 10,
+    Buzzer = 11,
+    Sensor = 12,
+    Battery = 13,
+    Microcontroller = 14
 }
 
 public enum DrcSeverity : byte
 {
     Pass = 0,
-    Warning = 1,   // e.g., Floating pin, missing decoupling cap -> Amber #E68619
-    Critical = 2   // e.g., VCC-to-GND short, Same-strip short  -> Crimson #D7373F
+    Warning = 1,   // e.g., Floating pin, protocol mismatch, missing pull-up -> Amber #E68619
+    Critical = 2   // e.g., VCC-GND short, 5V-to-3.3V overload, same-strip short -> Crimson #D7373F
 }
 
 public enum ViolationCode : ushort
@@ -38,17 +45,26 @@ public enum ViolationCode : ushort
     ErcReversedPolarity = 103,
     ErcRedundantJumper = 104,
     ErcHoleCollision = 105,
+    ErcVoltageOverload = 106,        // 5V-to-3.3V GPIO overload (ESP32/RP2040)
+    ErcInputOnlyViolation = 107,     // Output attempted on input-only pin (ESP32 GPIO 34-39)
+    ErcProtocolCrossoverError = 108, // UART TX-TX/RX-RX or I2C SDA-SCL swapped crossover
+    ErcResistorCurrentLimitLow = 109,  // Resistor in series with LED < 100Ω (burnout risk)
+    ErcResistorCurrentLimitHigh = 110, // Resistor in series with LED > 100kΩ (dim/unlit LED)
+    ErcSensorVoltageMismatch = 111,    // 3.3V-only sensor tied to 5V rail
+    ErcSensorReversedPower = 112,      // Sensor VCC/GND power polarity reversed
+    ErcI2cMissingPullup = 113,         // I2C bus missing pull-up resistor to VCC
+    ErcBootStrappingConflict = 114,    // Dev board boot strapping pin conflict
     DrcSchematicNetMismatch = 200,
     DrcUnexpectedNetLink = 202
 }
 
 /// <summary>
 /// Represents a single physical hole on the 1000x500 homography-warped breadboard.
-/// Holes A15, B15, C15, D15, E15 have distinct (Px, Py) coordinates but share StripId = 15.
+/// Holes A15, B15, C15, D15, E15 have distinct (Px, Py) coordinates but share StripId = 115.
 /// </summary>
 public readonly record struct HoleCoord(
     string HoleId,      // e.g., "E15", "TOP_VCC_12"
-    int StripId,        // Internal conductive metal clip ID (0..130)
+    int StripId,        // Internal conductive metal clip ID (0..263)
     float Px,           // Warped X coordinate in [0..1000]
     float Py            // Warped Y coordinate in [0..500]
 );
@@ -142,7 +158,18 @@ public sealed class DrcStatePacket
     public required IReadOnlyList<SnappedComponent> Components { get; init; }
     public required IReadOnlyList<DrcViolation> Violations { get; init; }
     public byte[]? MicroCropPngBytes { get; init; } // 256x256 crop of faulty/new component for Qwen3-VL
+    public byte[]? FullBoardPngBytes { get; set; }  // 1000x500 high-res full breadboard snapshot for Qwen3-VL
 
     public bool HasCriticalShort =>
         Violations.Count > 0 && Violations[0].Severity == DrcSeverity.Critical;
+
+    public static DrcStatePacket Empty { get; } = new()
+    {
+        FrameNumber = 0,
+        YoloInferenceMs = 0,
+        DrcComputeMs = 0,
+        StateHash = 0,
+        Components = Array.Empty<SnappedComponent>(),
+        Violations = Array.Empty<DrcViolation>()
+    };
 }

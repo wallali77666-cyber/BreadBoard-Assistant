@@ -57,6 +57,34 @@ public sealed class LocalAiProviderTests
     }
 
     [Fact]
+    public void Choose_model_prioritizes_qwen_30b_when_preferred_is_null()
+    {
+        var models = new[] { "mistral-7b-instruct", "qwen3-vl-30b-a3b-instruct", "qwen2.5-7b" };
+
+        LocalAiProviders.ChooseModel(models, null)
+            .Should().Be("qwen3-vl-30b-a3b-instruct");
+    }
+
+    [Fact]
+    public void Choose_model_accepts_any_model_when_preferred_is_null()
+    {
+        var models = new[] { "deepseek-r1-distill-8b", "phi-4" };
+
+        LocalAiProviders.ChooseModel(models, null)
+            .Should().Be("deepseek-r1-distill-8b");
+    }
+
+    [Fact]
+    public void Lm_studio_provider_label_and_endpoint_are_correct()
+    {
+        LocalAiPreset? lmStudio = LocalAiProviders.Find("lmstudio");
+        lmStudio.Should().NotBeNull();
+        lmStudio!.Label.Should().Be("LM STUDIO");
+        lmStudio.BaseUrl.Should().Be("http://127.0.0.1:1234");
+        lmStudio.ChatEndpoint.Should().Be("http://127.0.0.1:1234/v1/chat/completions");
+    }
+
+    [Fact]
     public void Presets_are_addressable_and_point_at_loopback()
     {
         LocalAiProviders.Find("LMSTUDIO")!.BaseUrl.Should().Be("http://127.0.0.1:1234");

@@ -42,6 +42,14 @@ public readonly record struct DraftPart(
         ComponentKind.Capacitor => "CAPACITOR",
         ComponentKind.IntegratedCircuit => "IC",
         ComponentKind.PushButton => "BUTTON",
+        ComponentKind.Diode => "DIODE",
+        ComponentKind.Transistor => "TRANSISTOR",
+        ComponentKind.Potentiometer => "POT",
+        ComponentKind.VoltageRegulator => "REGULATOR",
+        ComponentKind.Buzzer => "BUZZER",
+        ComponentKind.Sensor => "SENSOR",
+        ComponentKind.Battery => "BATTERY",
+        ComponentKind.Microcontroller => "DEV BOARD",
         _ => "PART"
     };
 
@@ -64,6 +72,8 @@ public sealed class CircuitDraft
 
     private readonly PinMatrixLookup _matrix;
     private readonly List<DraftPart> _parts = new(32);
+    private readonly Stack<List<DraftPart>> _undoStack = new();
+    private readonly Stack<List<DraftPart>> _redoStack = new();
     private DetectedComponent[] _detections = Array.Empty<DetectedComponent>();
     private int _nextTrackId = 1;
     private bool _dirty;
@@ -78,6 +88,56 @@ public sealed class CircuitDraft
     public IReadOnlyList<DraftPart> Parts => _parts;
 
     public int Count => _parts.Count;
+
+    public bool CanUndo => _undoStack.Count > 0;
+
+    public bool CanRedo => _redoStack.Count > 0;
+
+    private void RecordSnapshot()
+    {
+        _undoStack.Push(new List<DraftPart>(_parts));
+        _redoStack.Clear();
+    }
+
+    public bool TryUndo()
+    {
+        if (_undoStack.Count == 0)
+            return false;
+
+        _redoStack.Push(new List<DraftPart>(_parts));
+        List<DraftPart> prev = _undoStack.Pop();
+        _parts.Clear();
+        _parts.AddRange(prev);
+        _dirty = true;
+        Revision++;
+        return true;
+    }
+
+    public bool TryRedo()
+    {
+        if (_redoStack.Count == 0)
+            return false;
+
+        _undoStack.Push(new List<DraftPart>(_parts));
+        List<DraftPart> next = _redoStack.Pop();
+        _parts.Clear();
+        _parts.AddRange(next);
+        _dirty = true;
+        Revision++;
+        return true;
+    }
+
+    /// <summary>
+    /// Restores parts from a workstation undo/redo snapshot and increments revision.
+    /// </summary>
+    public void RestoreParts(IEnumerable<DraftPart> parts)
+    {
+        ArgumentNullException.ThrowIfNull(parts);
+        _parts.Clear();
+        _parts.AddRange(parts);
+        _dirty = true;
+        Revision++;
+    }
 
     /// <summary>Monotonic version counter; the coordinator only re-reads on change.</summary>
     public int Revision { get; private set; }
@@ -167,6 +227,7 @@ public sealed class CircuitDraft
             ResolveValue(kind, resolved.Length, value),
             normalizedSymbol);
 
+        RecordSnapshot();
         _parts.Add(part);
         _dirty = true;
         Revision++;
@@ -280,6 +341,7 @@ public sealed class CircuitDraft
         if (index < 0 || index >= _parts.Count)
             return false;
 
+        RecordSnapshot();
         _parts.RemoveAt(index);
         _dirty = true;
         Revision++;
@@ -291,6 +353,7 @@ public sealed class CircuitDraft
         if (_parts.Count == 0)
             return false;
 
+        RecordSnapshot();
         _parts.RemoveAt(_parts.Count - 1);
         _dirty = true;
         Revision++;
@@ -398,6 +461,7 @@ public sealed class CircuitDraft
         if (_parts.Count == 0)
             return;
 
+        RecordSnapshot();
         _parts.Clear();
         _dirty = true;
         Revision++;
@@ -443,6 +507,13 @@ public sealed class CircuitDraft
         ComponentKind.Capacitor => "10uF",
         ComponentKind.IntegratedCircuit => "NE555P",
         ComponentKind.PushButton => "TACT_6MM",
+        ComponentKind.Diode => "1N4148",
+        ComponentKind.Transistor => "2N3904",
+        ComponentKind.Potentiometer => "10K_TRIM",
+        ComponentKind.VoltageRegulator => "L7805",
+        ComponentKind.Buzzer => "BUZZER_5V",
+        ComponentKind.Sensor => "LDR_GL5528",
+        ComponentKind.Battery => "9V_ALKALINE",
         _ => "WIRE"
     };
 

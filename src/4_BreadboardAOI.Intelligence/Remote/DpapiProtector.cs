@@ -1,9 +1,9 @@
 // ============================================================================
 // FILE: src/4_BreadboardAOI.Intelligence/Remote/DpapiProtector.cs
-// PURPOSE: Encrypts the OAuth grant at rest with Windows DPAPI (crypt32.dll).
-//          A token file protected with CurrentUser scope can only be decrypted
-//          by the same Windows account, so copying %LOCALAPPDATA% to another
-//          machine (or another user profile) yields nothing.
+// PURPOSE: Encrypts secrets at rest with Windows DPAPI (crypt32.dll): OAuth
+//          grants and the ElevenLabs API key. A blob protected with CurrentUser
+//          scope can only be decrypted by the same Windows account, so copying
+//          %LOCALAPPDATA% to another machine (or user profile) yields nothing.
 //
 // NOTE: No NuGet package is required: this is the same pure P/Invoke approach
 //       the hardware layer uses, and it degrades to "unsupported" off Windows.
@@ -15,7 +15,7 @@ using System.Runtime.InteropServices;
 namespace BreadboardAOI.Intelligence.Remote;
 
 /// <summary>Thin wrapper over CryptProtectData / CryptUnprotectData.</summary>
-internal static class DpapiProtector
+public static class DpapiProtector
 {
     private const int CryptProtectUiForbidden = 0x1;
 
@@ -68,7 +68,7 @@ internal static class DpapiProtector
             var dataIn = new DataBlob { Size = plaintext.Length, Data = input };
             if (!CryptProtectData(
                     ref dataIn,
-                    "BreadboardAOI OAuth grant",
+                    "BreadboardAOI secret",
                     IntPtr.Zero,
                     IntPtr.Zero,
                     IntPtr.Zero,

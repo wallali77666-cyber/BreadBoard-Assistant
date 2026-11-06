@@ -15,6 +15,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
@@ -32,6 +33,7 @@ using BreadboardAOI.Core.Design;
 using BreadboardAOI.Core.DrcEngine;
 using BreadboardAOI.Core.Geometry;
 using BreadboardAOI.Core.KiCad;
+using BreadboardAOI.Hardware;
 using BreadboardAOI.Intelligence;
 using BreadboardAOI.Intelligence.Remote;
 using BreadboardAOI.Vision;
@@ -122,6 +124,7 @@ public sealed class ViolationRow
 {
     public ViolationRow(DrcViolation violation)
     {
+        IsDevBoard = false;
         Code = violation.Code;
         Severity = violation.Severity;
         ComponentId = violation.ComponentId;
@@ -133,6 +136,20 @@ public sealed class ViolationRow
         Message = violation.TechnicalMessage;
         CodeLabel = string.Create(CultureInfo.InvariantCulture, $"ERC {(ushort)violation.Code}");
         SeverityLabel = violation.Severity == DrcSeverity.Critical ? "CRITICAL" : "WARNING";
+    }
+
+    public ViolationRow(McuDrcViolation mcuViolation)
+    {
+        IsDevBoard = true;
+        Code = ViolationCode.ErcVoltageOverload;
+        Severity = mcuViolation.Severity == McuDrcSeverity.CriticalDamageRisk ? DrcSeverity.Critical : DrcSeverity.Warning;
+        ComponentId = mcuViolation.NetName;
+        OffendingStripId = 0;
+        BadHole = mcuViolation.OffendingPins.Count > 0 ? mcuViolation.OffendingPins[0].PinId : "--";
+        TargetHole = "--";
+        Message = $"{mcuViolation.Title}: {mcuViolation.DetailedMessage} Remediation: {mcuViolation.RemediationAdvice}";
+        CodeLabel = mcuViolation.RuleCode;
+        SeverityLabel = mcuViolation.Severity == McuDrcSeverity.CriticalDamageRisk ? "CRITICAL RISK" : "WARNING";
     }
 
     public ViolationCode Code { get; }
@@ -153,10 +170,24 @@ public sealed class ViolationRow
 
     public string SeverityLabel { get; }
 
+    /// <summary>True when this row came from the off-board MCU rule engine.</summary>
+    public bool IsDevBoard { get; }
+
     public bool IsCritical => Severity == DrcSeverity.Critical;
 
     public bool HasCorrection => TargetHole != "--";
 }
+
+
+/// <summary>Runtime hardware allocation row for the CPU & GPU compute inspector.</summary>
+public readonly record struct ComputeAllocationRow(
+    string Role,
+    string Cores,
+    string Work,
+    string Mask,
+    string State,
+    bool IsPinned,
+    string CurrentCore);
 
 /// <summary>Workstation view-model: owns the pipeline lifecycle and all dock state.</summary>
 public sealed partial class MainWorkstationViewModel : ObservableObject, IDisposable
@@ -166,6 +197,8 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     private readonly DispatcherTimer _telemetryTimer;
     private readonly DispatcherTimer _remoteTimer;
     private readonly DispatcherTimer _layoutSaveTimer;
+    private readonly DispatcherTimer _qwenProbeTimer;
+    private int _qwenProbeBusy;
     private readonly object _transcriptGate = new();
     private readonly StringBuilder _transcriptBuffer = new(4096);
     private readonly List<ViolationRow> _violationScratch = new(16);
@@ -174,7 +207,32 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     private readonly CircuitDraft _draft = new(PinMatrixLookup.Shared);
     private HoleCoord _pendingBuildHole;
     private bool _hasPendingBuildHole;
+    private DevBoardPinHit? _pendingMcuPinHit;
     private bool _demoWasEnabledBeforeBuild;
+
+    private sealed record WorkstationCircuitSnapshot(
+        List<DraftPart> Parts,
+        List<OffBoardJumperWire> DevBoardWires,
+        bool IsDevBoardDocked,
+        MicrocontrollerBoardType SelectedDevBoardType,
+        string Description);
+
+    private readonly Stack<WorkstationCircuitSnapshot> _workstationUndoStack = new();
+    private readonly Stack<WorkstationCircuitSnapshot> _workstationRedoStack = new();
+
+    public int UndoStackDepth => _workstationUndoStack.Count;
+    public int RedoStackDepth => _workstationRedoStack.Count;
+
+    public void RecordUndoSnapshot(string description)
+    {
+        _workstationUndoStack.Push(new WorkstationCircuitSnapshot(
+            _draft.Parts.Select(p => p with { Pins = (string[])p.Pins.Clone() }).ToList(),
+            ActiveDevBoardWires.ToList(),
+            IsDevBoardDocked,
+            SelectedDevBoardType,
+            description));
+        _workstationRedoStack.Clear();
+    }
 
     // Remote AI / Colab link. All of these are touched from the dispatcher only.
     private readonly GoogleTokenStore _tokenStore = new();
@@ -202,46 +260,32 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     private bool _suppressScenarioSync;
     private string? _pendingImagePath;
     private bool _disposed;
+    private bool _isSyncingPartValue;
 
-    private static readonly PartValuePreset[] ResistorPresets =
-    [
-        new("220R  (RED-RED-BROWN)", "220R", "Device/R"),
-        new("330R  (LED LIMITER)", "330R", "Device/R"),
-        new("1K", "1K", "Device/R"),
-        new("4K7", "4K7", "Device/R"),
-        new("10K  (PULL-UP)", "10K", "Device/R"),
-        new("100K", "100K", "Device/R")
-    ];
+    public static readonly IReadOnlyList<JumperColorOption> JumperColorOptions = ComponentCatalog.StandardJumperColors;
 
-    private static readonly PartValuePreset[] CapacitorPresets =
-    [
-        new("100nF  CERAMIC", "100nF", "Device/C"),
-        new("1uF  CERAMIC", "1uF", "Device/C"),
-        new("10uF  ELECTROLYTIC", "10uF", "Device/C_Polarized"),
-        new("100uF  ELECTROLYTIC", "100uF", "Device/C_Polarized")
-    ];
+    public IReadOnlyList<JumperColorOption> JumperColors => JumperColorOptions;
 
-    private static readonly PartValuePreset[] LedPresets =
-    [
-        new("5MM RED  (2.0 V)", "RED 2V", "Device/LED"),
-        new("5MM GREEN  (2.1 V)", "GREEN 2.1V", "Device/LED"),
-        new("5MM BLUE  (3.2 V)", "BLUE 3.2V", "Device/LED")
-    ];
+    private static readonly PartValuePreset[] ResistorPresets = ConvertPresets(ComponentCatalog.StandardResistors);
+    private static readonly PartValuePreset[] CapacitorPresets = ConvertPresets(ComponentCatalog.StandardCapacitors);
+    private static readonly PartValuePreset[] LedPresets = ConvertPresets(ComponentCatalog.StandardLeds);
+    private static readonly PartValuePreset[] IcPresets = ConvertPresets(ComponentCatalog.StandardIcs);
+    private static readonly PartValuePreset[] ButtonPresets = ConvertPresets(ComponentCatalog.StandardButtons);
+    private static readonly PartValuePreset[] DiodePresets = ConvertPresets(ComponentCatalog.StandardDiodes);
+    private static readonly PartValuePreset[] TransistorPresets = ConvertPresets(ComponentCatalog.StandardTransistors);
+    private static readonly PartValuePreset[] PotentiometerPresets = ConvertPresets(ComponentCatalog.StandardPotentiometers);
+    private static readonly PartValuePreset[] RegulatorPresets = ConvertPresets(ComponentCatalog.StandardRegulators);
+    private static readonly PartValuePreset[] BuzzerPresets = ConvertPresets(ComponentCatalog.StandardBuzzers);
+    private static readonly PartValuePreset[] SensorPresets = ConvertPresets(ComponentCatalog.StandardSensors);
+    private static readonly PartValuePreset[] BatteryPresets = ConvertPresets(ComponentCatalog.StandardBatteries);
 
-    private static readonly PartValuePreset[] IcPresets =
-    [
-        new("NE555P  TIMER  DIP-8", "NE555P", "Timer/NE555P", 8),
-        new("LM358  OP-AMP  DIP-8", "LM358", "Amplifier_Operational/LM358", 8),
-        new("74LS00  QUAD NAND  DIP-14", "74LS00", "74xx/74LS00", 14),
-        new("CD4017  DECADE COUNTER  DIP-16", "CD4017BE", "4xxx/4017", 16),
-        new("ATmega328P  MCU  DIP-28", "ATmega328P", "MCU_Microchip_ATmega/ATmega328P-P", 28)
-    ];
-
-    private static readonly PartValuePreset[] ButtonPresets =
-    [
-        new("6MM TACT SWITCH", "TACT 6MM", "Switch/SW_Push"),
-        new("SPST SLIDE SWITCH", "SPST", "Switch/SW_SPST")
-    ];
+    private static PartValuePreset[] ConvertPresets(IReadOnlyList<PartPreset> presets)
+    {
+        var array = new PartValuePreset[presets.Count];
+        for (int i = 0; i < presets.Count; i++)
+            array[i] = new PartValuePreset(presets[i].Label, presets[i].Value, presets[i].SymbolId, presets[i].PinCount);
+        return array;
+    }
 
     // ---- Adobe-style workspace layout --------------------------------------
 
@@ -297,8 +341,10 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         CameraOptions = new ReadOnlyCollection<CameraOption>(new[]
         {
             new CameraOption(CameraSource.Synthetic, "SYNTHETIC BOARD"),
-            new CameraOption(CameraSource.Camera0, "CAMERA 0 / USB"),
-            new CameraOption(CameraSource.Camera1, "CAMERA 1 / USB")
+            new CameraOption(CameraSource.Camera0, "CAMERA 0 (WEBCAM)"),
+            new CameraOption(CameraSource.Camera1, "CAMERA 1 (SECONDARY)"),
+            new CameraOption(CameraSource.Camera2, "CAMERA 2 (USB)"),
+            new CameraOption(CameraSource.Camera3, "CAMERA 3 (USB)")
         });
 
         Violations = new ObservableCollection<ViolationRow>();
@@ -310,14 +356,23 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             new BuildPartOption(ComponentKind.Resistor, "RESISTOR", "220R current limiter / 10K pull-up"),
             new BuildPartOption(ComponentKind.Led, "LED", "5 mm indicator, anode to the first hole"),
             new BuildPartOption(ComponentKind.Capacitor, "CAPACITOR", "10 uF timing or decoupling cap"),
-            new BuildPartOption(ComponentKind.IntegratedCircuit, "IC", "NE555P timer across the trench"),
-            new BuildPartOption(ComponentKind.PushButton, "BUTTON", "6 mm tact switch")
+            new BuildPartOption(ComponentKind.Diode, "DIODE", "1N4148 / 1N4007 / Zener diode"),
+            new BuildPartOption(ComponentKind.Transistor, "TRANSISTOR", "2N3904 NPN / 2N3906 PNP / MOSFET"),
+            new BuildPartOption(ComponentKind.IntegratedCircuit, "IC", "NE555P timer / Op-Amp across trench"),
+            new BuildPartOption(ComponentKind.Potentiometer, "POTENTIOMETER", "10k trimpot or rotary dial"),
+            new BuildPartOption(ComponentKind.VoltageRegulator, "REGULATOR", "L7805 +5V / LD33 +3.3V TO-220"),
+            new BuildPartOption(ComponentKind.Sensor, "SENSOR", "LDR, Thermistor, HC-SR04, DHT11, PIR"),
+            new BuildPartOption(ComponentKind.Battery, "BATTERY", "9V / MB102 / 4xAA / CR2032 power source"),
+            new BuildPartOption(ComponentKind.Buzzer, "BUZZER", "5V active piezo buzzer"),
+            new BuildPartOption(ComponentKind.PushButton, "BUTTON", "6 mm tact switch"),
+            new BuildPartOption(ComponentKind.Microcontroller, "DEV BOARD", "Arduino Uno / Mega / ESP32 / S2 Mini / STM32")
         });
 
         PinCountOptions = new ReadOnlyCollection<PinCountOption>(new[]
         {
-            new PinCountOption(2, "2-LEAD (R, C, LED)"),
-            new PinCountOption(3, "3-PIN ROW (TO-92 / 7805)"),
+            new PinCountOption(2, "2-LEAD (R, C, LED, Diode, Sensor)"),
+            new PinCountOption(3, "3-PIN ROW (TO-92 / TO-220 / Pot)"),
+            new PinCountOption(4, "4-PIN ROW (HC-SR04 / DHT11 / MQ-2)"),
             new PinCountOption(8, "DIP-8 (555, op-amp)"),
             new PinCountOption(14, "DIP-14 (74LS00 ...)"),
             new PinCountOption(16, "DIP-16"),
@@ -344,6 +399,9 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         _renderer.Layers.ShowCameraUnderlay = ShowCameraUnderlay;
         _renderer.Layers.ShowAllStrips = ShowAllStrips;
         _renderer.Layers.ShowRealisticParts = ShowRealisticParts;
+        _renderer.Layers.ShowLcdSimulation = ShowLcdSimulation;
+        _renderer.Layers.LcdSimulatedRow0 = LcdSimulatedRow0;
+        _renderer.Layers.LcdSimulatedRow1 = LcdSimulatedRow1;
 
         _telemetryTimer = new DispatcherTimer(DispatcherPriority.Background, _dispatcher)
         {
@@ -356,6 +414,12 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             Interval = TimeSpan.FromSeconds(15)
         };
         _remoteTimer.Tick += (_, _) => _ = PollColabAsync(force: false);
+
+        _qwenProbeTimer = new DispatcherTimer(DispatcherPriority.Background, _dispatcher)
+        {
+            Interval = TimeSpan.FromSeconds(6)
+        };
+        _qwenProbeTimer.Tick += (_, _) => _ = RefreshQwenConnectionAsync();
 
         LoadGoogleSettings();
 
@@ -482,6 +546,117 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     /// <summary>KiCad symbol id chosen for the selected part's builder footprint.</summary>
     [ObservableProperty]
     private string _editPartSymbol = string.Empty;
+
+    public bool IsResistorSelected => SelectedPartOption?.Kind == ComponentKind.Resistor;
+    public bool IsCapacitorSelected => SelectedPartOption?.Kind == ComponentKind.Capacitor;
+    public bool IsIcSelected => SelectedPartOption?.Kind == ComponentKind.IntegratedCircuit;
+    public bool IsJumperSelected => SelectedPartOption?.Kind == ComponentKind.JumperWire;
+    public bool IsLedSelected => SelectedPartOption?.Kind == ComponentKind.Led;
+    public bool IsButtonSelected => SelectedPartOption?.Kind == ComponentKind.PushButton;
+    public bool IsDiodeSelected => SelectedPartOption?.Kind == ComponentKind.Diode;
+    public bool IsTransistorSelected => SelectedPartOption?.Kind == ComponentKind.Transistor;
+    public bool IsPotentiometerSelected => SelectedPartOption?.Kind == ComponentKind.Potentiometer;
+    public bool IsRegulatorSelected => SelectedPartOption?.Kind == ComponentKind.VoltageRegulator;
+    public bool IsBuzzerSelected => SelectedPartOption?.Kind == ComponentKind.Buzzer;
+    public bool IsSensorSelected => SelectedPartOption?.Kind == ComponentKind.Sensor;
+    public bool IsBatterySelected => SelectedPartOption?.Kind == ComponentKind.Battery;
+    public bool IsDevBoardSelected => SelectedPartOption?.Kind == ComponentKind.Microcontroller;
+
+    public string ActiveDevBoardName => SelectedDevBoardType switch
+    {
+        MicrocontrollerBoardType.None => "NO DEV BOARD (STANDALONE)",
+        MicrocontrollerBoardType.ArduinoUnoR3R4 => "ARDUINO UNO",
+        MicrocontrollerBoardType.ArduinoMega2560 => "MEGA 2560",
+        MicrocontrollerBoardType.Esp32DevKitV1 => "ESP32 DEVKIT",
+        MicrocontrollerBoardType.WemosEsp32S2Mini => "WEMOS S2 MINI",
+        MicrocontrollerBoardType.Stm32BluePillF103C8 => "STM32 BLUE PILL",
+        _ => "DEV BOARD"
+    };
+
+    // ---- Off-Board Microcontrollers & Dev Boards (Builder Mode) -------------
+    [ObservableProperty]
+    private MicrocontrollerBoardType _selectedDevBoardType = MicrocontrollerBoardType.ArduinoUnoR3R4;
+
+    partial void OnSelectedDevBoardTypeChanged(MicrocontrollerBoardType value)
+    {
+        OnPropertyChanged(nameof(IsNoneSelected));
+        OnPropertyChanged(nameof(IsUnoSelected));
+        OnPropertyChanged(nameof(IsMegaSelected));
+        OnPropertyChanged(nameof(IsEsp32Selected));
+        OnPropertyChanged(nameof(IsWemosSelected));
+        OnPropertyChanged(nameof(IsStm32Selected));
+    }
+
+    public bool IsNoneSelected => SelectedDevBoardType == MicrocontrollerBoardType.None;
+    public bool IsUnoSelected => SelectedDevBoardType == MicrocontrollerBoardType.ArduinoUnoR3R4;
+    public bool IsMegaSelected => SelectedDevBoardType == MicrocontrollerBoardType.ArduinoMega2560;
+    public bool IsEsp32Selected => SelectedDevBoardType == MicrocontrollerBoardType.Esp32DevKitV1;
+    public bool IsWemosSelected => SelectedDevBoardType == MicrocontrollerBoardType.WemosEsp32S2Mini;
+    public bool IsStm32Selected => SelectedDevBoardType == MicrocontrollerBoardType.Stm32BluePillF103C8;
+
+    [ObservableProperty]
+    private OffBoardDockPlacement _selectedDevBoardPlacement = OffBoardDockPlacement.BottomMargin;
+
+    [ObservableProperty]
+    private bool _isDevBoardDocked = true;
+
+    [ObservableProperty]
+    private string _devBoardSummary = "Arduino Uno R3: 14 Digital I/O, 6 Analog Inputs, 5V Logic, USB-B Connector.";
+
+    [ObservableProperty]
+    private string _devBoardStrappingNotes = "VIN: 7-12V, 5V Rail: max 500mA USB / 1A external. Standard 5V TTL logic level.";
+
+    public IReadOnlyList<McuPinDefinition> SelectedDevBoardPins =>
+        _renderer.McuRuleEngine.GetBoardProfile(SelectedDevBoardType).Pins;
+
+    // ---- AVOmeter (Digital Multimeter) state --------------------------------
+    [ObservableProperty]
+    private bool _isAvometerActive = true;
+
+    [ObservableProperty]
+    private string _avometerMode = "V_DC";
+
+    [ObservableProperty]
+    private string _avometerBlackHole = "BOT_GND_1";
+
+    [ObservableProperty]
+    private string _avometerRedHole = "TOP_VCC_1";
+
+    [ObservableProperty]
+    private string _avometerDisplayValue = " 5.000";
+
+    [ObservableProperty]
+    private string _avometerUnit = "V DC";
+
+    [ObservableProperty]
+    private string _avometerStatus = "READY · AUTO-RANGE";
+
+    [ObservableProperty]
+    private string _avometerSecondaryReading = "MAX 5.000V · MIN 4.998V";
+
+    [ObservableProperty]
+    private double _avometerBarPercent = 50.0;
+
+    [ObservableProperty]
+    private bool _isContinuityBeep;
+
+    [ObservableProperty]
+    private JumperColorOption _selectedJumperColor = JumperColorOptions[0];
+
+    [ObservableProperty]
+    private string _resistorBand1Color = "#D32F2F";
+
+    [ObservableProperty]
+    private string _resistorBand2Color = "#D32F2F";
+
+    [ObservableProperty]
+    private string _resistorBand3Color = "#794022";
+
+    [ObservableProperty]
+    private string _resistorBand4Color = "#CFB53B";
+
+    [ObservableProperty]
+    private string _resistorBandDescription = "220 Ω  (Red · Red · Brown · Gold ±5%)";
 
     // ---- Adobe-style workspace layout --------------------------------------
 
@@ -725,6 +900,14 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     [ObservableProperty]
     private string _tutorBackend = "TUTOR: INITIALIZING";
 
+    /// <summary>True when the Qwen endpoint answers a health probe or a real completion.</summary>
+    [ObservableProperty]
+    private bool _isQwenConnected;
+
+    /// <summary>Compact label beside the green connection light in the command bar.</summary>
+    [ObservableProperty]
+    private string _qwenConnectionLabel = "QWEN OFFLINE";
+
     [ObservableProperty]
     private bool _isTutorBusy;
 
@@ -785,9 +968,6 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     private bool _isRuleBasedAdviceEnabled;
 
     [ObservableProperty]
-    private bool _speakRuleBasedAdvice = true;
-
-    [ObservableProperty]
     private bool _isAffinityEnabled = true;
 
     [ObservableProperty]
@@ -843,6 +1023,106 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         OnPropertyChanged(nameof(SelectedAiRouteTitle));
     }
 
+    // ---- model linking: any OpenAI-compatible server, any model ------------
+
+    /// <summary>Model ids the active server currently advertises on /v1/models.</summary>
+    public ObservableCollection<string> TutorModels { get; } = new();
+
+    [ObservableProperty]
+    private string? _selectedTutorModel;
+
+    /// <summary>Exact model id typed by the operator; accepts ids not present in the list.</summary>
+    [ObservableProperty]
+    private string _tutorModelId = string.Empty;
+
+    partial void OnSelectedTutorModelChanged(string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+            TutorModelId = value;
+    }
+
+    [ObservableProperty]
+    private string _tutorModelStatus = "MODEL: AUTO-DISCOVERY";
+
+    /// <summary>
+    /// Reads the server's own model list. Works for llama-server, LM Studio,
+    /// Ollama, vLLM and any other OpenAI-compatible endpoint.
+    /// </summary>
+    [RelayCommand]
+    private async Task RefreshTutorModelsAsync()
+    {
+        QwenMoEService? qwen = _coordinator?.QwenService;
+        if (qwen is null)
+        {
+            TutorModelStatus = "MODEL: TUTOR DISABLED";
+            return;
+        }
+
+        TutorModelStatus = "MODEL: LISTING /v1/models ...";
+        IReadOnlyList<string> models = await qwen.ListAvailableModelsAsync().ConfigureAwait(true);
+
+        TutorModels.Clear();
+        foreach (string model in models)
+            TutorModels.Add(model);
+
+        OnPropertyChanged(nameof(HasTutorModels));
+
+        string active = qwen.ActiveModelAlias;
+        TutorModelId = active;
+        SelectedTutorModel = models.FirstOrDefault(
+            m => string.Equals(m, active, StringComparison.OrdinalIgnoreCase));
+
+        TutorModelStatus = models.Count == 0
+            ? $"MODEL: NOT LISTED · ACTIVE {active}"
+            : $"MODEL: {models.Count} AVAILABLE · ACTIVE {active}";
+    }
+
+    public bool HasTutorModels => TutorModels.Count > 0;
+
+    /// <summary>
+    /// Pins the exact model id used for every chat request. The name travels in
+    /// the request body, so mixed-case ids, GGUF quant suffixes and remotely
+    /// hosted names are all passed through untouched.
+    /// </summary>
+    [RelayCommand]
+    private void ApplyTutorModel()
+    {
+        QwenMoEService? qwen = _coordinator?.QwenService;
+        if (qwen is null)
+        {
+            TutorModelStatus = "MODEL: TUTOR DISABLED";
+            return;
+        }
+
+        string? model = NullIfBlank(TutorModelId);
+        if (model is null)
+        {
+            TutorModelStatus = "MODEL: SELECT A MODEL OR TYPE AN EXACT ID";
+            return;
+        }
+
+        qwen.SetModelAlias(model);
+
+        if (_appliedRemoteTarget is not null)
+        {
+            RemoteTutorTarget updated = _appliedRemoteTarget with { ModelAlias = model };
+            _appliedRemoteTarget = updated;
+            RemoteRouteLabel = DescribeRoute(updated);
+
+            if (updated.IsLoopback)
+            {
+                _savedEndpoint = updated;
+                _endpointStore.Save(updated);
+            }
+        }
+
+        TutorModelStatus = $"MODEL: ACTIVE {model}";
+        RemoteAiStatus =
+            $"Tutor model pinned to {model}. Any OpenAI-compatible model is accepted; " +
+            "a text-only model automatically answers without the image payload.";
+        _ = RefreshQwenConnectionAsync();
+    }
+
     // ---- telemetry ---------------------------------------------------------
 
     [ObservableProperty]
@@ -859,16 +1139,59 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
 
     /// <summary>
     /// Empty when the requested engine loaded; otherwise the precise reason the
-    /// workstation fell back (missing Piper model, missing Kokoro files, ...).
+    /// workstation fell back (missing Piper model, no ElevenLabs key, ...).
     /// </summary>
     [ObservableProperty]
     private string _voiceSetupNote = string.Empty;
+
+    /// <summary>ElevenLabs voice catalog loaded from the operator's account.</summary>
+    public ObservableCollection<ElevenLabsVoice> ElevenLabsVoices { get; } = new();
+
+    /// <summary>Models offered in the voice dock; turbo is the default for latency.</summary>
+    public ObservableCollection<string> ElevenLabsModels { get; } = new()
+    {
+        ElevenLabsVoiceClient.DefaultModelId,
+        "eleven_multilingual_v2",
+        "eleven_flash_v2_5"
+    };
+
+    [ObservableProperty]
+    private string _elevenLabsApiKey = string.Empty;
+
+    [ObservableProperty]
+    private string _elevenLabsModelId = ElevenLabsVoiceClient.DefaultModelId;
+
+    [ObservableProperty]
+    private ElevenLabsVoice? _selectedElevenLabsVoice;
+
+    [ObservableProperty]
+    private bool _isVoiceCatalogBusy;
+
+    [ObservableProperty]
+    private string _voiceCatalogNote = "Paste an ElevenLabs key, then refresh to list your voices.";
+
+    /// <summary>Suppresses the auto-apply while the picker is being populated at startup.</summary>
+    private bool _voiceSelectionSilent;
 
     [ObservableProperty]
     private string _vramTelemetry = "VRAM: --";
 
     [ObservableProperty]
     private string _affinityTelemetry = "AFFINITY: --";
+
+    [ObservableProperty]
+    private string _cpuPlanHeadline = "CPU · HYBRID WORKSTATION";
+
+    [ObservableProperty]
+    private string _gpuPlanHeadline = "GPU · HARDWARE ACCELERATION";
+
+    [ObservableProperty]
+    private string _gpuAllocationText = string.Empty;
+
+    [ObservableProperty]
+    private string _hardwareAllocationSummary = string.Empty;
+
+    public ObservableCollection<ComputeAllocationRow> ComputeAllocation { get; } = new();
 
     [ObservableProperty]
     private string _targetNetlistStatus = "TARGET NETLIST: --";
@@ -889,6 +1212,11 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         InspectionPipelineCoordinator coordinator;
         try
         {
+            ElevenLabsSettings savedVoice = VoiceSettingsStore.LoadElevenLabs();
+            ElevenLabsApiKey = savedVoice.ApiKey;
+            ElevenLabsModelId = savedVoice.ModelId;
+            PopulateSavedVoice(savedVoice);
+
             coordinator = new InspectionPipelineCoordinator(new InspectionPipelineOptions
             {
                 DemoModeEnabled = true,
@@ -898,6 +1226,10 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
                 EnableCognitiveTutor = true,
                 EnableVoice = true,
                 VoicePreference = VoiceSettingsStore.Load(),
+                ElevenLabsApiKey = savedVoice.ApiKey,
+                ElevenLabsVoiceId = savedVoice.VoiceId,
+                ElevenLabsVoiceName = savedVoice.VoiceName,
+                ElevenLabsModelId = savedVoice.ModelId,
                 EnableAffinity = true,
                 EnableCameraPreviewBitmap = true
             });
@@ -917,7 +1249,6 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         coordinator.IsAlarmEnabled = IsAlarmEnabled;
         coordinator.IsCognitiveTutorEnabled = IsCognitiveTutorEnabled;
         coordinator.IsRuleBasedAdviceEnabled = IsRuleBasedAdviceEnabled;
-        coordinator.SpeakRuleBasedAdvice = SpeakRuleBasedAdvice;
         coordinator.ReflexDrcUpdated += OnReflexDrcUpdated;
         coordinator.TutorTurnStarted += OnTutorTurnStarted;
         coordinator.TutorTranscriptTokenReceived += OnTutorToken;
@@ -945,31 +1276,86 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         }
 
         CameraLabel = $"CAMERA: {coordinator.CameraStatus}";
-        if (_pendingImagePath is not null)
-            LoadedImagePath = _pendingImagePath;
 
         _telemetryTimer.Start();
+        _qwenProbeTimer.Start();
+        _ = RefreshQwenConnectionAsync();
+        _ = RefreshTutorModelsAsync();
         RefreshTelemetry();
 
-        // The vector board is the CAD drawing; the photo underlay is only helpful
-        // when a real camera or a still image is the frame source.
-        ShowCameraUnderlay = coordinator.ActiveCameraSource != CameraSource.Synthetic;
+        // Clean CAD board: transparent underlay disabled so breadboard stays crisp.
+        // Uploaded photos open directly in the dedicated AI Vision Inspection page.
+        ShowCameraUnderlay = false;
 
-        if (_savedEndpoint is not null)
-        {
-            RemoteTutorTarget saved = _savedEndpoint;
-            _savedEndpoint = null;
-            SelectedAiRoute = saved.IsLoopback ? AiRouteMethod.LocalProvider : AiRouteMethod.ColabTunnel;
-            _ = ConnectEndpointAsync(saved, persist: false);
-        }
-        else if (UseColabAi)
-        {
-            _ = PollColabAsync(force: true);
-        }
+        string? startupPhoto = _pendingImagePath;
+        _pendingImagePath = null;
+        _ = CompleteStartupAsync(startupPhoto);
 
         DrcStatePacket? packet = coordinator.LatestPacket;
         if (packet is not null)
             OnReflexDrcUpdated(packet);
+    }
+
+    /// <summary>
+    /// Finishes startup off the constructor path: the remembered tutor endpoint
+    /// must be live before any startup photo is inspected. The previous order
+    /// opened the studio first, so the first photo was answered by the local
+    /// llama-server / rule-based fallback even though LM Studio was saved.
+    /// </summary>
+    private async Task CompleteStartupAsync(string? startupPhoto)
+    {
+        try
+        {
+            if (_savedEndpoint is not null)
+            {
+                RemoteTutorTarget saved = _savedEndpoint;
+                _savedEndpoint = null;
+                SelectedAiRoute = saved.IsLoopback ? AiRouteMethod.LocalProvider : AiRouteMethod.ColabTunnel;
+                await ConnectEndpointAsync(saved, persist: false).ConfigureAwait(true);
+            }
+            else if (UseColabAi)
+            {
+                await PollColabAsync(force: true).ConfigureAwait(true);
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // A dead tutor must never block the workstation; the photo still opens
+            // and the fallback tutor reports the precise reason.
+            StatusLine = $"Tutor link skipped at startup: {ex.Message}";
+        }
+        finally
+        {
+            if (startupPhoto is not null && !_disposed)
+                LoadImage(startupPhoto);
+        }
+    }
+
+    /// <summary>
+    /// Link path shared with the AI Live Studio. Probes the provider, adopts the
+    /// model it advertises, remembers the endpoint for the next start and refreshes
+    /// the MODEL LINK list. Returns true only when the tutor is genuinely live.
+    /// </summary>
+    public async Task<bool> LinkLocalProviderAsync(string presetId)
+    {
+        if (_disposed || _coordinator is null)
+            return false;
+
+        LocalAiPreset? preset = LocalAiProviders.Find(presetId);
+        if (preset is null)
+            return false;
+
+        await ConnectLocalProviderAsync(presetId).ConfigureAwait(true);
+
+        if (!_coordinator.UsingRemoteTutor || _appliedRemoteTarget is not { IsLoopback: true } applied)
+            return false;
+
+        // The studio link is an explicit operator choice, so it survives a restart
+        // exactly like a pasted Colab pair code.
+        _savedEndpoint = applied;
+        _endpointStore.Save(applied);
+        await RefreshTutorModelsAsync().ConfigureAwait(true);
+        return _coordinator.QwenService?.IsConnected == true;
     }
 
     // ---- render loop -------------------------------------------------------
@@ -1008,12 +1394,67 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         SyncHoverInspector();
     }
 
+    // ---- CAD Viewport Zoom & Pan --------------------------------------------
+
+    [ObservableProperty]
+    private double _viewportZoom = 1.0;
+
+    public string ViewportZoomText => $"{Math.Round(ViewportZoom * 100):0}%";
+
+    partial void OnViewportZoomChanged(double value) => OnPropertyChanged(nameof(ViewportZoomText));
+
+    [RelayCommand]
+    public void ZoomIn() => ZoomCadViewport(1.25, null);
+
+    [RelayCommand]
+    public void ZoomOut() => ZoomCadViewport(0.8, null);
+
+    [RelayCommand]
+    public void ResetZoom()
+    {
+        _renderer.ResetZoom();
+        ViewportZoom = 1.0;
+    }
+
+    public void ZoomCadViewport(double factor, (float X, float Y)? focusPoint)
+    {
+        if (_disposed)
+            return;
+
+        if (focusPoint.HasValue)
+        {
+            _renderer.ZoomAt((float)factor, focusPoint.Value.X, focusPoint.Value.Y);
+        }
+        else
+        {
+            _renderer.ZoomAtCenter((float)factor);
+        }
+
+        ViewportZoom = Math.Round(_renderer.UserZoomFactor, 2);
+    }
+
+    public void PanViewport(float deltaX, float deltaY)
+    {
+        if (_disposed)
+            return;
+
+        _renderer.PanBy(deltaX, deltaY);
+    }
+
+    [RelayCommand] public void PanLeft() => PanViewport(50f, 0f);
+    [RelayCommand] public void PanRight() => PanViewport(-50f, 0f);
+    [RelayCommand] public void PanUp() => PanViewport(0f, 50f);
+    [RelayCommand] public void PanDown() => PanViewport(0f, -50f);
+    [RelayCommand] public void ResetPan() => ResetZoom();
+    private void SuppressUnusedPan() {
+    }
+
     // ---- X-ray builder interactions ---------------------------------------
 
     /// <summary>
-    /// Left click places the two leads of the selected part; right click removes
-    /// the last part touching that tie point. Snapping is delegated to the CAD
-    /// renderer so a click and a hover always agree on the same hole.
+    /// Left click places the two leads of the selected part or routes a jumper wire to/from a dev board pin socket;
+    /// right click removes the last part or disconnected wire touching that pin/tie point.
+    /// Snapping is delegated to the CAD renderer so a click and a hover always agree on the same target.
     /// </summary>
     public void HandleViewportClick(double viewportX, double viewportY, bool secondary)
     {
@@ -1022,9 +1463,126 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
 
         UpdateHover(viewportX, viewportY);
 
+        // A. Handle clicks on docked Dev Board pins
+        if (_renderer.HoveredDevBoardPin is { } mcuPinHit)
+        {
+            string wireColor = SelectedPartOption?.Kind == ComponentKind.JumperWire
+                ? SelectedJumperColor.HexColor
+                : ResolveWireColor(SelectedDevBoardWireColor, mcuPinHit.Pin, _hasPendingBuildHole ? _pendingBuildHole.HoleId : null);
+
+            if (secondary)
+            {
+                var attachedWires = ActiveDevBoardWires.Where(w =>
+                    MatchesMcuEndpoint(w.SourceEndpointKey, mcuPinHit.BoardInstanceId, mcuPinHit.Pin) ||
+                    MatchesMcuEndpoint(w.TargetEndpointKey, mcuPinHit.BoardInstanceId, mcuPinHit.Pin)).ToList();
+
+                if (attachedWires.Count > 0)
+                {
+                    RecordUndoSnapshot($"Remove wires from {mcuPinHit.Pin.DisplayLabel}");
+                    foreach (var wire in attachedWires)
+                        ActiveDevBoardWires.Remove(wire);
+                    EvaluateDevBoardCircuit();
+                    BuilderHint = $"Removed {attachedWires.Count} jumper wire(s) connected to {mcuPinHit.BoardProfile.DisplayName} [{mcuPinHit.Pin.DisplayLabel}].";
+                }
+                else
+                {
+                    BuilderHint = $"No jumper wire connected to {mcuPinHit.BoardProfile.DisplayName} [{mcuPinHit.Pin.DisplayLabel}].";
+                }
+                return;
+            }
+
+            // Left click with a pending breadboard hole
+            if (_hasPendingBuildHole)
+            {
+                RecordUndoSnapshot($"Wire {mcuPinHit.Pin.DisplayLabel} to {_pendingBuildHole.HoleId}");
+                string pinKey = $"{mcuPinHit.BoardInstanceId}:{mcuPinHit.Pin.CanonicalId}";
+                string holeKey = $"BB:{_pendingBuildHole.HoleId}";
+                string net = DetermineDefaultNetName(mcuPinHit.Pin, null);
+
+                var wire = new OffBoardJumperWire(
+                    WireId: $"WIRE_{Guid.NewGuid():N}"[..12],
+                    NetName: net,
+                    SourceEndpointKey: pinKey,
+                    TargetEndpointKey: holeKey,
+                    InsulationHexColor: wireColor);
+
+                ActiveDevBoardWires.Add(wire);
+                string holeId = _pendingBuildHole.HoleId;
+                ClearPendingBuild();
+                EvaluateDevBoardCircuit();
+                BuilderHint = $"Connected {mcuPinHit.BoardProfile.DisplayName} [{mcuPinHit.Pin.DisplayLabel}] to breadboard [{holeId}].";
+                return;
+            }
+
+            // Left click with a pending MCU pin
+            if (_pendingMcuPinHit is not null)
+            {
+                if (string.Equals(_pendingMcuPinHit.Pin.CanonicalId, mcuPinHit.Pin.CanonicalId, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(_pendingMcuPinHit.BoardInstanceId, mcuPinHit.BoardInstanceId, StringComparison.OrdinalIgnoreCase))
+                {
+                    ClearPendingBuild();
+                    BuilderHint = "Placement cancelled (same MCU pin clicked twice).";
+                    return;
+                }
+
+                RecordUndoSnapshot($"Wire {_pendingMcuPinHit.Pin.DisplayLabel} to {mcuPinHit.Pin.DisplayLabel}");
+                string srcKey = $"{_pendingMcuPinHit.BoardInstanceId}:{_pendingMcuPinHit.Pin.CanonicalId}";
+                string dstKey = $"{mcuPinHit.BoardInstanceId}:{mcuPinHit.Pin.CanonicalId}";
+                string net = DetermineDefaultNetName(_pendingMcuPinHit.Pin, mcuPinHit.Pin);
+
+                var wire = new OffBoardJumperWire(
+                    WireId: $"WIRE_{Guid.NewGuid():N}"[..12],
+                    NetName: net,
+                    SourceEndpointKey: srcKey,
+                    TargetEndpointKey: dstKey,
+                    InsulationHexColor: wireColor);
+
+                ActiveDevBoardWires.Add(wire);
+                var prev = _pendingMcuPinHit;
+                ClearPendingBuild();
+                EvaluateDevBoardCircuit();
+                BuilderHint = $"Connected {prev.Pin.DisplayLabel} to {mcuPinHit.Pin.DisplayLabel} ({wireColor}).";
+                return;
+            }
+
+            // Start new wire from MCU pin
+            _pendingMcuPinHit = mcuPinHit;
+            _hasPendingBuildHole = false;
+            _renderer.SetPendingDevBoardPin(mcuPinHit, wireColor);
+            BuilderHint = $"Lead 1 = {mcuPinHit.BoardProfile.DisplayName} [{mcuPinHit.Pin.DisplayLabel}]. Now click a breadboard tie point or another pin to complete jumper wire.";
+            return;
+        }
+
+        // B. Hit test placed components on the breadboard for direct interactive selection
+        SKPoint boardPoint = _renderer.Transform.ToBoard((float)viewportX, (float)viewportY);
+        if (!_hasPendingBuildHole && TryHitTestDraftPart(boardPoint, out DraftPart hitPart))
+        {
+            if (secondary)
+            {
+                RecordUndoSnapshot($"Remove {hitPart.KindLabel} #{hitPart.TrackId}");
+                for (int i = 0; i < _draft.Parts.Count; i++)
+                {
+                    if (_draft.Parts[i].TrackId == hitPart.TrackId)
+                    {
+                        _draft.RemoveAt(i);
+                        ClearPendingBuild();
+                        CommitDraft();
+                        BuilderHint = $"Removed {hitPart.KindLabel} #{hitPart.TrackId}.";
+                        return;
+                    }
+                }
+            }
+            else
+            {
+                SelectDraftPart(hitPart);
+                return;
+            }
+        }
+
+        // C. Handle clicks on breadboard tie points
         if (_renderer.HoveredPin is not { } pin)
         {
-            BuilderHint = "Aim at a tie point inside the board; the click missed the 830-point matrix.";
+            BuilderHint = "Aim at a tie point inside the breadboard or a dev board pin socket.";
             return;
         }
 
@@ -1032,6 +1590,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
 
         if (secondary)
         {
+            RecordUndoSnapshot($"Remove part or wire touching {hole.HoleId}");
             if (_draft.RemoveLastTouching(hole.HoleId))
             {
                 ClearPendingBuild();
@@ -1040,12 +1599,54 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             }
             else
             {
-                BuilderHint = $"No placed part touches {hole.HoleId}.";
-            }
+                var bbWires = ActiveDevBoardWires.Where(w =>
+                    MatchesBreadboardEndpoint(w.SourceEndpointKey, hole.HoleId) ||
+                    MatchesBreadboardEndpoint(w.TargetEndpointKey, hole.HoleId)).ToList();
 
+                if (bbWires.Count > 0)
+                {
+                    foreach (var wire in bbWires)
+                        ActiveDevBoardWires.Remove(wire);
+                    EvaluateDevBoardCircuit();
+                    BuilderHint = $"Removed {bbWires.Count} dev board jumper wire(s) touching {hole.HoleId}.";
+                }
+                else
+                {
+                    if (_workstationUndoStack.Count > 0)
+                        _workstationUndoStack.Pop();
+                    BuilderHint = $"No placed part or wire touches {hole.HoleId}.";
+                }
+            }
             return;
         }
 
+        // Left click with a pending MCU pin
+        if (_pendingMcuPinHit is not null)
+        {
+            RecordUndoSnapshot($"Wire {_pendingMcuPinHit.Pin.DisplayLabel} to {hole.HoleId}");
+            string pinKey = $"{_pendingMcuPinHit.BoardInstanceId}:{_pendingMcuPinHit.Pin.CanonicalId}";
+            string holeKey = $"BB:{hole.HoleId}";
+            string color = SelectedPartOption?.Kind == ComponentKind.JumperWire
+                ? SelectedJumperColor.HexColor
+                : ResolveWireColor(SelectedDevBoardWireColor, _pendingMcuPinHit.Pin, hole.HoleId);
+            string net = DetermineDefaultNetName(_pendingMcuPinHit.Pin, null);
+
+            var wire = new OffBoardJumperWire(
+                WireId: $"WIRE_{Guid.NewGuid():N}"[..12],
+                NetName: net,
+                SourceEndpointKey: pinKey,
+                TargetEndpointKey: holeKey,
+                InsulationHexColor: color);
+
+            ActiveDevBoardWires.Add(wire);
+            var prev = _pendingMcuPinHit;
+            ClearPendingBuild();
+            EvaluateDevBoardCircuit();
+            BuilderHint = $"Connected {prev.BoardProfile.DisplayName} [{prev.Pin.DisplayLabel}] to breadboard [{hole.HoleId}].";
+            return;
+        }
+
+        // Standard breadboard-to-breadboard placement
         if (SelectedPartOption is null)
         {
             BuilderHint = "Choose a part kind in the BUILDER dock first.";
@@ -1054,9 +1655,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
 
         int footprintPins = SelectedPinCount?.Count ?? 2;
 
-        // A DIP or a 3-pin module is placed whole from its first pin: waiting for
-        // a second click would leave the operator guessing which holes it takes.
-        if (SelectedPartOption.Kind == ComponentKind.IntegratedCircuit && footprintPins >= 3)
+        if (footprintPins >= 3)
         {
             TryPlaceFootprint(SelectedPartOption.Kind, hole.HoleId, footprintPins);
             return;
@@ -1066,9 +1665,12 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         {
             _pendingBuildHole = hole;
             _hasPendingBuildHole = true;
-            _renderer.SetPendingLead(hole);
+            string color = SelectedPartOption?.Kind == ComponentKind.JumperWire
+                ? SelectedJumperColor.HexColor
+                : ResolveWireColor(SelectedDevBoardWireColor, null, hole.HoleId);
+            _renderer.SetPendingLead(hole, color);
             BuildPin1Text = hole.HoleId;
-            BuilderHint = $"Lead 1 = {hole.HoleId}. Click or type the second tie point.";
+            BuilderHint = $"Lead 1 = {hole.HoleId}. Click a second tie point or a dev board pin.";
             return;
         }
 
@@ -1091,19 +1693,19 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         string[] pins;
         string? error;
 
-        if (pinCount == 3)
-        {
-            if (!FootprintPlacer.TryPlaceSingleRow(_draft.Matrix, anchorHoleId, pinCount, out pins, out error))
-            {
-                BuilderHint = error ?? "A 3-pin part needs three adjacent columns.";
-                return false;
-            }
-        }
-        else if (pinCount >= 4)
+        if (kind == ComponentKind.IntegratedCircuit)
         {
             if (!FootprintPlacer.TryPlaceDualRow(_draft.Matrix, anchorHoleId, pinCount, out pins, out error))
             {
                 BuilderHint = error ?? "That DIP does not fit there.";
+                return false;
+            }
+        }
+        else if (pinCount >= 3)
+        {
+            if (!FootprintPlacer.TryPlaceSingleRow(_draft.Matrix, anchorHoleId, pinCount, out pins, out error))
+            {
+                BuilderHint = error ?? $"A {pinCount}-pin part needs {pinCount} adjacent columns in the same row.";
                 return false;
             }
         }
@@ -1116,8 +1718,14 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         string value = ResolveValue(kind, pinCount);
         string symbol = ResolveSymbol(kind, pinCount);
 
+        if (!IsBuildMode)
+            IsBuildMode = true;
+
+        RecordUndoSnapshot($"Place {kind} footprint");
         if (!_draft.TryAddFootprint(kind, pins, value, symbol, out DraftPart part, out error))
         {
+            if (_workstationUndoStack.Count > 0)
+                _workstationUndoStack.Pop();
             BuilderHint = error ?? "That part could not be placed.";
             return false;
         }
@@ -1125,7 +1733,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         ClearPendingBuild();
         BuildPin1Text = string.Empty;
         BuildPin2Text = string.Empty;
-        CommitDraft();
+        CommitDraft(part.TrackId);
 
         BuilderHint = pinCount == 3
             ? $"Placed {part.KindLabel} #{part.TrackId}: pins {string.Join('/', pins)} ({value})."
@@ -1137,6 +1745,10 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     /// <summary>Places a part from the typed lead labels. Returns false with a hint on error.</summary>
     public bool TryPlacePart(ComponentKind kind, string? pin1HoleId, string? pin2HoleId)
     {
+        if (!IsBuildMode)
+            IsBuildMode = true;
+
+        RecordUndoSnapshot($"Place {kind}");
         if (!_draft.TryAdd(
                 kind,
                 pin1HoleId,
@@ -1145,6 +1757,8 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
                 out DraftPart part,
                 out string? error))
         {
+            if (_workstationUndoStack.Count > 0)
+                _workstationUndoStack.Pop();
             BuilderHint = error ?? "That part could not be placed.";
             return false;
         }
@@ -1155,9 +1769,134 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         ClearPendingBuild();
         BuildPin1Text = string.Empty;
         BuildPin2Text = string.Empty;
-        CommitDraft();
+        CommitDraft(part.TrackId);
         BuilderHint = $"Placed {part.KindLabel} #{part.TrackId}: {part.Pin1HoleId} \u2192 {part.Pin2HoleId}.";
         return true;
+    }
+
+    public bool TryHitTestDraftPart(SKPoint boardPoint, out DraftPart hitPart)
+    {
+        hitPart = default;
+        var matrix = PinMatrixLookup.Shared;
+
+        if (_draft.Parts.Count == 0 && _coordinator?.LatestPacket?.Components is { Count: > 0 } liveComponents)
+        {
+            // Auto-import live packet components into draft so the operator can click and edit any visible part directly
+            for (int j = 0; j < liveComponents.Count; j++)
+            {
+                _draft.TryAddDetection(liveComponents[j].RawDetection, out _);
+            }
+            if (_draft.Parts.Count > 0)
+            {
+                IsBuildMode = true;
+                CommitDraft();
+                return TryHitTestDraftPart(boardPoint, out hitPart);
+            }
+        }
+
+        for (int i = _draft.Parts.Count - 1; i >= 0; i--)
+        {
+            DraftPart p = _draft.Parts[i];
+            if (p.Pins.Length == 2)
+            {
+                if (matrix.TryGetHole(p.Pin1HoleId, out HoleCoord h1) &&
+                    matrix.TryGetHole(p.Pin2HoleId, out HoleCoord h2))
+                {
+                    float dist = DistanceToSegment(boardPoint.X, boardPoint.Y, h1.Px, h1.Py, h2.Px, h2.Py);
+                    if (dist <= 13.0f)
+                    {
+                        hitPart = p;
+                        return true;
+                    }
+                }
+            }
+            else if (p.Pins.Length > 2)
+            {
+                float minX = float.MaxValue, minY = float.MaxValue;
+                float maxX = float.MinValue, maxY = float.MinValue;
+                bool any = false;
+                foreach (string pinId in p.Pins)
+                {
+                    if (matrix.TryGetHole(pinId, out HoleCoord h))
+                    {
+                        minX = MathF.Min(minX, h.Px);
+                        maxX = MathF.Max(maxX, h.Px);
+                        minY = MathF.Min(minY, h.Py);
+                        maxY = MathF.Max(maxY, h.Py);
+                        any = true;
+                    }
+                }
+                if (any && boardPoint.X >= minX - 8f && boardPoint.X <= maxX + 8f &&
+                    boardPoint.Y >= minY - 8f && boardPoint.Y <= maxY + 8f)
+                {
+                    hitPart = p;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static float DistanceToSegment(float px, float py, float x1, float y1, float x2, float y2)
+    {
+        float dx = x2 - x1;
+        float dy = y2 - y1;
+        float lenSq = dx * dx + dy * dy;
+        if (lenSq < 1e-4f)
+        {
+            float ddx = px - x1;
+            float ddy = py - y1;
+            return MathF.Sqrt(ddx * ddx + ddy * ddy);
+        }
+
+        float t = Math.Clamp(((px - x1) * dx + (py - y1) * dy) / lenSq, 0f, 1f);
+        float projX = x1 + t * dx;
+        float projY = y1 + t * dy;
+        float ex = px - projX;
+        float ey = py - projY;
+        return MathF.Sqrt(ex * ex + ey * ey);
+    }
+
+    public void SelectDraftPart(DraftPart part)
+    {
+        for (int i = 0; i < DraftParts.Count; i++)
+        {
+            if (DraftParts[i].Part.TrackId == part.TrackId)
+            {
+                SelectedDraftPart = DraftParts[i];
+                break;
+            }
+        }
+
+        _renderer.SelectedTrackId = part.TrackId;
+
+        foreach (var opt in BuildPartOptions)
+        {
+            if (opt.Kind == part.Kind)
+            {
+                SelectedPartOption = opt;
+                break;
+            }
+        }
+
+        _isSyncingPartValue = true;
+        try
+        {
+            NewPartValue = part.Value ?? string.Empty;
+            EditPartValue = part.Value ?? string.Empty;
+        }
+        finally
+        {
+            _isSyncingPartValue = false;
+        }
+
+        if (part.Kind == ComponentKind.Resistor)
+        {
+            UpdateResistorBandPreview();
+        }
+
+        BuilderHint = $"Selected {part.KindLabel} #{part.TrackId} ({part.Value}). Type a new value or click presets to change resistance.";
     }
 
     /// <summary>Printed value for the next part: typed value, else a sensible default.</summary>
@@ -1235,22 +1974,103 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     }
 
     [RelayCommand]
-    private void UndoCircuitPart()
+    public void UndoCircuitPart()
     {
-        if (!_draft.RemoveLast())
+        if (_workstationUndoStack.Count > 0)
         {
-            BuilderHint = "Nothing to undo; the board is empty.";
+            var prev = _workstationUndoStack.Pop();
+            _workstationRedoStack.Push(new WorkstationCircuitSnapshot(
+                _draft.Parts.Select(p => p with { Pins = (string[])p.Pins.Clone() }).ToList(),
+                ActiveDevBoardWires.ToList(),
+                IsDevBoardDocked,
+                SelectedDevBoardType,
+                prev.Description));
+
+            _draft.RestoreParts(prev.Parts);
+            ActiveDevBoardWires.Clear();
+            foreach (var w in prev.DevBoardWires)
+                ActiveDevBoardWires.Add(w);
+
+            if (SelectedDevBoardType != prev.SelectedDevBoardType)
+            {
+                SelectedDevBoardType = prev.SelectedDevBoardType;
+            }
+            if (IsDevBoardDocked != prev.IsDevBoardDocked)
+            {
+                IsDevBoardDocked = prev.IsDevBoardDocked;
+            }
+            UpdateDevBoardState();
+
+            ClearPendingBuild();
+            CommitDraft();
+            EvaluateDevBoardCircuit();
+            BuilderHint = "Undo: Restored previous circuit state (Ctrl+Z).";
             return;
         }
 
-        ClearPendingBuild();
-        CommitDraft();
-        BuilderHint = "Removed the last placed part.";
+        if (_draft.TryUndo())
+        {
+            ClearPendingBuild();
+            CommitDraft();
+            EvaluateDevBoardCircuit();
+            BuilderHint = "Undo: Restored previous circuit state (Ctrl+Z).";
+            return;
+        }
+
+        BuilderHint = "Nothing to undo.";
+    }
+
+    [RelayCommand]
+    public void RedoCircuitPart()
+    {
+        if (_workstationRedoStack.Count > 0)
+        {
+            var next = _workstationRedoStack.Pop();
+            _workstationUndoStack.Push(new WorkstationCircuitSnapshot(
+                _draft.Parts.Select(p => p with { Pins = (string[])p.Pins.Clone() }).ToList(),
+                ActiveDevBoardWires.ToList(),
+                IsDevBoardDocked,
+                SelectedDevBoardType,
+                next.Description));
+
+            _draft.RestoreParts(next.Parts);
+            ActiveDevBoardWires.Clear();
+            foreach (var w in next.DevBoardWires)
+                ActiveDevBoardWires.Add(w);
+
+            if (SelectedDevBoardType != next.SelectedDevBoardType)
+            {
+                SelectedDevBoardType = next.SelectedDevBoardType;
+            }
+            if (IsDevBoardDocked != next.IsDevBoardDocked)
+            {
+                IsDevBoardDocked = next.IsDevBoardDocked;
+            }
+            UpdateDevBoardState();
+
+            ClearPendingBuild();
+            CommitDraft();
+            EvaluateDevBoardCircuit();
+            BuilderHint = "Redo: Re-applied circuit state (Ctrl+Shift+Z).";
+            return;
+        }
+
+        if (_draft.TryRedo())
+        {
+            ClearPendingBuild();
+            CommitDraft();
+            EvaluateDevBoardCircuit();
+            BuilderHint = "Redo: Re-applied circuit state (Ctrl+Shift+Z).";
+            return;
+        }
+
+        BuilderHint = "Nothing to redo.";
     }
 
     [RelayCommand]
     private void ClearCircuit()
     {
+        RecordUndoSnapshot("Clear circuit");
         _draft.Clear();
         ClearPendingBuild();
         CommitDraft();
@@ -1266,6 +2086,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             return;
         }
 
+        RecordUndoSnapshot($"Remove {row.Part.KindLabel} #{row.Part.TrackId}");
         int trackId = row.Part.TrackId;
         for (int i = 0; i < _draft.Parts.Count; i++)
         {
@@ -1290,12 +2111,15 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             return;
         }
 
+        RecordUndoSnapshot($"Edit {row.Part.KindLabel} #{row.Part.TrackId}");
         int trackId = row.Part.TrackId;
         string value = EditPartValue?.Trim() ?? string.Empty;
         string symbol = EditPartSymbol?.Trim() ?? string.Empty;
 
         if (!_draft.TrySetValue(trackId, value) || !_draft.TrySetSymbol(trackId, symbol))
         {
+            if (_workstationUndoStack.Count > 0)
+                _workstationUndoStack.Pop();
             BuilderHint = $"Part #{trackId} is no longer on the board.";
             return;
         }
@@ -1360,6 +2184,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             return;
         }
 
+        RecordUndoSnapshot($"Load demo {DemoScenarioCatalog.GetTitle(scenario)}");
         _draft.Clear();
         int copied = 0;
 
@@ -1375,14 +2200,15 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         BuilderHint = $"Loaded {copied} part(s) from {DemoScenarioCatalog.GetTitle(scenario)}.";
     }
 
-    private void CommitDraft()
+    private void CommitDraft(int? preserveTrackId = null)
     {
-        int? selectedTrack = SelectedDraftPart?.Part.TrackId;
+        int? selectedTrack = preserveTrackId ?? SelectedDraftPart?.Part.TrackId;
 
         DraftParts.Clear();
         for (int i = 0; i < _draft.Parts.Count; i++)
             DraftParts.Add(new DraftPartRow(_draft.Parts[i]));
 
+        SelectedDraftPart = null;
         if (selectedTrack is { } trackId)
         {
             for (int i = 0; i < DraftParts.Count; i++)
@@ -1395,15 +2221,22 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             }
         }
 
+        _renderer.SelectedTrackId = SelectedDraftPart?.Part.TrackId;
+
         CircuitSummary = _draft.Describe();
         _coordinator?.SetManualDetections(_draft.BuildDetections());
         RefreshNetlist(_coordinator?.LatestPacket);
+        UpdateAvometerMeasurement();
+
+        if (IsDevBoardDocked && ActiveDevBoardWires.Count > 0)
+            EvaluateDevBoardCircuit();
     }
 
     private void ClearPendingBuild()
     {
         _hasPendingBuildHole = false;
         _pendingBuildHole = default;
+        _pendingMcuPinHit = null;
         _renderer.ClearPendingLead();
     }
 
@@ -1472,16 +2305,27 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             return;
         }
 
-        DrcStatePacket? packet = coordinator.LatestPacket;
-        if (packet is null || (packet.Components.Count == 0 && packet.Violations.Count == 0))
+        DrcStatePacket packet = coordinator.LatestPacket ?? DrcStatePacket.Empty;
+
+        // Capture full high-resolution 1000x500 breadboard screenshot for Qwen vision
+        byte[] fullBoardPng = _renderer.CaptureFullBoardPng(packet, coordinator.LatestRatsnest);
+        coordinator.RequestAiDiagnostic(fullBoardPng);
+
+        string? snapshotPath = null;
+        try
         {
-            StatusLine = "AI TUTOR: board is empty. Place components or select a scenario first.";
-            return;
+            string cacheDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BreadboardAOI", "cache");
+            Directory.CreateDirectory(cacheDir);
+            snapshotPath = Path.Combine(cacheDir, "ask_ai_breadboard.png");
+            File.WriteAllBytes(snapshotPath, fullBoardPng);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            snapshotPath = null;
         }
 
-        bool sent = coordinator.RequestAiDiagnostic();
-        if (sent)
-            StatusLine = $"AI TUTOR: analyzing {packet.Components.Count} component(s) and {packet.Violations.Count} DRC violation(s)...";
+        OpenAiVisionInspector(snapshotPath ?? LoadedImagePath);
+        StatusLine = $"AI TUTOR: Studio opened with {packet.Components.Count} component(s) uploaded for Qwen analysis.";
     }
 
     [RelayCommand]
@@ -1496,746 +2340,9 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         _coordinator?.TestEmergencyAlarm();
     }
 
-    /// <summary>
-    /// Switches the live tutor voice. The view-model persists the choice, but
-    /// BREADBOARD_VOICE_BACKEND still wins on the next launch.
-    /// </summary>
-    [RelayCommand]
-    private async Task SelectVoiceEngineAsync(string? preference)
-    {
-        InspectionPipelineCoordinator? coordinator = _coordinator;
-        if (coordinator is null)
-        {
-            StatusLine = "VOICE: the pipeline is not ready yet.";
-            return;
-        }
-
-        if (!VoiceEnginePreferences.TryParse(preference, out VoiceEnginePreference requested))
-            return;
-
-        IsVoiceEngineBusy = true;
-        try
-        {
-            StatusLine = $"VOICE: switching to {VoiceEnginePreferences.ToDisplayName(requested)}...";
-            bool switched = await coordinator.SetVoiceBackendAsync(requested);
-
-            VoiceSettingsStore.Save(requested);
-            VoiceBackend = $"VOICE: {coordinator.VoiceBackendDescription}";
-
-            BreadboardAOI.Intelligence.VoiceBackend active = coordinator.ActiveVoiceBackend;
-            bool fellBack = requested switch
-            {
-                VoiceEnginePreference.Piper => active != BreadboardAOI.Intelligence.VoiceBackend.Piper,
-                VoiceEnginePreference.Kokoro => active != BreadboardAOI.Intelligence.VoiceBackend.Kokoro,
-                VoiceEnginePreference.Sapi => active != BreadboardAOI.Intelligence.VoiceBackend.Sapi,
-                _ => false
-            };
-
-            StatusLine = switched
-                ? fellBack
-                    ? $"VOICE: {coordinator.VoiceBackendDescription} active (fallback)."
-                    : $"VOICE: {coordinator.VoiceBackendDescription} active."
-                : $"VOICE: no engine could speak. {coordinator.VoiceNote}".TrimEnd();
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            StatusLine = $"VOICE: switch failed - {ex.Message}";
-        }
-        finally
-        {
-            IsVoiceEngineBusy = false;
-        }
-    }
-
-    /// <summary>Auditions the active engine with a short natural line.</summary>
-    [RelayCommand]
-    private async Task TestVoiceAsync()
-    {
-        InspectionPipelineCoordinator? coordinator = _coordinator;
-        if (coordinator is null)
-        {
-            StatusLine = "VOICE: the pipeline is not ready yet.";
-            return;
-        }
-
-        IsVoiceEngineBusy = true;
-        try
-        {
-            StatusLine = $"VOICE: speaking with {coordinator.VoiceBackendDescription}...";
-            bool spoken = await coordinator.SpeakTestLineAsync();
-
-            VoiceBackend = $"VOICE: {coordinator.VoiceBackendDescription}";
-            StatusLine = spoken
-                ? $"VOICE: test line played by {coordinator.VoiceBackendDescription}."
-                : $"VOICE: test failed. {coordinator.VoiceNote}".TrimEnd();
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            StatusLine = $"VOICE: test failed - {ex.Message}";
-        }
-        finally
-        {
-            IsVoiceEngineBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private void CycleCamera()
-    {
-        InspectionPipelineCoordinator? coordinator = _coordinator;
-        if (coordinator is null)
-            return;
-
-        CameraSource current = coordinator.ActiveCameraSource;
-        CameraSource next = current switch
-        {
-            CameraSource.Synthetic => CameraSource.Camera0,
-            CameraSource.Camera0 => CameraSource.Camera1,
-            _ => CameraSource.Synthetic
-        };
-
-        for (int i = 0; i < CameraOptions.Count; i++)
-        {
-            if (CameraOptions[i].Source != next)
-                continue;
-
-            SelectedCamera = CameraOptions[i];
-            break;
-        }
-
-        // The synthetic frame exists only to exercise homography; its ArUco corner
-        // markers would read as grey blocks under the vector board.
-        ShowCameraUnderlay = next != CameraSource.Synthetic;
-    }
-
-    /// <summary>
-    /// Loads a still photo and replays it as the camera frame source. Used by the
-    /// toolbar dialog, viewport drag &amp; drop and <c>BREADBOARD_IMAGE_PATH</c>.
-    /// </summary>
-    public void LoadImage(string path)
-    {
-        if (_disposed || string.IsNullOrWhiteSpace(path))
-            return;
-
-        LoadedImagePath = path;
-        _pendingImagePath = path;
-        ShowCameraUnderlay = true;
-
-        InspectionPipelineCoordinator? coordinator = _coordinator;
-        if (coordinator is not null)
-        {
-            coordinator.SetImageSource(path);
-            CameraLabel = $"CAMERA: {coordinator.CameraStatus}";
-            StatusLine = $"Still image loaded: {Path.GetFileName(path)} (photo underlay, no part extraction).";
-            return;
-        }
-
-        StatusLine = $"Still image queued: {Path.GetFileName(path)} (photo underlay, no part extraction).";
-    }
-
-    [RelayCommand]
-    private void LoadImageFile()
-    {
-        var dialog = new Microsoft.Win32.OpenFileDialog
-        {
-            Title = "Open breadboard photo",
-            Filter = "Breadboard images|*.png;*.jpg;*.jpeg;*.bmp;*.webp;*.tif;*.tiff|All files|*.*",
-            CheckFileExists = true,
-            Multiselect = false
-        };
-
-        if (dialog.ShowDialog() == true)
-            LoadImage(dialog.FileName);
-    }
-
-    // ---- remote AI / colab commands ---------------------------------------
-
-    /// <summary>Public GitHub-hosted notebook the user opens in their own Colab.</summary>
-    public string NotebookUrl =>
-        "https://colab.research.google.com/github/wallali77666-cyber/BreadBoard-Assistant/blob/main/assets/colab/BreadboardAOI_Qwen.ipynb";
-
-    [RelayCommand]
-    private async Task LinkGoogleAsync()
-    {
-        if (IsRemoteBusy)
-            return;
-
-        string clientId = GoogleClientId.Trim();
-        if (clientId.Length == 0)
-            clientId = GoogleOAuthOptions.FromEnvironment().ClientId;
-
-        if (clientId.Length == 0)
-        {
-            RemoteAiStatus = "Paste the OAuth client ID (Desktop app) from Google Cloud Console, then press LINK GOOGLE again.";
-            return;
-        }
-
-        IsRemoteBusy = true;
-        try
-        {
-            string? secret = NullIfBlank(GoogleClientSecret);
-            _clientStore.Save(new GoogleClientConfig(clientId, secret));
-
-            _oauth?.Dispose();
-            _oauth = new GoogleOAuthClient(
-                GoogleOAuthOptions.FromEnvironment().WithClient(clientId, secret));
-
-            RemoteAiStatus = "Opening the Google consent page in your browser...";
-
-            GoogleTokenSet tokens = await _oauth.AuthorizeAsync(url =>
-            {
-                try
-                {
-                    Process.Start(new ProcessStartInfo(url) { UseShellExecute = true })?.Dispose();
-                }
-                catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
-                {
-                    RemoteAiStatus = "Open this URL manually: " + url;
-                }
-
-                return Task.CompletedTask;
-            });
-
-            _googleTokens = tokens;
-            _tokenStore.Save(tokens);
-            GoogleAccountStatus = "LINKED · " + tokens.DescribeAccount();
-            RemoteAiStatus = $"Signed in as {tokens.DescribeAccount()}. Press PUBLISH SESSION to hand a key to Colab.";
-            _remoteTimer.Start();
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            RemoteAiStatus = "Link failed: " + ex.Message;
-        }
-        finally
-        {
-            IsRemoteBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private async Task UnlinkGoogleAsync()
-    {
-        if (IsRemoteBusy)
-            return;
-
-        IsRemoteBusy = true;
-        try
-        {
-            GoogleTokenSet? tokens = _googleTokens;
-            GoogleOAuthClient? oauth = _oauth;
-
-            if (tokens is not null && oauth is not null)
-                await oauth.RevokeAsync(tokens.RefreshToken ?? tokens.AccessToken);
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            // Revocation is best-effort; the local token is cleared regardless.
-        }
-        finally
-        {
-            IsRemoteBusy = false;
-        }
-
-        _googleTokens = null;
-        _colabSession = null;
-        _appliedRemoteTarget = null;
-        _tokenStore.Clear();
-        _remoteTimer.Stop();
-        UseColabAi = false;
-        _coordinator?.SetRemoteTutor(null);
-        SelectedAiRoute = AiRouteMethod.LocalQwen;
-        GoogleAccountStatus = "NOT LINKED";
-        RemoteAiStatus = "Google account unlinked. Local Qwen remains active.";
-    }
-
-    [RelayCommand]
-    private async Task PublishColabSessionAsync()
-    {
-        if (IsRemoteBusy)
-            return;
-
-        IsRemoteBusy = true;
-        try
-        {
-            string? accessToken = await EnsureAccessTokenAsync(CancellationToken.None);
-            if (accessToken is null)
-            {
-                RemoteAiStatus = "Link a Google account first; the session key is published through Drive.";
-                return;
-            }
-
-            ColabSession session = await _drive.RequestSessionAsync(accessToken, CreateSessionKey(), NotebookUrl);
-            _colabSession = session;
-            UseColabAi = true;
-            _remoteTimer.Start();
-            RemoteAiStatus = "Session key published to Drive. Open the Colab notebook in the same account and press Run all.";
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            RemoteAiStatus = "Publish failed: " + ex.Message;
-        }
-        finally
-        {
-            IsRemoteBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private void OpenColabNotebook()
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo(NotebookUrl) { UseShellExecute = true })?.Dispose();
-            RemoteAiStatus = "Opened the BreadboardAOI Colab notebook in your browser.";
-        }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
-        {
-            RemoteAiStatus = "Could not open the browser. Notebook URL: " + NotebookUrl;
-        }
-    }
-
-    [RelayCommand]
-    private async Task RefreshColabAsync()
-    {
-        await PollColabAsync(force: true);
-    }
-
-    [RelayCommand]
-    private async Task ApplyManualEndpointAsync()
-    {
-        SelectedAiRoute = AiRouteMethod.ManualEndpoint;
-
-        string? endpoint = ColabSession.NormalizeBaseUrl(ManualEndpoint);
-        if (endpoint is null)
-        {
-            RemoteAiStatus = "Enter a tunnel URL such as https://random-words.trycloudflare.com or a local server such as http://127.0.0.1:1234.";
-            return;
-        }
-
-        if (!ColabEndpoints.IsSecureEndpoint(endpoint))
-        {
-            RemoteAiStatus =
-                "Refused: a remote tutor URL must use https so frames are not sent in cleartext. " +
-                "Plain http is only accepted for 127.0.0.1 / localhost.";
-            return;
-        }
-
-        if (!ColabEndpoints.IsPublicHost(endpoint))
-        {
-            RemoteAiStatus =
-                "Refused: that URL points at a private or link-local address. Use the public https tunnel " +
-                "printed by Colab, or 127.0.0.1 for a provider on this PC.";
-            return;
-        }
-
-        string? key = NullIfBlank(ManualApiKey);
-
-        // Model discovery happens inside ConnectResolvedAsync for every loopback
-        // target, so the preset buttons, pair codes and this URL share one path.
-        await ConnectEndpointAsync(
-            new RemoteTutorTarget(endpoint, key, null),
-            persist: true,
-            confirmCustomHost: true).ConfigureAwait(true);
-    }
-
-    /// <summary>Connects from the single line printed by the Colab notebook.</summary>
-    [RelayCommand]
-    private async Task ConnectPairCodeAsync()
-    {
-        if (IsRemoteBusy)
-            return;
-
-        SelectedAiRoute = AiRouteMethod.ColabTunnel;
-
-        if (!ColabPairCode.TryParse(PairCode, out RemoteTutorTarget target, out string? rejection))
-        {
-            RemoteAiStatus = rejection
-                ?? "Paste the whole line printed by Colab: BBAOI1|https://....trycloudflare.com|key";
-            return;
-        }
-
-        await ConnectEndpointAsync(target, persist: true, confirmCustomHost: true).ConfigureAwait(true);
-    }
-
-    /// <summary>Returns the cognitive loop to llama-server on this PC.</summary>
-    [RelayCommand]
-    private void UseLocalTutor()
-    {
-        _savedEndpoint = null;
-        _appliedRemoteTarget = null;
-        _endpointStore.Clear();
-        _remoteTimer.Stop();
-        _coordinator?.SetRemoteTutor(null);
-
-        UseColabAi = false;
-        SelectedAiRoute = AiRouteMethod.LocalQwen;
-        RemoteRouteLabel = "TUTOR ROUTE: LOCAL";
-        RemoteAiStatus = "Local Qwen on this PC is active. Remote routing is off.";
-    }
-
-    /// <summary>Drops the pair code and returns the cognitive loop to this PC.</summary>
-    [RelayCommand]
-    private void DisconnectPairCode()
-    {
-        PairCode = string.Empty;
-        UseLocalTutor();
-        RemoteAiStatus = "Pair code cleared. Local Qwen is active again.";
-    }
-
-    /// <summary>Probes a target, then swaps the tutor and remembers it for the next start.</summary>
-    private async Task ConnectEndpointAsync(RemoteTutorTarget target, bool persist, bool confirmCustomHost = false)
-    {
-        if (IsRemoteBusy)
-            return;
-
-        IsRemoteBusy = true;
-        try
-        {
-            await ConnectResolvedAsync(target, persist, providerLabel: null, confirmCustomHost).ConfigureAwait(true);
-        }
-        finally
-        {
-            IsRemoteBusy = false;
-        }
-    }
-
-    /// <summary>
-    /// Shared connect path. The caller owns <see cref="IsRemoteBusy"/> so a preset
-    /// probe can reuse it without tripping the re-entrancy guard.
-    /// </summary>
-    private async Task ConnectResolvedAsync(
-        RemoteTutorTarget target,
-        bool persist,
-        string? providerLabel,
-        bool confirmCustomHost = false)
-    {
-        if (!ColabEndpoints.IsSecureEndpoint(target.EndpointUrl))
-        {
-            RemoteAiStatus =
-                $"Refused {target.DisplayHost}: the tutor endpoint must use https (only loopback may use http).";
-            return;
-        }
-
-        if (!ColabEndpoints.IsPublicHost(target.EndpointUrl))
-        {
-            RemoteAiStatus =
-                $"Refused {target.DisplayHost}: the endpoint resolves to a private or link-local network.";
-            return;
-        }
-
-        if (confirmCustomHost
-            && !target.IsLoopback
-            && !ColabEndpoints.IsKnownTunnelHost(target.EndpointUrl))
-        {
-            MessageBoxResult answer = MessageBox.Show(
-                $"This will send camera crops and DRC reports to:\n\n{target.DisplayHost}\n\n" +
-                "Only continue if you recognise and trust this domain.",
-                "Custom tutor host",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning,
-                MessageBoxResult.No);
-
-            if (answer != MessageBoxResult.Yes)
-            {
-                RemoteAiStatus = "Connection cancelled: the custom tutor host was not confirmed.";
-                return;
-            }
-        }
-
-        RemoteAiStatus = providerLabel is null
-            ? $"Probing {target.DisplayHost}..."
-            : $"Probing {providerLabel} on {target.DisplayHost}...";
-
-        try
-        {
-            // A loopback server names its own models. Resolve the alias here so a
-            // preset, a pair code and a typed URL all send a model the server has.
-            if (target.IsLoopback)
-            {
-                IReadOnlyList<string> models = await LocalAiProviders
-                    .ListModelsAsync(_probeHttp, target.EndpointUrl, target.ApiKey)
-                    .ConfigureAwait(true);
-
-                if (models.Count == 0)
-                {
-                    RemoteAiStatus =
-                        $"No model answered on {target.EndpointUrl}. Start the provider, load a model, then connect again. Nothing was installed by this app.";
-                    LocalProviderStatus = "LOCAL AI: NOT ANSWERING";
-                    return;
-                }
-
-                string? resolved = LocalAiProviders.ChooseModel(models, target.ModelAlias);
-                target = target with { ModelAlias = resolved };
-                LocalProviderStatus = $"LOCAL AI: {target.DisplayHost} \u00b7 {resolved}";
-            }
-
-            RemoteProbeResult probe = await RemoteEndpointProbe
-                .ProbeAsync(_probeHttp, target.EndpointUrl, target.ApiKey)
-                .ConfigureAwait(true);
-
-            if (!probe.IsHealthy)
-            {
-                RemoteAiStatus =
-                    $"{providerLabel ?? "The tutor"} is not answering yet ({probe.Detail}). Start it, then connect again.";
-                return;
-            }
-
-            // UseColabAi means "prefer the Colab tunnel"; a loopback provider must
-            // not arm the Drive poller or it would replace the local model later.
-            if (target.IsLoopback)
-            {
-                if (UseColabAi)
-                    UseColabAi = false;
-
-                ApplyRemoteTarget(target);
-            }
-            else
-            {
-                ApplyRemoteTarget(target);
-
-                if (!UseColabAi)
-                    UseColabAi = true;
-            }
-
-            if (persist)
-            {
-                _savedEndpoint = target;
-                _endpointStore.Save(target);
-                PairCode = ColabPairCode.Format(target);
-            }
-
-            RemoteAiStatus = providerLabel is null
-                ? $"Connected to {target.DisplayHost} ({probe.LatencyMs:0} ms). Diagnoses stream from {(target.IsLoopback ? "the local model" : "Colab")}.{CustomHostNote(target)}"
-                : $"{providerLabel} connected on {target.DisplayHost} ({probe.LatencyMs:0} ms){ModelSuffix(target)}.{CustomHostNote(target)}";
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            RemoteAiStatus = "Connect failed: " + ex.Message;
-        }
-    }
-
-    private static string ModelSuffix(RemoteTutorTarget target) =>
-        string.IsNullOrWhiteSpace(target.ModelAlias) ? string.Empty : " · " + target.ModelAlias;
-
-    /// <summary>
-    /// A custom public domain is accepted because the operator pasted it, but the
-    /// status line says so: only tunnel providers and loopback are recognised.
-    /// </summary>
-    private static string CustomHostNote(RemoteTutorTarget target) =>
-        target.IsLoopback || ColabEndpoints.IsKnownTunnelHost(target.EndpointUrl)
-            ? string.Empty
-            : " Custom host: confirm this domain is yours before sending frames.";
-
-    /// <summary>
-    /// Probes LM Studio / Ollama that the operator already runs on this PC.
-    /// Nothing is installed or launched: an offline provider just leaves the
-    /// local llama.cpp / rule-based tutor in charge.
-    /// </summary>
-    [RelayCommand]
-    private async Task ConnectLocalProviderAsync(string? presetId)
-    {
-        LocalAiPreset? preset = LocalAiProviders.Find(presetId);
-        if (preset is null)
-        {
-            LocalProviderStatus = "LOCAL AI: UNKNOWN PROVIDER";
-            return;
-        }
-
-        if (IsRemoteBusy)
-            return;
-
-        SelectedAiRoute = AiRouteMethod.LocalProvider;
-        IsRemoteBusy = true;
-        LocalProviderStatus = $"LOCAL AI: PROBING {preset.BaseUrl} ...";
-
-        try
-        {
-            // ConnectResolvedAsync discovers the loaded model and reports a clear
-            // "not answering" status when the provider is not running.
-            await ConnectResolvedAsync(
-                new RemoteTutorTarget(preset.BaseUrl, preset.ApiKey, null),
-                persist: false,
-                providerLabel: preset.Label).ConfigureAwait(true);
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            LocalProviderStatus = $"LOCAL AI: {preset.Label} PROBE FAILED";
-            RemoteAiStatus = "Local provider probe failed: " + ex.Message;
-        }
-        finally
-        {
-            IsRemoteBusy = false;
-        }
-    }
-
-    // ---- remote AI helpers -------------------------------------------------
-
-    private void LoadGoogleSettings()
-    {
-        GoogleClientConfig? config = _clientStore.Load();
-        GoogleOAuthOptions environment = GoogleOAuthOptions.FromEnvironment();
-
-        GoogleClientId = !string.IsNullOrWhiteSpace(config?.ClientId) ? config!.ClientId : environment.ClientId;
-        GoogleClientSecret = NullIfBlank(config?.ClientSecret) ?? NullIfBlank(environment.ClientSecret) ?? string.Empty;
-
-        _googleTokens = _tokenStore.Load();
-        if (_googleTokens is not null)
-        {
-            GoogleAccountStatus = "LINKED · " + _googleTokens.DescribeAccount();
-            RemoteAiStatus = "Cached Google grant loaded. Press PUBLISH SESSION or refresh the Colab endpoint.";
-        }
-
-        string? manual = Environment.GetEnvironmentVariable("BREADBOARD_COLAB_ENDPOINT");
-        if (!string.IsNullOrWhiteSpace(manual))
-        {
-            ManualEndpoint = manual.Trim();
-            ManualApiKey = Environment.GetEnvironmentVariable("BREADBOARD_COLAB_KEY") ?? string.Empty;
-        }
-
-        RemoteTutorTarget? saved = _endpointStore.Load();
-        if (saved is not null)
-        {
-            _savedEndpoint = saved;
-            PairCode = ColabPairCode.Format(saved);
-            RemoteAiStatus = "Saved Colab endpoint found. Probing it now...";
-        }
-    }
-
-    private async Task<string?> EnsureAccessTokenAsync(CancellationToken cancellationToken)
-    {
-        GoogleTokenSet? tokens = _googleTokens;
-        if (tokens is null || string.IsNullOrWhiteSpace(tokens.AccessToken))
-            return null;
-
-        if (!tokens.IsExpired(DateTimeOffset.UtcNow))
-            return tokens.AccessToken;
-
-        if (!tokens.HasRefreshToken)
-            return null;
-
-        _oauth ??= new GoogleOAuthClient(
-            GoogleOAuthOptions.FromEnvironment().WithClient(GoogleClientId, NullIfBlank(GoogleClientSecret)));
-
-        GoogleTokenSet refreshed = await _oauth.RefreshAsync(tokens.RefreshToken!, cancellationToken);
-        _googleTokens = refreshed;
-        _tokenStore.Save(refreshed);
-        return refreshed.AccessToken;
-    }
-
-    /// <summary>Reads the shared Drive session, probes the tunnel and swaps the tutor if healthy.</summary>
-    private async Task PollColabAsync(bool force)
-    {
-        if (Interlocked.CompareExchange(ref _remotePolling, 1, 0) != 0)
-            return;
-
-        try
-        {
-            if (!UseColabAi && !force)
-                return;
-
-            if (_googleTokens is null)
-            {
-                if (force)
-                    RemoteAiStatus = "No Google account linked. Press LINK GOOGLE first.";
-                return;
-            }
-
-            string? accessToken = await EnsureAccessTokenAsync(CancellationToken.None);
-            if (accessToken is null)
-            {
-                RemoteAiStatus = "Google session expired. Link the account again.";
-                return;
-            }
-
-            ColabSession? session = await _drive.ReadSessionAsync(accessToken);
-            _colabSession = session;
-
-            if (session is null)
-            {
-                RemoteAiStatus = "No Colab session file in Drive yet. Press PUBLISH SESSION.";
-                return;
-            }
-
-            if (!session.IsServing)
-            {
-                RemoteAiStatus = string.IsNullOrWhiteSpace(session.Detail)
-                    ? $"Colab session is '{session.Status}'."
-                    : $"Colab session is '{session.Status}': {session.Detail}";
-                return;
-            }
-
-            RemoteProbeResult probe = await RemoteEndpointProbe.ProbeAsync(
-                _probeHttp,
-                session.EndpointUrl,
-                session.ApiKey);
-
-            if (!probe.IsHealthy)
-            {
-                RemoteAiStatus = $"Colab published a tunnel but it is not answering: {probe.Detail}.";
-                return;
-            }
-
-            RemoteTutorTarget? target = RemoteTutorTarget.FromSession(session);
-            if (target is null)
-            {
-                RemoteAiStatus = "Colab session file has no usable chat endpoint.";
-                return;
-            }
-
-            if (!ColabEndpoints.IsSecureEndpoint(target.EndpointUrl))
-            {
-                RemoteAiStatus =
-                    $"Refused the Drive session: {target.DisplayHost} is plain http. Re-run the notebook so it publishes an https tunnel.";
-                return;
-            }
-
-            ApplyRemoteTarget(target);
-            SelectedAiRoute = AiRouteMethod.ColabTunnel;
-            PairCode = ColabPairCode.Format(target);
-            RemoteAiStatus =
-                $"Serving {session.Model ?? "Qwen"} on {target.DisplayHost} · {probe.LatencyMs:0} ms{(string.IsNullOrWhiteSpace(session.Gpu) ? string.Empty : " · " + session.Gpu)}";
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            RemoteAiStatus = "Colab refresh failed: " + ex.Message;
-        }
-        finally
-        {
-            Volatile.Write(ref _remotePolling, 0);
-        }
-    }
-
-    private void ApplyRemoteTarget(RemoteTutorTarget target)
-    {
-        if (_appliedRemoteTarget is not null
-            && string.Equals(_appliedRemoteTarget.EndpointUrl, target.EndpointUrl, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(_appliedRemoteTarget.ApiKey, target.ApiKey, StringComparison.Ordinal)
-            && string.Equals(_appliedRemoteTarget.ModelAlias, target.ModelAlias, StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        _appliedRemoteTarget = target;
-        _coordinator?.SetRemoteTutor(target);
-        RemoteRouteLabel = DescribeRoute(target);
-    }
-
-    /// <summary>Loopback providers are labelled LOCAL AI so nobody looks for a Colab tunnel.</summary>
-    private static string DescribeRoute(RemoteTutorTarget target) =>
-        target.IsLoopback
-            ? $"TUTOR ROUTE: LOCAL AI \u00b7 {target.DisplayHost}"
-            : $"TUTOR ROUTE: COLAB \u00b7 {target.DisplayHost}";
-
-    private static string CreateSessionKey()
-    {
-        Span<byte> bytes = stackalloc byte[24];
-        RandomNumberGenerator.Fill(bytes);
-        return "bbaoi_" + Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-    }
-
-    private static string? NullIfBlank(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-
+    // Speech & Voice engine logic moved to MainWorkstationViewModel.SpeechVoice.cs
+    // Camera, AI Vision Studio, and Schematic Export logic moved to MainWorkstationViewModel.AiVision.cs
+    // Remote AI, Google OAuth, and Colab bridge logic moved to MainWorkstationViewModel.RemoteColab.cs
     // ---- coordinator events ------------------------------------------------
 
     private void OnReflexDrcUpdated(DrcStatePacket packet)
@@ -2262,6 +2369,20 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
                 Violations.Add(_violationScratch[i]);
 
             _violationScratch.Clear();
+
+            // Dev-board violations are evaluated separately from the camera DRC
+            // packet. Merge them here so a packet refresh does not wipe them and
+            // a repeated evaluation does not duplicate them.
+            IReadOnlyList<McuDrcViolation> devBoardViolations = _renderer.ActiveDevBoardViolations;
+            for (int i = 0; i < devBoardViolations.Count; i++)
+            {
+                McuDrcViolation violation = devBoardViolations[i];
+                Violations.Add(new ViolationRow(violation));
+                if (violation.Severity == McuDrcSeverity.CriticalDamageRisk)
+                    critical++;
+                else
+                    warnings++;
+            }
 
             CriticalCount = critical;
             WarningCount = warnings;
@@ -2299,6 +2420,8 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             // stale, so replace it with the live DRC summary.
             if (critical == 0 && StatusLine.StartsWith("EMERGENCY:", StringComparison.Ordinal))
                 StatusLine = DrcStatus;
+
+            UpdateAvometerMeasurement();
         });
     }
 
@@ -2432,7 +2555,13 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             return;
 
         CameraLabel = $"CAMERA: {value.Label}";
-        if (value.Source != CameraSource.ImageFile)
+        if (value.Source != CameraSource.ImageFile && value.Source != CameraSource.VideoFile)
+            _pendingImagePath = null;
+
+        if (value.Source != CameraSource.Synthetic)
+            DemoModeEnabled = false;
+        if (value.Source == CameraSource.Synthetic && !DemoModeEnabled)
+            DemoModeEnabled = true;
             _pendingImagePath = null;
 
         _coordinator?.SetCameraSource(value.Source);
@@ -2465,6 +2594,13 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         ComponentKind.Led => LedPresets,
         ComponentKind.IntegratedCircuit => IcPresets,
         ComponentKind.PushButton => ButtonPresets,
+        ComponentKind.Diode => DiodePresets,
+        ComponentKind.Transistor => TransistorPresets,
+        ComponentKind.Potentiometer => PotentiometerPresets,
+        ComponentKind.VoltageRegulator => RegulatorPresets,
+        ComponentKind.Buzzer => BuzzerPresets,
+        ComponentKind.Sensor => SensorPresets,
+        ComponentKind.Battery => BatteryPresets,
         _ => Array.Empty<PartValuePreset>()
     };
 
@@ -2502,48 +2638,872 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             : $"{value.Label} armed: value {value.Value}, symbol {value.SymbolId ?? "kind default"}.";
     }
 
+    partial void OnNewPartValueChanged(string value)
+    {
+        if (IsResistorSelected)
+            UpdateResistorBandPreview();
+
+        SyncValueToTargetPart(value);
+    }
+
+    private void SyncValueToTargetPart(string value)
+    {
+        if (_disposed || _isSyncingPartValue || string.IsNullOrWhiteSpace(value))
+            return;
+
+        string trimmed = value.Trim();
+
+        // 1. If a part is selected and matches the current arming kind, update it directly
+        if (SelectedDraftPart is { } selected && selected.Part.Kind == SelectedPartOption?.Kind)
+        {
+            if (!string.Equals(selected.Part.Value, trimmed, StringComparison.OrdinalIgnoreCase))
+            {
+                RecordUndoSnapshot($"Change {selected.Part.KindLabel} #{selected.Part.TrackId} to {trimmed}");
+                _draft.TrySetValue(selected.Part.TrackId, trimmed);
+                _isSyncingPartValue = true;
+                try
+                {
+                    EditPartValue = trimmed;
+                }
+                finally
+                {
+                    _isSyncingPartValue = false;
+                }
+                CommitDraft(selected.Part.TrackId);
+                BuilderHint = $"Updated {selected.Part.KindLabel} #{selected.Part.TrackId} value to {trimmed}.";
+            }
+            return;
+        }
+
+        // 2. If no part is explicitly selected, but there are placed parts of this kind on the board,
+        // automatically update the most recently placed part (or single placed part) of that kind!
+        var matchingParts = _draft.Parts.Where(p => p.Kind == SelectedPartOption?.Kind).ToList();
+        if (matchingParts.Count > 0)
+        {
+            var targetPart = matchingParts[^1];
+            if (!string.Equals(targetPart.Value, trimmed, StringComparison.OrdinalIgnoreCase))
+            {
+                RecordUndoSnapshot($"Change {targetPart.KindLabel} #{targetPart.TrackId} to {trimmed}");
+                _draft.TrySetValue(targetPart.TrackId, trimmed);
+                CommitDraft(targetPart.TrackId);
+                BuilderHint = $"Updated {targetPart.KindLabel} #{targetPart.TrackId} value to {trimmed}.";
+            }
+        }
+    }
+
     partial void OnSelectedPartOptionChanged(BuildPartOption? value)
     {
+        OnPropertyChanged(nameof(IsResistorSelected));
+        OnPropertyChanged(nameof(IsCapacitorSelected));
+        OnPropertyChanged(nameof(IsIcSelected));
+        OnPropertyChanged(nameof(IsJumperSelected));
+        OnPropertyChanged(nameof(IsLedSelected));
+        OnPropertyChanged(nameof(IsButtonSelected));
+        OnPropertyChanged(nameof(IsDiodeSelected));
+        OnPropertyChanged(nameof(IsTransistorSelected));
+        OnPropertyChanged(nameof(IsPotentiometerSelected));
+        OnPropertyChanged(nameof(IsRegulatorSelected));
+        OnPropertyChanged(nameof(IsBuzzerSelected));
+        OnPropertyChanged(nameof(IsSensorSelected));
+        OnPropertyChanged(nameof(IsBatterySelected));
+        OnPropertyChanged(nameof(IsDevBoardSelected));
+
+        if (value?.Kind == ComponentKind.Microcontroller)
+        {
+            UpdateDevBoardState();
+        }
+
         if (value is null)
             return;
 
         RefreshPartValuePresets(value.Kind);
+
+        _isSyncingPartValue = true;
+        try
+        {
+            if (SelectedDraftPart is { } currentSel && currentSel.Part.Kind == value.Kind)
+            {
+                NewPartValue = currentSel.Part.Value ?? string.Empty;
+                NewPartSymbol = currentSel.Part.SymbolId ?? string.Empty;
+            }
+            else
+            {
+                switch (value.Kind)
+                {
+                    case ComponentKind.Resistor:
+                        NewPartValue = "220R";
+                        NewPartSymbol = "Device/R";
+                        break;
+                    case ComponentKind.Capacitor:
+                        NewPartValue = "100nF";
+                        NewPartSymbol = "Device/C";
+                        break;
+                    case ComponentKind.JumperWire:
+                        NewPartValue = SelectedJumperColor.Code;
+                        NewPartSymbol = string.Empty;
+                        break;
+                    case ComponentKind.Led:
+                        NewPartValue = "RED 2.0V";
+                        NewPartSymbol = "Device/LED";
+                        break;
+                    case ComponentKind.IntegratedCircuit:
+                        NewPartValue = "NE555P";
+                        NewPartSymbol = "Timer/NE555P";
+                        break;
+                    case ComponentKind.Diode:
+                        NewPartValue = "1N4148";
+                        NewPartSymbol = "Device/D";
+                        break;
+                    case ComponentKind.Transistor:
+                        NewPartValue = "2N3904";
+                        NewPartSymbol = "Transistor_BJT/2N3904";
+                        break;
+                    case ComponentKind.Potentiometer:
+                        NewPartValue = "10K_TRIM";
+                        NewPartSymbol = "Device/R_Potentiometer_Trim";
+                        break;
+                    case ComponentKind.VoltageRegulator:
+                        NewPartValue = "L7805";
+                        NewPartSymbol = "Regulator_Linear/L7805";
+                        break;
+                    case ComponentKind.Buzzer:
+                        NewPartValue = "BUZZER 5V";
+                        NewPartSymbol = "Device/Buzzer";
+                        break;
+                    case ComponentKind.Sensor:
+                        NewPartValue = "LDR GL5528";
+                        NewPartSymbol = "Sensor_Optical/LDR_GL5528";
+                        break;
+                    case ComponentKind.Battery:
+                        NewPartValue = "9V";
+                        NewPartSymbol = "Device/Battery";
+                        break;
+                }
+            }
+
+            if (value.Kind == ComponentKind.Resistor)
+                UpdateResistorBandPreview();
+        }
+        finally
+        {
+            _isSyncingPartValue = false;
+        }
 
         // The constructor sets the palette before the footprint list exists.
         IReadOnlyList<PinCountOption>? footprints = PinCountOptions;
         if (footprints is not { Count: > 0 })
             return;
 
-        // Only the IC palette entry supports DIP/module footprints, so a resistor
-        // selection must not leave a 28-pin DIP armed.
-        if (value.Kind != ComponentKind.IntegratedCircuit)
+        if (value.Kind == ComponentKind.Transistor || value.Kind == ComponentKind.Potentiometer || value.Kind == ComponentKind.VoltageRegulator)
+        {
+            SelectedPinCount = footprints.Count > 1 ? footprints[1] : footprints[0];
+        }
+        else if (value.Kind == ComponentKind.IntegratedCircuit)
+        {
+            if (SelectedPinCount is null || SelectedPinCount.Count < 3)
+            {
+                for (int i = 0; i < footprints.Count; i++)
+                {
+                    if (footprints[i].Count != 8)
+                        continue;
+
+                    SelectedPinCount = footprints[i];
+                    break;
+                }
+            }
+        }
+        else
         {
             SelectedPinCount = footprints[0];
-        }
-        else if (SelectedPinCount is null || SelectedPinCount.Count < 3)
-        {
-            for (int i = 0; i < footprints.Count; i++)
-            {
-                if (footprints[i].Count != 8)
-                    continue;
-
-                SelectedPinCount = footprints[i];
-                break;
-            }
         }
 
         if (_hasPendingBuildHole)
             return;
 
-        BuilderHint = value.Kind == ComponentKind.IntegratedCircuit && (SelectedPinCount?.Count ?? 2) >= 3
+        BuilderHint = (SelectedPinCount?.Count ?? 2) >= 3
             ? $"{value.Label} selected: click pin 1; the footprint is placed in one click."
             : $"{value.Label} selected: click its first tie point.";
     }
 
+    // DevBoard & MCU wiring logic moved to MainWorkstationViewModel.DevBoardWiring.cs
+
+    [RelayCommand]
+    private void SelectJumperColor(string? code)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+            return;
+
+        foreach (JumperColorOption opt in JumperColorOptions)
+        {
+            if (string.Equals(opt.Code, code, StringComparison.OrdinalIgnoreCase))
+            {
+                SelectedJumperColor = opt;
+                NewPartValue = opt.Code;
+                BuilderHint = $"Jumper wire color: {opt.Name} ({opt.Usage}). Click two tie points to place.";
+                break;
+            }
+        }
+    }
+
+    [RelayCommand]
+    private void SetResistance(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return;
+
+        string trimmed = value.Trim();
+        NewPartValue = trimmed;
+        NewPartSymbol = "Device/R";
+        UpdateResistorBandPreview();
+        SyncValueToTargetPart(trimmed);
+        BuilderHint = $"Resistor armed: {value}. {ResistorBandDescription}. Click two tie points.";
+    }
+
+    [RelayCommand]
+    private void SetCapacitance(string? spec)
+    {
+        if (string.IsNullOrWhiteSpace(spec))
+            return;
+
+        string[] parts = spec.Split('|');
+        NewPartValue = parts[0].Trim();
+        NewPartSymbol = parts.Length > 1 ? parts[1].Trim() : (parts[0].Contains("uF", StringComparison.OrdinalIgnoreCase) ? "Device/C_Polarized" : "Device/C");
+        BuilderHint = $"Capacitor armed: {parts[0]}. Click two tie points to place.";
+    }
+
+    [RelayCommand]
+    private void SetLedColor(string? spec)
+    {
+        if (string.IsNullOrWhiteSpace(spec))
+            return;
+
+        foreach (var opt in BuildPartOptions)
+        {
+            if (opt.Kind == ComponentKind.Led)
+            {
+                SelectedPartOption = opt;
+                break;
+            }
+        }
+
+        string trimmed = spec.Trim();
+        NewPartValue = trimmed;
+        NewPartSymbol = "Device/LED";
+        SyncValueToTargetPart(trimmed);
+        BuilderHint = $"LED armed: {spec}. Click tie point 1 for Anode (+), tie point 2 for Cathode (-).";
+    }
+
+    [RelayCommand]
+    private void SetDiode(string? spec)
+    {
+        if (string.IsNullOrWhiteSpace(spec))
+            return;
+
+        string[] parts = spec.Split('|');
+        NewPartValue = parts[0].Trim();
+        NewPartSymbol = parts.Length > 1 ? parts[1].Trim() : "Device/D";
+        BuilderHint = $"Diode armed: {parts[0]}. Lead 1 is Anode (+), Lead 2 is Cathode (- stripe). Click two tie points.";
+    }
+
+    [RelayCommand]
+    private void SetTransistor(string? spec)
+    {
+        if (string.IsNullOrWhiteSpace(spec))
+            return;
+
+        string[] parts = spec.Split('|');
+        NewPartValue = parts[0].Trim();
+        NewPartSymbol = parts.Length > 1 ? parts[1].Trim() : "Transistor_BJT/2N3904";
+        BuilderHint = $"Transistor armed: {parts[0]} (3-pin TO-92 row). Click pin 1 to place.";
+    }
+
+    [RelayCommand]
+    private void SetPotentiometer(string? spec)
+    {
+        if (string.IsNullOrWhiteSpace(spec))
+            return;
+
+        string[] parts = spec.Split('|');
+        NewPartValue = parts[0].Trim();
+        NewPartSymbol = parts.Length > 1 ? parts[1].Trim() : "Device/R_Potentiometer_Trim";
+        BuilderHint = $"Potentiometer armed: {parts[0]} (3-pin row: Pin 1, Wiper 2, Pin 3). Click pin 1 to place.";
+    }
+
+    [RelayCommand]
+    private void SetRegulator(string? spec)
+    {
+        if (string.IsNullOrWhiteSpace(spec))
+            return;
+
+        string[] parts = spec.Split('|');
+        NewPartValue = parts[0].Trim();
+        NewPartSymbol = parts.Length > 1 ? parts[1].Trim() : "Regulator_Linear/L7805";
+        BuilderHint = $"Regulator armed: {parts[0]} (TO-220: Pin 1-IN, 2-GND, 3-OUT). Click pin 1 to place.";
+    }
+
+    [RelayCommand]
+    private void SetBuzzer(string? spec)
+    {
+        if (string.IsNullOrWhiteSpace(spec))
+            return;
+
+        string[] parts = spec.Split('|');
+        NewPartValue = parts[0].Trim();
+        NewPartSymbol = parts.Length > 1 ? parts[1].Trim() : "Device/Buzzer";
+        BuilderHint = $"Buzzer armed: {parts[0]}. Lead 1 is Positive (+), Lead 2 is Negative (-). Click two tie points.";
+    }
+
+    [RelayCommand]
+    private void SetSensor(string? spec)
+    {
+        if (string.IsNullOrWhiteSpace(spec))
+            return;
+
+        string[] parts = spec.Split('|');
+        NewPartValue = parts[0].Trim();
+        NewPartSymbol = parts.Length > 1 ? parts[1].Trim() : "Sensor_Optical/LDR_GL5528";
+        if (parts.Length > 2 && int.TryParse(parts[2].Trim(), out int pins))
+        {
+            foreach (PinCountOption option in PinCountOptions)
+            {
+                if (option.Count == pins)
+                {
+                    SelectedPinCount = option;
+                    break;
+                }
+            }
+        }
+        BuilderHint = $"Sensor armed: {parts[0]}. Click tie point to place.";
+    }
+
+    [RelayCommand]
+    private void SetBattery(string? spec)
+    {
+        if (string.IsNullOrWhiteSpace(spec))
+            return;
+
+        string[] parts = spec.Split('|');
+        NewPartValue = parts[0].Trim();
+        NewPartSymbol = parts.Length > 1 ? parts[1].Trim() : "Device/Battery";
+        if (parts.Length > 2 && int.TryParse(parts[2].Trim(), out int pins))
+        {
+            foreach (PinCountOption option in PinCountOptions)
+            {
+                if (option.Count == pins)
+                {
+                    SelectedPinCount = option;
+                    break;
+                }
+            }
+        }
+        else
+        {
+            SelectedPinCount = PinCountOptions[0]; // 2-lead
+        }
+        BuilderHint = $"Battery armed: {parts[0]}. Lead 1 is Positive (+), Lead 2 is Negative (-). Click two tie points.";
+    }
+
+    // ---- AVOmeter (Digital Multimeter) Engine & Commands -------------------
+
+    partial void OnAvometerBlackHoleChanged(string value) => UpdateAvometerMeasurement();
+    partial void OnAvometerRedHoleChanged(string value) => UpdateAvometerMeasurement();
+    partial void OnAvometerModeChanged(string value) => UpdateAvometerMeasurement();
+    partial void OnIsAvometerActiveChanged(bool value)
+    {
+        _renderer.IsDmmProbesVisible = value;
+        UpdateAvometerMeasurement();
+    }
+
+    [RelayCommand]
+    private void SetAvometerMode(string? mode)
+    {
+        if (string.IsNullOrWhiteSpace(mode))
+            return;
+
+        AvometerMode = mode.Trim().ToUpperInvariant();
+        UpdateAvometerMeasurement();
+        BuilderHint = $"AVOmeter mode set to: {AvometerMode}";
+    }
+
+    [RelayCommand]
+    private void MeasurePowerRails()
+    {
+        AvometerBlackHole = "BOT_GND_1";
+        AvometerRedHole = "TOP_VCC_1";
+        AvometerMode = "V_DC";
+        UpdateAvometerMeasurement();
+        BuilderHint = "AVOmeter probes connected across main power rails (GND to VCC).";
+    }
+
+    [RelayCommand]
+    private void AttachAvometerToSelectedPart()
+    {
+        if (SelectedDraftPart is not { } row)
+        {
+            BuilderHint = "Select a placed part in PLACED PARTS first.";
+            return;
+        }
+
+        DraftPart p = row.Part;
+        if (p.Pins.Length >= 2)
+        {
+            AvometerBlackHole = p.Pin1HoleId;
+            AvometerRedHole = p.Pin2HoleId;
+            if (p.Kind == ComponentKind.Resistor)
+                AvometerMode = "OHMS";
+            else if (p.Kind is ComponentKind.Led or ComponentKind.Diode or ComponentKind.Battery)
+                AvometerMode = "V_DC";
+
+            UpdateAvometerMeasurement();
+            BuilderHint = $"AVOmeter probes attached to {p.KindLabel} #{p.TrackId} ({AvometerBlackHole} and {AvometerRedHole}).";
+        }
+    }
+
+    [RelayCommand]
+    private void SwapAvometerProbes()
+    {
+        string temp = AvometerBlackHole;
+        AvometerBlackHole = AvometerRedHole;
+        AvometerRedHole = temp;
+        UpdateAvometerMeasurement();
+        BuilderHint = $"Swapped AVOmeter probes: COM={AvometerBlackHole}, RED={AvometerRedHole}.";
+    }
+
+    [RelayCommand]
+    private void ClearAvometerProbes()
+    {
+        AvometerBlackHole = string.Empty;
+        AvometerRedHole = string.Empty;
+        _renderer.DmmBlackProbe = null;
+        _renderer.DmmRedProbe = null;
+        UpdateAvometerMeasurement();
+        BuilderHint = "AVOmeter probes removed from breadboard.";
+    }
+
+    public void UpdateAvometerMeasurement()
+    {
+        if (!IsAvometerActive)
+        {
+            _renderer.IsDmmProbesVisible = false;
+            return;
+        }
+
+        bool hasBlack = _draft.Matrix.TryGetHole(AvometerBlackHole, out HoleCoord blackHole);
+        bool hasRed = _draft.Matrix.TryGetHole(AvometerRedHole, out HoleCoord redHole);
+
+        _renderer.DmmBlackProbe = hasBlack ? blackHole : null;
+        _renderer.DmmRedProbe = hasRed ? redHole : null;
+        _renderer.IsDmmProbesVisible = true;
+
+        if (!hasBlack || !hasRed)
+        {
+            AvometerDisplayValue = " ----";
+            AvometerStatus = "OPEN PROBE (ATTACH LEADS)";
+            AvometerBarPercent = 0.0;
+            IsContinuityBeep = false;
+            return;
+        }
+
+        int blackStrip = blackHole.StripId;
+        int redStrip = redHole.StripId;
+        bool sameStrip = blackStrip == redStrip;
+
+        // Find connected components in Draft
+        DraftPart? directPart = null;
+        for (int i = 0; i < _draft.Parts.Count; i++)
+        {
+            DraftPart p = _draft.Parts[i];
+            if (p.Pins.Length < 2)
+                continue;
+
+            bool h1Ok = _draft.Matrix.TryGetHole(p.Pin1HoleId, out HoleCoord h1);
+            bool h2Ok = _draft.Matrix.TryGetHole(p.Pin2HoleId, out HoleCoord h2);
+            if (!h1Ok || !h2Ok)
+                continue;
+
+            int s1 = h1.StripId;
+            int s2 = h2.StripId;
+            if ((s1 == blackStrip && s2 == redStrip) || (s1 == redStrip && s2 == blackStrip))
+            {
+                directPart = p;
+                break;
+            }
+        }
+
+        // Determine physical battery / DC power supply status
+        bool hasBattery = false;
+        double batteryVoltage = 0.0;
+        int batteryPosStrip = -1;
+        int batteryNegStrip = -1;
+
+        for (int i = 0; i < _draft.Parts.Count; i++)
+        {
+            if (_draft.Parts[i].Kind == ComponentKind.Battery)
+            {
+                hasBattery = true;
+                string v = _draft.Parts[i].Value?.ToUpperInvariant() ?? string.Empty;
+                if (v.Contains("9V")) batteryVoltage = 9.0;
+                else if (v.Contains("6V")) batteryVoltage = 6.0;
+                else if (v.Contains("3.7V") || v.Contains("18650")) batteryVoltage = 3.7;
+                else if (v.Contains("3V") || v.Contains("CR2032")) batteryVoltage = 3.0;
+                else if (v.Contains("3.3V")) batteryVoltage = 3.3;
+                else if (v.Contains("MB102") || v.Contains("5V")) batteryVoltage = 5.0;
+                else batteryVoltage = 9.0;
+
+                DraftPart bp = _draft.Parts[i];
+                if (_draft.Matrix.TryGetHole(bp.Pin1HoleId, out HoleCoord bh1) &&
+                    _draft.Matrix.TryGetHole(bp.Pin2HoleId, out HoleCoord bh2))
+                {
+                    batteryPosStrip = bh1.StripId;
+                    batteryNegStrip = bh2.StripId;
+                }
+                break;
+            }
+        }
+
+        // Trace whether rails are energized by the battery or power source
+        bool railsEnergized = false;
+        double supplyVoltage = 0.0;
+
+        if (hasBattery && _coordinator is { } coord)
+        {
+            int batPosRoot = coord.GetRootNet(batteryPosStrip);
+            int batNegRoot = coord.GetRootNet(batteryNegStrip);
+
+            int topVccRoot = coord.GetRootNet(BreadboardSpec.StripTopVcc);
+            int topGndRoot = coord.GetRootNet(BreadboardSpec.StripTopGnd);
+            int botVccRoot = coord.GetRootNet(BreadboardSpec.StripBotVcc);
+            int botGndRoot = coord.GetRootNet(BreadboardSpec.StripBotGnd);
+
+            bool posConnectedToRail = batPosRoot == topVccRoot || batPosRoot == botVccRoot ||
+                                      batteryPosStrip is BreadboardSpec.StripTopVcc or BreadboardSpec.StripBotVcc;
+            bool negConnectedToRail = batNegRoot == topGndRoot || batNegRoot == botGndRoot ||
+                                      batteryNegStrip is BreadboardSpec.StripTopGnd or BreadboardSpec.StripBotGnd;
+
+            if (posConnectedToRail && negConnectedToRail)
+            {
+                railsEnergized = true;
+                supplyVoltage = batteryVoltage;
+            }
+        }
+
+        bool isBlackGnd = blackStrip is BreadboardSpec.StripTopGnd or BreadboardSpec.StripBotGnd;
+        bool isRedVcc = redStrip is BreadboardSpec.StripTopVcc or BreadboardSpec.StripBotVcc;
+        bool isRedGnd = redStrip is BreadboardSpec.StripTopGnd or BreadboardSpec.StripBotGnd;
+        bool isBlackVcc = blackStrip is BreadboardSpec.StripTopVcc or BreadboardSpec.StripBotVcc;
+
+        switch (AvometerMode)
+        {
+            case "V_DC":
+                AvometerUnit = "V DC";
+                if (sameStrip)
+                {
+                    AvometerDisplayValue = " 0.000";
+                    AvometerStatus = "EQUIPOTENTIAL NET (0.000 V)";
+                    AvometerBarPercent = 0.0;
+                    AvometerSecondaryReading = "0.000V DC · Same Strip";
+                }
+                else if (isBlackGnd && isRedVcc)
+                {
+                    if (!railsEnergized)
+                    {
+                        AvometerDisplayValue = " 0.000";
+                        AvometerStatus = "UNPOWERED RAILS (NO BATTERY CONNECTED)";
+                        AvometerBarPercent = 0.0;
+                        AvometerSecondaryReading = "0.000V DC · Connect battery to power rails";
+                    }
+                    else
+                    {
+                        AvometerDisplayValue = $"{supplyVoltage,6:0.000}";
+                        AvometerStatus = $"MAIN POWER RAIL ({supplyVoltage:0.0}V)";
+                        AvometerBarPercent = Math.Clamp(supplyVoltage / 12.0 * 100.0, 5.0, 95.0);
+                        AvometerSecondaryReading = $"MAX {supplyVoltage:0.000}V · MIN {supplyVoltage - 0.002:0.000}V";
+                    }
+                }
+                else if (isBlackVcc && isRedGnd)
+                {
+                    if (!railsEnergized)
+                    {
+                        AvometerDisplayValue = " 0.000";
+                        AvometerStatus = "UNPOWERED RAILS (NO BATTERY CONNECTED)";
+                        AvometerBarPercent = 0.0;
+                        AvometerSecondaryReading = "0.000V DC · Connect battery to power rails";
+                    }
+                    else
+                    {
+                        AvometerDisplayValue = $"{-supplyVoltage,6:0.000}";
+                        AvometerStatus = "REVERSE POLARITY (-V)";
+                        AvometerBarPercent = 0.0;
+                        AvometerSecondaryReading = "REVERSE LEAD CONNECTION";
+                    }
+                }
+                else if (directPart is { } dp)
+                {
+                    string dpVal = dp.Value?.ToUpperInvariant() ?? string.Empty;
+                    if (dp.Kind == ComponentKind.Battery)
+                    {
+                        bool isRedOnPos = redHole.HoleId == dp.Pin1HoleId;
+                        double measuredBat = isRedOnPos ? batteryVoltage : -batteryVoltage;
+                        AvometerDisplayValue = $"{measuredBat,6:0.000}";
+                        AvometerStatus = isRedOnPos ? $"BATTERY TERMINAL VOLTAGE ({dp.Value})" : "BATTERY REVERSE POLARITY (-V)";
+                        AvometerBarPercent = Math.Clamp(batteryVoltage / 12.0 * 100.0, 5.0, 95.0);
+                        AvometerSecondaryReading = $"{batteryVoltage:0.000}V DC Open Circuit";
+                    }
+                    else if (dp.Kind == ComponentKind.Led)
+                    {
+                        double vf = dpVal.Contains("BLU") ? 3.12 : (dpVal.Contains("GRN") ? 2.15 : 1.98);
+                        AvometerDisplayValue = $"{vf,6:0.000}";
+                        AvometerStatus = $"LED FORWARD VOLTAGE ({dp.Value})";
+                        AvometerBarPercent = (vf / 5.0) * 100.0;
+                        AvometerSecondaryReading = $"Vf = {vf:0.000}V · Silicon Junction";
+                    }
+                    else if (dp.Kind == ComponentKind.Diode)
+                    {
+                        double vf = dpVal.Contains("5819") ? 0.380 : 0.685;
+                        AvometerDisplayValue = $"{vf,6:0.000}";
+                        AvometerStatus = $"DIODE FORWARD DROP ({dp.Value})";
+                        AvometerBarPercent = (vf / 5.0) * 100.0;
+                        AvometerSecondaryReading = $"Vf = {vf:0.000}V · Silicon Junction";
+                    }
+                    else if (dp.Kind == ComponentKind.Resistor)
+                    {
+                        if (!railsEnergized)
+                        {
+                            AvometerDisplayValue = " 0.000";
+                            AvometerStatus = "UNPOWERED RESISTOR (0.000 V)";
+                            AvometerBarPercent = 0.0;
+                            AvometerSecondaryReading = "0.000V DC · Circuit Unpowered";
+                        }
+                        else
+                        {
+                            double vDrop = supplyVoltage * 0.5;
+                            AvometerDisplayValue = $"{vDrop,6:0.000}";
+                            AvometerStatus = $"RESISTOR DROP ({dp.Value})";
+                            AvometerBarPercent = (vDrop / supplyVoltage) * 100.0;
+                            AvometerSecondaryReading = $"ΔV = {vDrop:0.000}V across {dp.Value}";
+                        }
+                    }
+                    else
+                    {
+                        AvometerDisplayValue = " 0.000";
+                        AvometerStatus = "UNPOWERED / PASSIVE";
+                        AvometerBarPercent = 0.0;
+                        AvometerSecondaryReading = "0.000V DC · Hi-Z";
+                    }
+                }
+                else
+                {
+                    AvometerDisplayValue = " 0.000";
+                    AvometerStatus = "FLOATING / UNPOWERED";
+                    AvometerBarPercent = 0.0;
+                    AvometerSecondaryReading = "0.000V DC · Hi-Z";
+                }
+                IsContinuityBeep = false;
+                break;
+
+            case "OHMS":
+                if (sameStrip)
+                {
+                    AvometerDisplayValue = "  0.02";
+                    AvometerUnit = "Ω";
+                    AvometerStatus = "SHORT / DIRECT STRIP";
+                    AvometerBarPercent = 1.0;
+                    AvometerSecondaryReading = "LEAD RESISTANCE: 0.02 Ω";
+                }
+                else if (directPart is { } rp && rp.Kind == ComponentKind.Resistor && ResistorColorCode.TryParseOhms(rp.Value, out double ohms))
+                {
+                    FormatResistance(ohms);
+                    AvometerStatus = $"RESISTOR NOMINAL: {rp.Value}";
+                    AvometerSecondaryReading = $"Tolerance ±5% · {rp.Value}";
+                }
+                else if (directPart is { } jp && jp.Kind == ComponentKind.JumperWire)
+                {
+                    AvometerDisplayValue = "  0.04";
+                    AvometerUnit = "Ω";
+                    AvometerStatus = "JUMPER WIRE CONTINUITY";
+                    AvometerBarPercent = 1.0;
+                    AvometerSecondaryReading = "WIRE RESISTANCE: 0.04 Ω";
+                }
+                else
+                {
+                    AvometerDisplayValue = "   O.L";
+                    AvometerUnit = "MΩ";
+                    AvometerStatus = "OPEN CIRCUIT / HIGH-Z";
+                    AvometerBarPercent = 100.0;
+                    AvometerSecondaryReading = "> 40.00 MΩ (OPEN)";
+                }
+                IsContinuityBeep = false;
+                break;
+
+            case "CONT":
+                AvometerUnit = "Ω";
+                if (sameStrip || (directPart is { } cp && cp.Kind == ComponentKind.JumperWire))
+                {
+                    AvometerDisplayValue = "  0.02";
+                    AvometerStatus = "CONTINUITY BEEP (< 10 Ω)";
+                    AvometerBarPercent = 1.0;
+                    AvometerSecondaryReading = "BUZZER ACTIVE · SHORT CIRCUIT";
+                    IsContinuityBeep = true;
+                }
+                else if (directPart is { } rcp && rcp.Kind == ComponentKind.Resistor && ResistorColorCode.TryParseOhms(rcp.Value, out double rOhms) && rOhms < 10.0)
+                {
+                    AvometerDisplayValue = $"{rOhms,6:0.00}";
+                    AvometerStatus = "CONTINUITY BEEP (< 10 Ω)";
+                    AvometerBarPercent = 2.0;
+                    AvometerSecondaryReading = $"LOW RESISTANCE: {rOhms:0.00} Ω";
+                    IsContinuityBeep = true;
+                }
+                else
+                {
+                    AvometerDisplayValue = "   O.L";
+                    AvometerStatus = "OPEN (NO CONTINUITY)";
+                    AvometerBarPercent = 100.0;
+                    AvometerSecondaryReading = "THRESHOLD: < 10 Ω";
+                    IsContinuityBeep = false;
+                }
+                break;
+
+            case "I_MA":
+                AvometerUnit = "mA DC";
+                if ((isBlackGnd && isRedVcc) || (isBlackVcc && isRedGnd))
+                {
+                    if (!railsEnergized)
+                    {
+                        AvometerDisplayValue = "  0.00";
+                        AvometerStatus = "NO CURRENT (CIRCUIT UNPOWERED)";
+                        AvometerBarPercent = 0.0;
+                        AvometerSecondaryReading = "0.00 mA DC · No active power source";
+                    }
+                    else
+                    {
+                        int partCount = _draft.Parts.Count;
+                        double currentMa = Math.Max(12.5, partCount * 8.4);
+                        AvometerDisplayValue = $"{currentMa,6:0.00}";
+                        AvometerStatus = "CIRCUIT LOAD CURRENT";
+                        AvometerBarPercent = Math.Clamp(currentMa / 50.0 * 100.0, 5.0, 95.0);
+                        AvometerSecondaryReading = $"I_LOAD = {currentMa:0.00} mA";
+                    }
+                }
+                else
+                {
+                    AvometerDisplayValue = "  0.00";
+                    AvometerStatus = "SERIES CURRENT LOOP OPEN";
+                    AvometerBarPercent = 0.0;
+                    AvometerSecondaryReading = "Connect in series with circuit";
+                }
+                IsContinuityBeep = false;
+                break;
+        }
+    }
+
+    private void FormatResistance(double ohms)
+    {
+        if (ohms < 1000.0)
+        {
+            AvometerDisplayValue = $"{ohms,6:0.0}";
+            AvometerUnit = "Ω";
+            AvometerBarPercent = Math.Clamp(ohms / 1000.0 * 33.0, 1.0, 33.0);
+        }
+        else if (ohms < 1_000_000.0)
+        {
+            AvometerDisplayValue = $"{ohms / 1000.0,6:0.00}";
+            AvometerUnit = "kΩ";
+            AvometerBarPercent = Math.Clamp(33.0 + (ohms / 100000.0) * 33.0, 34.0, 66.0);
+        }
+        else
+        {
+            AvometerDisplayValue = $"{ohms / 1_000_000.0,6:0.00}";
+            AvometerUnit = "MΩ";
+            AvometerBarPercent = Math.Clamp(66.0 + (ohms / 10_000_000.0) * 33.0, 67.0, 99.0);
+        }
+    }
+
+    private void UpdateResistorBandPreview()
+    {
+        Span<int> bands = stackalloc int[4];
+        if (ResistorColorCode.TryDecodeBands(NewPartValue, bands))
+        {
+            int b0 = Math.Clamp(bands[0], 0, ResistorColorCode.BandHexColors.Length - 1);
+            int b1 = Math.Clamp(bands[1], 0, ResistorColorCode.BandHexColors.Length - 1);
+            int b2 = Math.Clamp(bands[2], 0, ResistorColorCode.BandHexColors.Length - 1);
+            int b3 = Math.Clamp(bands[3], 0, ResistorColorCode.BandHexColors.Length - 1);
+
+            ResistorBand1Color = ResistorColorCode.BandHexColors[b0];
+            ResistorBand2Color = ResistorColorCode.BandHexColors[b1];
+            ResistorBand3Color = ResistorColorCode.BandHexColors[b2];
+            ResistorBand4Color = ResistorColorCode.BandHexColors[b3];
+            ResistorBandDescription = $"{NewPartValue} Ω  ({ResistorColorCode.BandColorNames[b0]} · {ResistorColorCode.BandColorNames[b1]} · {ResistorColorCode.BandColorNames[b2]} · {ResistorColorCode.BandColorNames[b3]})";
+        }
+        else
+        {
+            ResistorBand1Color = ResistorColorCode.BandHexColors[2];
+            ResistorBand2Color = ResistorColorCode.BandHexColors[2];
+            ResistorBand3Color = ResistorColorCode.BandHexColors[1];
+            ResistorBand4Color = ResistorColorCode.BandHexColors[10];
+            ResistorBandDescription = "220 Ω  (Default: Red · Red · Brown · Gold ±5%)";
+        }
+    }
+
     partial void OnSelectedDraftPartChanged(DraftPartRow? value)
     {
-        EditPartValue = value?.Part.Value ?? string.Empty;
-        EditPartSymbol = value?.Part.SymbolId ?? string.Empty;
+        _renderer.SelectedTrackId = value?.Part.TrackId;
+        _isSyncingPartValue = true;
+        try
+        {
+            EditPartValue = value?.Part.Value ?? string.Empty;
+            EditPartSymbol = value?.Part.SymbolId ?? string.Empty;
+
+            if (value is not null)
+            {
+                foreach (var opt in BuildPartOptions)
+                {
+                    if (opt.Kind == value.Part.Kind)
+                    {
+                        SelectedPartOption = opt;
+                        break;
+                    }
+                }
+
+                NewPartValue = value.Part.Value ?? string.Empty;
+                if (value.Part.Kind == ComponentKind.Resistor)
+                {
+                    UpdateResistorBandPreview();
+                }
+            }
+        }
+        finally
+        {
+            _isSyncingPartValue = false;
+        }
+    }
+
+    partial void OnEditPartValueChanged(string value)
+    {
+        if (_isSyncingPartValue || _disposed)
+            return;
+
+        if (SelectedDraftPart is { } row)
+        {
+            string trimmed = value?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(trimmed) && !string.Equals(row.Part.Value, trimmed, StringComparison.OrdinalIgnoreCase))
+            {
+                _draft.TrySetValue(row.Part.TrackId, trimmed);
+                CommitDraft(row.Part.TrackId);
+                if (row.Part.Kind == ComponentKind.Resistor)
+                {
+                    _isSyncingPartValue = true;
+                    try
+                    {
+                        NewPartValue = trimmed;
+                        UpdateResistorBandPreview();
+                    }
+                    finally
+                    {
+                        _isSyncingPartValue = false;
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -2629,12 +3589,6 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             _coordinator.IsRuleBasedAdviceEnabled = value;
     }
 
-    partial void OnSpeakRuleBasedAdviceChanged(bool value)
-    {
-        if (_coordinator is not null)
-            _coordinator.SpeakRuleBasedAdvice = value;
-    }
-
     partial void OnUseColabAiChanged(bool value)
     {
         if (value)
@@ -2687,6 +3641,139 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         RemoteRouteLabel = coordinator.UsingRemoteTutor
             ? (_appliedRemoteTarget is null ? "TUTOR ROUTE: REMOTE" : DescribeRoute(_appliedRemoteTarget))
             : "TUTOR ROUTE: LOCAL";
+
+        UpdateComputeAllocationTelemetry(coordinator);
+    }
+
+    private void UpdateComputeAllocationTelemetry(InspectionPipelineCoordinator coordinator)
+    {
+        CpuAffinityManager.ReportProcessor(AffinityRole.DrcUi);
+        var plan = CpuAffinityManager.Plan;
+        CpuPlanHeadline = plan.IsTargetWorkstation
+            ? $"CPU · TARGET HYBRID · {plan.LogicalProcessorCount} LOGICAL PROCESSORS"
+            : $"CPU · PORTABLE ARCHITECTURE · {plan.LogicalProcessorCount} LOGICAL PROCESSORS";
+
+        var aiStatus = CpuAffinityManager.GetRoleStatus(AffinityRole.Ai);
+        var visStatus = CpuAffinityManager.GetRoleStatus(AffinityRole.Vision);
+        var uiStatus = CpuAffinityManager.GetRoleStatus(AffinityRole.DrcUi);
+
+        string aiCores = CpuAffinityManager.DescribeMaskCores(plan.AiMask);
+        string visCores = CpuAffinityManager.DescribeMaskCores(plan.VisionMask);
+        string uiCores = CpuAffinityManager.DescribeMaskCores(plan.DrcUiMask);
+
+        var rows = new[]
+        {
+            new ComputeAllocationRow(
+                Role: "AI",
+                Cores: aiCores,
+                Work: "AI TUTOR + NEURAL TTS",
+                Mask: $"0x{plan.AiMask:X}",
+                State: aiStatus.Pinned ? "PINNED" : (aiStatus.Win32Error != 0 ? "FAILED" : "ACTIVE"),
+                IsPinned: aiStatus.Pinned,
+                CurrentCore: aiStatus.LastProcessorIndex >= 0 ? $"CORE {aiStatus.LastProcessorIndex}" : "--"),
+
+            new ComputeAllocationRow(
+                Role: "VISION",
+                Cores: visCores,
+                Work: "60 FPS CAM + HOMOGRAPHY + YOLO",
+                Mask: $"0x{plan.VisionMask:X}",
+                State: visStatus.Pinned ? "PINNED" : (visStatus.Win32Error != 0 ? "FAILED" : "ACTIVE"),
+                IsPinned: visStatus.Pinned,
+                CurrentCore: visStatus.LastProcessorIndex >= 0 ? $"CORE {visStatus.LastProcessorIndex}" : "--"),
+
+            new ComputeAllocationRow(
+                Role: "DRC/UI",
+                Cores: uiCores,
+                Work: "KiCad DRC + SKIASHARP CAD UI",
+                Mask: $"0x{plan.DrcUiMask:X}",
+                State: uiStatus.Pinned ? "PINNED" : (uiStatus.Win32Error != 0 ? "FAILED" : "ACTIVE"),
+                IsPinned: uiStatus.Pinned,
+                CurrentCore: uiStatus.LastProcessorIndex >= 0 ? $"CORE {uiStatus.LastProcessorIndex}" : "--")
+        };
+
+        if (ComputeAllocation.Count != rows.Length)
+        {
+            ComputeAllocation.Clear();
+            foreach (var r in rows)
+                ComputeAllocation.Add(r);
+        }
+        else
+        {
+            for (int i = 0; i < rows.Length; i++)
+            {
+                if (ComputeAllocation[i] != rows[i])
+                    ComputeAllocation[i] = rows[i];
+            }
+        }
+
+        string gpuName = coordinator.GpuDeviceName;
+        VramSnapshot vram = coordinator.GetVramSnapshot();
+        string gpuTotal = vram.IsRealGpu
+            ? string.Create(CultureInfo.InvariantCulture, $"{vram.TotalGigabytes:0.#} GB")
+            : "VRAM UNKNOWN";
+        GpuPlanHeadline = $"GPU · {gpuName} · {gpuTotal}";
+
+        string tutorLine = (_coordinator?.UsingRemoteTutor ?? false)
+            ? "Tutor model (remote)         0 MB  [NO LOCAL WEIGHTS]"
+            : string.Create(
+                CultureInfo.InvariantCulture,
+                $"Tutor model (llama-server) {VramBudgetMonitor.Rtx3060QwenMoEBudgetBytes / VramBudgetMonitor.Megabyte,4:N0} MB  [LOCAL MoE PROFILE]");
+
+        GpuAllocationText =
+            "YOLOv11s-Pose (FP16)      450 MB  [TensorRT / CUDA]\n" +
+            tutorLine + "\n" +
+            "SkiaSharp SwapChain       350 MB  [DirectX / OpenGL]\n" +
+            "Workstation OS Reserve    600 MB  [Display Buffer]\n" +
+            $"Live Telemetry:          {coordinator.VramStatus}";
+
+        HardwareAllocationSummary =
+            $"CPU: AI {aiCores} · VIS {visCores} · UI {uiCores}  |  GPU: {coordinator.VramStatus}";
+    }
+
+    /// <summary>
+    /// Polls the active Qwen endpoint so the command-bar light is green only when
+    /// the tutor is genuinely reachable. A failed probe never interrupts the
+    /// workstation: the light simply turns gray until the next successful check.
+    /// </summary>
+    private async Task RefreshQwenConnectionAsync()
+    {
+        if (_disposed || Interlocked.Exchange(ref _qwenProbeBusy, 1) != 0)
+            return;
+
+        try
+        {
+            QwenMoEService? qwen = _coordinator?.QwenService;
+            if (qwen is null)
+            {
+                IsQwenConnected = false;
+                QwenConnectionLabel = "TUTOR OFF";
+                return;
+            }
+
+            bool connected;
+            try
+            {
+                connected = await qwen.ProbeConnectionAsync().ConfigureAwait(true);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                connected = false;
+            }
+
+            if (_disposed)
+                return;
+
+            IsQwenConnected = connected;
+            QwenConnectionLabel = connected ? "QWEN ONLINE" : "QWEN OFFLINE";
+        }
+        finally
+        {
+            Volatile.Write(ref _qwenProbeBusy, 0);
+        }
     }
 
     private void FlushTranscript()
@@ -2728,6 +3815,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         _disposed = true;
         _telemetryTimer.Stop();
         _remoteTimer.Stop();
+        _qwenProbeTimer.Stop();
         _renderer.HoverChanged -= OnRendererHoverChanged;
 
         InspectionPipelineCoordinator? coordinator = _coordinator;
@@ -2755,6 +3843,9 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
 
             coordinator.Dispose();
         }
+
+        _aiVisionWindow?.Close();
+        _aiVisionWindow = null;
 
         _renderer.Dispose();
 

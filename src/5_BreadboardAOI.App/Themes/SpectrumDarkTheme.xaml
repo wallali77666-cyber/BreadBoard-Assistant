@@ -11,7 +11,10 @@
     <Color x:Key="ToolbarSurfaceColor">#252526</Color>
     <Color x:Key="PanelBorderColor">#333337</Color>
     <Color x:Key="AccentBlueColor">#007ACC</Color>
+    <Color x:Key="AccentCyanColor">#00BCD4</Color>
+    <Color x:Key="BorderSubtleColor">#30363D</Color>
     <Color x:Key="DrcPassColor">#2D9D78</Color>
+    <Color x:Key="LedOnlineColor">#10B981</Color>
     <Color x:Key="DrcWarningColor">#E68619</Color>
     <Color x:Key="DrcCriticalColor">#D7373F</Color>
 
@@ -20,7 +23,11 @@
     <SolidColorBrush x:Key="ToolbarSurfaceBrush" Color="{StaticResource ToolbarSurfaceColor}" />
     <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource PanelBorderColor}" />
     <SolidColorBrush x:Key="AccentBlueBrush" Color="{StaticResource AccentBlueColor}" />
+    <SolidColorBrush x:Key="AccentCyanBrush" Color="{StaticResource AccentCyanColor}" />
+    <SolidColorBrush x:Key="BorderSubtleBrush" Color="{StaticResource BorderSubtleColor}" />
     <SolidColorBrush x:Key="DrcPassBrush" Color="{StaticResource DrcPassColor}" />
+    <SolidColorBrush x:Key="LedOnlineBrush" Color="{StaticResource LedOnlineColor}" />
+    <SolidColorBrush x:Key="LedOnlineGlowBrush" Color="#4D10B981" />
     <SolidColorBrush x:Key="DrcWarningBrush" Color="{StaticResource DrcWarningColor}" />
     <SolidColorBrush x:Key="DrcCriticalBrush" Color="{StaticResource DrcCriticalColor}" />
 
@@ -518,13 +525,14 @@
     <!-- Flat workstation drop-down. Used by the builder and the import dialogs. -->
     <Style x:Key="DockComboBoxStyle" TargetType="{x:Type ComboBox}">
         <Setter Property="Background" Value="{StaticResource EditorBackgroundBrush}" />
-        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+        <Setter Property="Foreground" Value="#38A8FF" />
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="Padding" Value="5,2" />
         <Setter Property="Margin" Value="0,0,0,4" />
         <Setter Property="FontFamily" Value="{StaticResource UiFontFamily}" />
         <Setter Property="FontSize" Value="10" />
+        <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="MinHeight" Value="22" />
         <Setter Property="HorizontalContentAlignment" Value="Left" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -547,9 +555,11 @@
                                 <ControlTemplate.Triggers>
                                     <Trigger Property="IsHighlighted" Value="True">
                                         <Setter TargetName="Row" Property="Background" Value="{StaticResource AccentBlueBrush}" />
+                                        <Setter Property="Foreground" Value="#FFFFFF" />
                                     </Trigger>
                                     <Trigger Property="IsSelected" Value="True">
                                         <Setter TargetName="Row" Property="Background" Value="{StaticResource ButtonPressedBrush}" />
+                                        <Setter Property="Foreground" Value="#38A8FF" />
                                     </Trigger>
                                 </ControlTemplate.Triggers>
                             </ControlTemplate>
@@ -565,6 +575,7 @@
                         <ToggleButton x:Name="Toggle"
                                       Focusable="False"
                                       ClickMode="Press"
+                                      Foreground="{TemplateBinding Foreground}"
                                       IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
                             <ToggleButton.Template>
                                 <ControlTemplate TargetType="{x:Type ToggleButton}">
@@ -572,11 +583,13 @@
                                             Background="{Binding Background, RelativeSource={RelativeSource AncestorType={x:Type ComboBox}}}"
                                             BorderBrush="{Binding BorderBrush, RelativeSource={RelativeSource AncestorType={x:Type ComboBox}}}"
                                             BorderThickness="{Binding BorderThickness, RelativeSource={RelativeSource AncestorType={x:Type ComboBox}}}"
-                                            SnapsToDevicePixels="True">
+                                            SnapsToDevicePixels="True"
+                                            TextElement.Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type ComboBox}}}">
                                         <Grid>
                                             <ContentPresenter Margin="{Binding Padding, RelativeSource={RelativeSource AncestorType={x:Type ComboBox}}}"
                                                               VerticalAlignment="Center"
                                                               HorizontalAlignment="Left"
+                                                              TextElement.Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type ComboBox}}}"
                                                               Content="{Binding SelectionBoxItem, RelativeSource={RelativeSource AncestorType={x:Type ComboBox}}}"
                                                               ContentTemplate="{Binding SelectionBoxItemTemplate, RelativeSource={RelativeSource AncestorType={x:Type ComboBox}}}"
                                                               ContentStringFormat="{Binding SelectionBoxItemStringFormat, RelativeSource={RelativeSource AncestorType={x:Type ComboBox}}}" />
@@ -584,12 +597,13 @@
                                                   VerticalAlignment="Center"
                                                   Margin="0,0,6,0"
                                                   Data="M 0 0 L 4 4 L 8 0 Z"
-                                                  Fill="{StaticResource TextSecondaryBrush}" />
+                                                  Fill="#38A8FF" />
                                         </Grid>
                                     </Border>
                                     <ControlTemplate.Triggers>
                                         <Trigger Property="IsMouseOver" Value="True">
                                             <Setter TargetName="Chrome" Property="Background" Value="{StaticResource ButtonHoverBrush}" />
+                                            <Setter TargetName="Chrome" Property="BorderBrush" Value="#38A8FF" />
                                         </Trigger>
                                         <Trigger Property="IsChecked" Value="True">
                                             <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource AccentBlueBrush}" />

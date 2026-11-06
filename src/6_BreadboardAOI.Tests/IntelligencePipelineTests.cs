@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Threading.Tasks;
@@ -35,18 +35,39 @@ public sealed class IntelligencePipelineTests
     }
 
     [Fact]
-    public void Prompt_contains_hole_labels_violation_code_and_three_sentence_rule()
+    public void Voice_is_allowed_only_for_a_server_answer()
+    {
+        QwenMoEService.ShouldSpeakAnswer(QwenResponseMode.Server, false, true, 3).Should().BeTrue();
+
+        // Rule-based / DRC text must never be synthesized.
+        QwenMoEService.ShouldSpeakAnswer(QwenResponseMode.RuleBasedFallback, false, true, 3).Should().BeFalse();
+
+        QwenMoEService.ShouldSpeakAnswer(QwenResponseMode.Server, true, true, 3).Should().BeFalse();
+        QwenMoEService.ShouldSpeakAnswer(QwenResponseMode.Server, false, false, 3).Should().BeFalse();
+        QwenMoEService.ShouldSpeakAnswer(QwenResponseMode.Server, false, true, 0).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Prompt_keeps_labels_for_a_text_only_fault_but_drops_the_json()
     {
         string prompt = DiagnosticPromptBuilder.Build(CreateSameStripPacket());
 
+        prompt.Should().Contain("no more than 5 sentences");
+        prompt.Should().Contain("name the error first");
         prompt.Should().Contain("ErcSameStripShort");
         prompt.Should().Contain("D15");
         prompt.Should().Contain("D16");
-        prompt.Should().Contain("three short spoken sentences");
-        prompt.Should().Contain("FIX: start with Move");
-        prompt.Should().Contain("from <hole> to <hole>, as it <reason>");
-        prompt.Should().Contain("WHY:");
-        prompt.Should().Contain("DRC_JSON");
+        prompt.Should().NotContain("DRC_JSON");
+        prompt.Should().NotContain("\"violations\"");
+    }
+
+    [Fact]
+    public void Prompt_with_an_image_sends_only_the_instruction()
+    {
+        DrcStatePacket packet = CreateSameStripPacket();
+        packet.FullBoardPngBytes = new byte[] { 1, 2, 3 };
+
+        DiagnosticPromptBuilder.Build(packet).Should().Be(DiagnosticPromptBuilder.TutorInstruction);
     }
 
     [Fact]

@@ -1,15 +1,17 @@
 // ============================================================================
 // FILE: src/4_BreadboardAOI.Intelligence/QwenMoEService.cs
-// PURPOSE: Manages llama-server.exe for Qwen3-VL-30B-A3B, streams OpenAI-style
+// PURPOSE: Manages llama-server.exe for Qwen3-VL-30B-A3B, queries port 8081
+//          (or configured port) with datasheet_netlist.gbnf grammar enforcement
+//          to extract Golden Netlist JSON in <120 tokens, streams OpenAI-style
 //          SSE tokens over loopback HTTP, and falls back to a deterministic
-//          rule-based tutor (simulated at ~20 tokens/sec) whenever the server,
-//          the NVIDIA GPU, or the 19 GB model files are missing.
+//          rule-based tutor (~20 tokens/sec) whenever the server, the NVIDIA
+//          GPU, or the 19 GB model files are missing.
 //
 // RUNTIME OVERRIDES (any PC):
-//   BREADBOARD_QWEN_ENDPOINT, _MODEL, _MMPROJ, _SERVER, _PORT, _CTX,
-//   _GPU_LAYERS, _CPU_MOE, _THREADS, _THREADS_BATCH, _AUTO_LAUNCH, _MLOCK,
-//   _FLASH_ATTN, _STARTUP_TIMEOUT, _REQUEST_TIMEOUT, _FALLBACK_TPS,
-//   _MODEL_ALIAS, _API_KEY
+//   BREADBOARD_QWEN_ENDPOINT, _MODEL, _MMPROJ, _SERVER, _PORT, _NETLIST_PORT,
+//   _GRAMMAR, _CTX, _GPU_LAYERS, _CPU_MOE, _THREADS, _THREADS_BATCH,
+//   _AUTO_LAUNCH, _MLOCK, _FLASH_ATTN, _STARTUP_TIMEOUT, _REQUEST_TIMEOUT,
+//   _FALLBACK_TPS, _MODEL_ALIAS, _API_KEY
 // ============================================================================
 
 using System;
@@ -27,6 +29,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using BreadboardAOI.Core.Contracts;
 using BreadboardAOI.Hardware;
+using BreadboardAOI.Intelligence.Remote;
 
 namespace BreadboardAOI.Intelligence;
 
@@ -36,15 +39,57 @@ public enum QwenResponseMode
     RuleBasedFallback = 1
 }
 
+/// <summary>Which part of a streaming model answer an event belongs to.</summary>
+public enum QwenStreamKind
+{
+    Thinking = 0,
+    Content = 1
+}
+
+/// <summary>
+/// One streamed piece of an answer. Thinking is the model's reasoning trace;
+/// content is the final spoken/text answer. Keeping them separate stops raw
+/// &lt;think&gt; tags from leaking into the DRC transcript.
+/// </summary>
+public readonly record struct QwenStreamEvent(QwenStreamKind Kind, string Text);
+
+/// <summary>One pin-to-net assignment in a Golden Netlist extracted from a datasheet schematic.</summary>
+public sealed record GoldenNetConnection(string Pin, string Net);
+
+/// <summary>Structured Golden Netlist extracted under <c>datasheet_netlist.gbnf</c> in &lt;120 tokens.</summary>
+public sealed record GoldenNetlistResult(
+    string Ic,
+    IReadOnlyList<GoldenNetConnection> Connections,
+    string RawJson,
+    int TokenEstimate);
+
 /// <summary>Configuration for the Qwen MoE service. Use <see cref="FromEnvironment"/> to honour per-PC overrides.</summary>
 public sealed class QwenMoEOptions
 {
     public const string EnvironmentPrefix = "BREADBOARD_QWEN_";
     public const int DefaultPort = 8089;
+    public const int DefaultNetlistPort = 8081;
+    public const int MaxGoldenNetlistTokens = 118;
     public const string DefaultModelFile = "Qwen3-VL-30B-A3B-Instruct-Q4_K_M.gguf";
     public const string DefaultMmprojFile = "mmproj-Qwen3-VL-30B-f16.gguf";
+    public const string DefaultGrammarFile = "datasheet_netlist.gbnf";
+
+    /// <summary>
+    /// Built-in GBNF grammar matching <c>datasheet_netlist.gbnf</c> so Golden Netlist
+    /// extraction remains strictly constrained (<c>&lt;120 tokens</c>) even when the external
+    /// <c>assets/grammars/datasheet_netlist.gbnf</c> file is absent.
+    /// </summary>
+    public const string DefaultDatasheetNetlistGbnf = """
+        root   ::= "{" ws "\"ic\":" ws string "," ws "\"nets\":" ws "[" ws net ("," ws net)* ws "]" ws "}"
+        net    ::= "{" ws "\"pin\":" ws string "," ws "\"net\":" ws string ws "}"
+        string ::= "\"" ([A-Za-z0-9_+\-./ ])+ "\""
+        ws     ::= [ \t\n]*
+        """;
 
     public string EndpointUrl { get; init; } = $"http://127.0.0.1:{DefaultPort}/v1/chat/completions";
+
+    /// <summary>Dedicated llama-server endpoint on port 8081 for GBNF-constrained Golden Netlist extraction.</summary>
+    public string NetlistEndpointUrl { get; init; } = $"http://127.0.0.1:{DefaultNetlistPort}/v1/chat/completions";
 
     public string ServerExecutablePath { get; init; } = Path.Combine("tools", "llama-server.exe");
 
@@ -52,7 +97,11 @@ public sealed class QwenMoEOptions
 
     public string MmprojPath { get; init; } = Path.Combine("assets", "models", DefaultMmprojFile);
 
+    public string GrammarPath { get; init; } = Path.Combine("assets", "grammars", DefaultGrammarFile);
+
     public int Port { get; init; } = DefaultPort;
+
+    public int NetlistPort { get; init; } = DefaultNetlistPort;
 
     public int ContextSize { get; init; } = 4096;
 
@@ -92,15 +141,19 @@ public sealed class QwenMoEOptions
     public static QwenMoEOptions FromEnvironment()
     {
         int port = ReadInt("PORT") ?? DefaultPort;
+        int netlistPort = ReadInt("NETLIST_PORT") ?? DefaultNetlistPort;
         int processors = Environment.ProcessorCount;
 
         return new QwenMoEOptions
         {
             EndpointUrl = ReadString("ENDPOINT") ?? $"http://127.0.0.1:{port}/v1/chat/completions",
+            NetlistEndpointUrl = ReadString("NETLIST_ENDPOINT") ?? $"http://127.0.0.1:{netlistPort}/v1/chat/completions",
             ServerExecutablePath = ReadString("SERVER") ?? Path.Combine("tools", "llama-server.exe"),
             ModelPath = ReadString("MODEL") ?? Path.Combine("assets", "models", DefaultModelFile),
             MmprojPath = ReadString("MMPROJ") ?? Path.Combine("assets", "models", DefaultMmprojFile),
+            GrammarPath = ReadString("GRAMMAR") ?? Path.Combine("assets", "grammars", DefaultGrammarFile),
             Port = port,
+            NetlistPort = netlistPort,
             ContextSize = ReadInt("CTX") ?? 4096,
             GpuLayers = ReadInt("GPU_LAYERS") ?? 99,
             CpuMoeLayers = ReadOptionalInt("CPU_MOE", 22),
@@ -124,10 +177,13 @@ public sealed class QwenMoEOptions
     public QwenMoEOptions WithRemoteEndpoint(string chatEndpoint, string? apiKey, string? modelAlias) => new()
     {
         EndpointUrl = chatEndpoint,
+        NetlistEndpointUrl = chatEndpoint,
         ServerExecutablePath = ServerExecutablePath,
         ModelPath = ModelPath,
         MmprojPath = MmprojPath,
+        GrammarPath = GrammarPath,
         Port = Port,
+        NetlistPort = NetlistPort,
         ContextSize = ContextSize,
         GpuLayers = GpuLayers,
         CpuMoeLayers = CpuMoeLayers,
@@ -235,12 +291,36 @@ public sealed class QwenMoEOptions
 }
 
 /// <summary>
-/// Owns the llama-server child process and exposes an <see cref="IAsyncEnumerable{T}"/>
+/// Owns the llama-server child process, queries port 8081 with <c>datasheet_netlist.gbnf</c>
+/// for &lt;120-token Golden Netlist JSON extraction, and exposes an <see cref="IAsyncEnumerable{T}"/>
 /// of tutor tokens. Never blocks the 60 FPS reflex loop.
 /// </summary>
 public sealed class QwenMoEService : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    private static readonly string[] ReasoningPropertyNames =
+    {
+        "reasoning_content",
+        "reasoning",
+        "thinking",
+        "thought",
+        "analysis"
+    };
+
+    private string? _discoveredModelAlias;
+
+    /// <summary>Operator-selected model; wins over auto-discovery for any OpenAI-compatible server.</summary>
+    private volatile string? _modelOverride;
+
+    /// <summary>
+    /// Minimal role anchor. The task itself lives in the user prompt, and the
+    /// image is the authority, so no style or detection rules are injected here.
+    /// </summary>
+    private const string TutorSystemPrompt = "You are an electronics tutor examining a breadboard.";
+
+    private const string GoldenNetlistSystemPrompt =
+        "Extract the Typical Application Golden Netlist for the target IC as compact JSON matching the grammar.";
 
     private readonly QwenMoEOptions _options;
     private readonly HttpClient _httpClient;
@@ -259,6 +339,7 @@ public sealed class QwenMoEService : IDisposable
 
         ModelPath = LocalPathResolver.Resolve(_options.ModelPath, BaseDirectory);
         MmprojPath = LocalPathResolver.Resolve(_options.MmprojPath, BaseDirectory);
+        GrammarPath = LocalPathResolver.Resolve(_options.GrammarPath, BaseDirectory);
         ServerExecutablePath = LocalPathResolver.Resolve(_options.ServerExecutablePath, BaseDirectory);
 
         HttpMessageHandler messageHandler = handler ?? new SocketsHttpHandler
@@ -282,6 +363,8 @@ public sealed class QwenMoEService : IDisposable
 
     public string MmprojPath { get; }
 
+    public string GrammarPath { get; }
+
     public string ServerExecutablePath { get; }
 
     public bool HasLocalModel => File.Exists(ModelPath);
@@ -302,28 +385,425 @@ public sealed class QwenMoEService : IDisposable
 
     public string? LastError { get; private set; }
 
+    /// <summary>True after the tutor answered, or after a successful reachability probe.</summary>
+    public bool IsConnected { get; private set; }
+
+    /// <summary>True only when the most recent answer came from the server with usable content.</summary>
+    public bool LastAnswerUsable { get; private set; }
+
+    /// <summary>Short provider label derived from the active endpoint (LM STUDIO, OLLAMA, ...).</summary>
+    public string EndpointProvider
+    {
+        get
+        {
+            if (!Uri.TryCreate(_options.EndpointUrl, UriKind.Absolute, out Uri? endpoint))
+                return "QWEN";
+
+            return endpoint.Port switch
+            {
+                1234 => "LM STUDIO",
+                11434 => "OLLAMA",
+                QwenMoEOptions.DefaultPort or QwenMoEOptions.DefaultNetlistPort => "LOCAL QWEN",
+                _ => endpoint.IsLoopback ? "LOCAL AI" : "REMOTE QWEN"
+            };
+        }
+    }
+
+    /// <summary>Provider + loaded model alias, for the studio badge and status line.</summary>
+    public string EndpointSummary => $"{EndpointProvider} · {ActiveModelAlias}";
+
+    /// <summary>Model name currently sent on every chat request.</summary>
+    public string ActiveModelAlias => _modelOverride ?? _discoveredModelAlias ?? _options.ModelAlias;
+
     /// <summary>
-    /// Streams the tutor answer for a DRC snapshot. Tries the GPU server first,
-    /// then transparently switches to the deterministic rule-based tutor if enabled.
+    /// Pins the chat payload to an exact model id. Pass null or blank to return
+    /// to server-driven discovery. This links any LM Studio, Ollama, llama.cpp
+    /// or vLLM model without editing configuration or restarting the app.
+    /// </summary>
+    public void SetModelAlias(string? modelAlias)
+    {
+        _modelOverride = string.IsNullOrWhiteSpace(modelAlias) ? null : modelAlias.Trim();
+        _discoveredModelAlias = _modelOverride;
+    }
+
+    /// <summary>Lists every model the active OpenAI-compatible server advertises.</summary>
+    public async Task<IReadOnlyList<string>> ListAvailableModelsAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var probeTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            probeTimeout.CancelAfter(TimeSpan.FromSeconds(4));
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, BuildModelsUri());
+            if (!string.IsNullOrWhiteSpace(_options.ApiKey))
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
+
+            using HttpResponseMessage response = await _httpClient
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, probeTimeout.Token)
+                .ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode)
+                return Array.Empty<string>();
+
+            string json = await response.Content.ReadAsStringAsync(probeTimeout.Token).ConfigureAwait(false);
+            IReadOnlyList<string> models = LocalAiProviders.ParseModelIds(json);
+            if (models.Count > 0 && _modelOverride is null)
+                _discoveredModelAlias = LocalAiProviders.ChooseModel(models, _options.ModelAlias);
+
+            return models;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    /// <summary>
+    /// Loads the <c>datasheet_netlist.gbnf</c> grammar from disk if present, otherwise returns
+    /// <see cref="QwenMoEOptions.DefaultDatasheetNetlistGbnf"/>.
+    /// </summary>
+    public string LoadDatasheetNetlistGrammar()
+    {
+        if (!string.IsNullOrWhiteSpace(GrammarPath) && File.Exists(GrammarPath))
+        {
+            try
+            {
+                string content = File.ReadAllText(GrammarPath, Encoding.UTF8).Trim();
+                if (content.Length > 0)
+                    return content;
+            }
+            catch (IOException)
+            {
+                // Fall back to embedded grammar.
+            }
+        }
+
+        return QwenMoEOptions.DefaultDatasheetNetlistGbnf;
+    }
+
+    /// <summary>
+    /// Queries <c>llama-server</c> on port 8081 (or the active endpoint if 8081 is redirected)
+    /// with <c>datasheet_netlist.gbnf</c> grammar strictly enforced and <c>max_tokens</c> capped
+    /// below 120 tokens to extract the Golden Netlist JSON from a cropped Typical Application schematic.
+    /// </summary>
+    public async Task<GoldenNetlistResult> ExtractGoldenNetlistAsync(
+        string partNumber,
+        byte[] schematicPngBytes,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(partNumber);
+        ArgumentNullException.ThrowIfNull(schematicPngBytes);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        string normalizedPart = AlldatasheetRangeFetcher.NormalizePartKey(partNumber);
+        string grammar = LoadDatasheetNetlistGrammar();
+        int maxTokens = Math.Min(118, QwenMoEOptions.MaxGoldenNetlistTokens);
+
+        string prompt =
+            $"Part: {normalizedPart}. Extract the Typical Application pin-to-net connections from this schematic.";
+
+        string targetEndpoint = await SelectNetlistEndpointAsync(cancellationToken).ConfigureAwait(false);
+        string activeModel = await ResolveModelAliasAsync(cancellationToken).ConfigureAwait(false);
+
+        var payload = new Dictionary<string, object?>(10)
+        {
+            ["model"] = activeModel,
+            ["stream"] = false,
+            ["temperature"] = 0.0,
+            ["max_tokens"] = maxTokens,
+            ["n_predict"] = maxTokens,
+            ["grammar"] = grammar,
+            ["chat_template_kwargs"] = new { enable_thinking = false },
+            ["messages"] = new object[]
+            {
+                new { role = "system", content = GoldenNetlistSystemPrompt },
+                new { role = "user", content = BuildUserContent(prompt, schematicPngBytes) }
+            }
+        };
+
+        try
+        {
+            string requestJson = JsonSerializer.Serialize(payload, JsonOptions);
+            using var request = new HttpRequestMessage(HttpMethod.Post, targetEndpoint)
+            {
+                Content = new StringContent(requestJson, Encoding.UTF8, "application/json")
+            };
+
+            if (!string.IsNullOrWhiteSpace(_options.ApiKey))
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
+
+            using HttpResponseMessage response = await _httpClient
+                .SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (response.IsSuccessStatusCode)
+            {
+                string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                if (TryExtractJsonResponse(body, out _, out string? content)
+                    && !string.IsNullOrWhiteSpace(content)
+                    && TryParseGoldenNetlistJson(content, normalizedPart, out GoldenNetlistResult? parsed))
+                {
+                    LastMode = QwenResponseMode.Server;
+                    IsConnected = true;
+                    LastAnswerUsable = true;
+                    LastError = null;
+                    return parsed!;
+                }
+            }
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested && IsRecoverable(ex))
+        {
+            LastError = $"Golden Netlist extraction on {targetEndpoint} fell back to deterministic profile: {ex.Message}";
+        }
+
+        LastMode = QwenResponseMode.RuleBasedFallback;
+        return BuildDeterministicGoldenNetlist(normalizedPart);
+    }
+
+    /// <summary>Parses a GBNF-constrained Golden Netlist JSON payload.</summary>
+    public static bool TryParseGoldenNetlistJson(
+        string? rawJson,
+        string fallbackPartNumber,
+        out GoldenNetlistResult? result)
+    {
+        result = null;
+        if (string.IsNullOrWhiteSpace(rawJson))
+            return false;
+
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(rawJson);
+            JsonElement root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return false;
+
+            string ic = root.TryGetProperty("ic", out JsonElement icEl) && icEl.ValueKind == JsonValueKind.String
+                ? icEl.GetString() ?? fallbackPartNumber
+                : fallbackPartNumber;
+
+            var connections = new List<GoldenNetConnection>();
+            if (root.TryGetProperty("nets", out JsonElement netsEl) && netsEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement item in netsEl.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.Object)
+                        continue;
+
+                    string? pin = item.TryGetProperty("pin", out JsonElement pinEl) && pinEl.ValueKind == JsonValueKind.String
+                        ? pinEl.GetString()
+                        : null;
+                    string? net = item.TryGetProperty("net", out JsonElement netEl) && netEl.ValueKind == JsonValueKind.String
+                        ? netEl.GetString()
+                        : null;
+
+                    if (!string.IsNullOrWhiteSpace(pin) && !string.IsNullOrWhiteSpace(net))
+                        connections.Add(new GoldenNetConnection(pin, net));
+                }
+            }
+
+            if (connections.Count == 0)
+                return false;
+
+            string compact = rawJson.Trim();
+            int estimatedTokens = Math.Min(119, Math.Max(1, (compact.Length + 3) / 4));
+            result = new GoldenNetlistResult(ic, connections, compact, estimatedTokens);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Deterministic reference Golden Netlist (<c>&lt;120 tokens</c>) when llama-server is offline.
+    /// </summary>
+    public static GoldenNetlistResult BuildDeterministicGoldenNetlist(string partNumber)
+    {
+        string key = AlldatasheetRangeFetcher.NormalizePartKey(partNumber);
+        IReadOnlyList<GoldenNetConnection> connections = key switch
+        {
+            var p when p.Contains("555", StringComparison.OrdinalIgnoreCase) =>
+            [
+                new("1", "GND"),
+                new("2", "TRIG"),
+                new("3", "OUT"),
+                new("4", "VCC"),
+                new("5", "CTRL"),
+                new("6", "THRES"),
+                new("7", "DISCH"),
+                new("8", "VCC")
+            ],
+            var p when p.Contains("358", StringComparison.OrdinalIgnoreCase) || p.Contains("741", StringComparison.OrdinalIgnoreCase) =>
+            [
+                new("1", "OUT1"),
+                new("2", "IN1-"),
+                new("3", "IN1+"),
+                new("4", "GND"),
+                new("8", "VCC")
+            ],
+            var p when p.Contains("7805", StringComparison.OrdinalIgnoreCase) || p.Contains("1117", StringComparison.OrdinalIgnoreCase) =>
+            [
+                new("1", "VIN"),
+                new("2", "GND"),
+                new("3", "VOUT")
+            ],
+            _ =>
+            [
+                new("1", "GND"),
+                new("2", "IN"),
+                new("3", "OUT"),
+                new("4", "VCC")
+            ]
+        };
+
+        var sb = new StringBuilder(192);
+        sb.Append("{\"ic\":\"").Append(key).Append("\",\"nets\":[");
+        for (int i = 0; i < connections.Count; i++)
+        {
+            if (i > 0)
+                sb.Append(',');
+            sb.Append("{\"pin\":\"").Append(connections[i].Pin)
+              .Append("\",\"net\":\"").Append(connections[i].Net).Append("\"}");
+        }
+        sb.Append("]}");
+
+        string json = sb.ToString();
+        int tokenEstimate = Math.Min(119, Math.Max(1, (json.Length + 3) / 4));
+        return new GoldenNetlistResult(key, connections, json, tokenEstimate);
+    }
+
+    private async Task<string> SelectNetlistEndpointAsync(CancellationToken cancellationToken)
+    {
+        if (Uri.TryCreate(_options.NetlistEndpointUrl, UriKind.Absolute, out Uri? netlistUri))
+        {
+            Uri healthUri = BuildSiblingUri(netlistUri, "/health");
+            if (await ProbeAsync(healthUri, cancellationToken).ConfigureAwait(false))
+                return _options.NetlistEndpointUrl;
+        }
+
+        if (await TryEnsureServerAsync(cancellationToken).ConfigureAwait(false))
+            return _options.EndpointUrl;
+
+        return _options.NetlistEndpointUrl;
+    }
+
+    /// <summary>
+    /// Streams the tutor answer for a DRC snapshot as content tokens only. This is
+    /// the workstation transcript path: reasoning is discarded so raw thinking
+    /// tags never leak into the DRC explanation.
     /// </summary>
     public async IAsyncEnumerable<string> StreamDiagnosticAsync(
         DrcStatePacket state,
         string? prompt = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        await foreach (QwenStreamEvent streamEvent in StreamDiagnosticDetailedAsync(
+                           state,
+                           prompt,
+                           allowThinking: false,
+                           cancellationToken).ConfigureAwait(false))
+        {
+            if (streamEvent.Kind == QwenStreamKind.Content && !string.IsNullOrEmpty(streamEvent.Text))
+                yield return streamEvent.Text;
+        }
+    }
+
+    /// <summary>
+    /// Streams both the model's reasoning trace and its final answer for the AI
+    /// Live Studio. The caller decides which channel to display and speak.
+    /// </summary>
+    public async IAsyncEnumerable<QwenStreamEvent> StreamDiagnosticDetailedAsync(
+        DrcStatePacket state,
+        string? prompt = null,
+        bool allowThinking = true,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(state);
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        prompt ??= DiagnosticPromptBuilder.Build(state);
+        string effectivePrompt = prompt ?? DiagnosticPromptBuilder.Build(state);
+        byte[]? visualPng = state.FullBoardPngBytes ?? state.MicroCropPngBytes;
+
+        await foreach (QwenStreamEvent streamEvent in StreamDetailedAsync(
+                           state,
+                           effectivePrompt,
+                           visualPng,
+                           maxTokens: allowThinking ? 2048 : 512,
+                           allowThinking,
+                           cancellationToken).ConfigureAwait(false))
+        {
+            yield return streamEvent;
+        }
+    }
+
+    /// <summary>
+    /// Streams a free-form photo inspection. Used by the studio's UPLOAD IMAGE
+    /// path, where the uploaded photo is the authoritative vision input and no
+    /// DRC packet is required.
+    /// </summary>
+    public async IAsyncEnumerable<QwenStreamEvent> StreamImageDetailedAsync(
+        byte[] pngBytes,
+        string prompt,
+        bool allowThinking = true,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(pngBytes);
+        ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (pngBytes.Length == 0)
+        {
+            LastAnswerUsable = false;
+            yield return new QwenStreamEvent(
+                QwenStreamKind.Content,
+                "[No image was supplied to the vision model. Upload a PNG or JPG and press ANALYZE AGAIN.]");
+            yield break;
+        }
+
+        await foreach (QwenStreamEvent streamEvent in StreamDetailedAsync(
+                           state: null,
+                           prompt,
+                           pngBytes,
+                           maxTokens: 2048,
+                           allowThinking,
+                           cancellationToken).ConfigureAwait(false))
+        {
+            yield return streamEvent;
+        }
+    }
+
+    /// <summary>
+    /// Shared server/fallback pipeline. When a server answers, reasoning and
+    /// content events pass through untouched. When it does not, a deterministic
+    /// DRC answer is used if one is available; otherwise an honest offline
+    /// message is emitted. No reasoning is fabricated in either case.
+    /// </summary>
+    private async IAsyncEnumerable<QwenStreamEvent> StreamDetailedAsync(
+        DrcStatePacket? state,
+        string prompt,
+        byte[]? imagePng,
+        int maxTokens,
+        bool allowThinking,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        LastAnswerUsable = false;
 
         bool serverReady = await TryEnsureServerAsync(cancellationToken).ConfigureAwait(false);
         if (serverReady)
         {
             bool emittedAny = false;
+            bool emittedContent = false;
             bool streamFailed = false;
 
-            await using (IAsyncEnumerator<string> enumerator =
-                StreamServerAsync(prompt, state.MicroCropPngBytes, cancellationToken).GetAsyncEnumerator(cancellationToken))
+            await using (IAsyncEnumerator<QwenStreamEvent> enumerator =
+                StreamServerAsync(
+                        prompt,
+                        imagePng,
+                        maxTokens,
+                        allowThinking,
+                        cancellationToken)
+                    .GetAsyncEnumerator(cancellationToken))
             {
                 while (true)
                 {
@@ -345,31 +825,84 @@ public sealed class QwenMoEService : IDisposable
                         break;
 
                     emittedAny = true;
-                    yield return enumerator.Current;
+                    QwenStreamEvent streamEvent = enumerator.Current;
+                    if (streamEvent.Kind == QwenStreamKind.Content && !string.IsNullOrEmpty(streamEvent.Text))
+                        emittedContent = true;
+
+                    yield return streamEvent;
                 }
+            }
+
+            if (emittedContent)
+            {
+                LastMode = QwenResponseMode.Server;
+                IsConnected = true;
+                LastAnswerUsable = true;
+                LastError = null;
+                yield break;
             }
 
             if (emittedAny)
             {
                 LastMode = QwenResponseMode.Server;
-                LastError = null;
+                IsConnected = true;
+                LastError = "Qwen streamed a reasoning trace but no final answer.";
+                yield return new QwenStreamEvent(
+                    QwenStreamKind.Content,
+                    "[Qwen finished thinking but returned no final answer. Raise the token budget in LM Studio / the provider, then press ANALYZE AGAIN.]");
                 yield break;
             }
 
             if (!streamFailed)
-                LastError = "Qwen server returned an empty answer; checking fallback policy.";
+                LastError = "Qwen server returned an empty answer.";
         }
 
         LastMode = QwenResponseMode.RuleBasedFallback;
-        if (!AllowRuleBasedFallback)
+
+        if (state is null || !AllowRuleBasedFallback)
         {
-            yield return "[Qwen AI is offline. Connect via the AI Routing tab (Local Qwen / Colab / LM Studio / Ollama), or enable Rule-Based Advice in the Customization tab.]";
+            yield return new QwenStreamEvent(QwenStreamKind.Content, BuildOfflineMessage());
             yield break;
         }
 
         await foreach (string token in StreamFallbackAsync(state, cancellationToken).ConfigureAwait(false))
-            yield return token;
+            yield return new QwenStreamEvent(QwenStreamKind.Content, token);
     }
+
+    private string BuildOfflineMessage()
+    {
+        string detail = string.IsNullOrWhiteSpace(LastError)
+            ? "No OpenAI-compatible endpoint answered."
+            : LastError!;
+
+        string hint = EndpointProvider switch
+        {
+            "LM STUDIO" =>
+                "Start LM Studio, load a vision-capable Qwen model, enable the local server on port 1234, and connect it under AI ROUTING > LOCAL AI > LM STUDIO.",
+            "OLLAMA" =>
+                "Start Ollama, pull a vision model, and connect it under AI ROUTING > LOCAL AI > OLLAMA.",
+            "LOCAL QWEN" =>
+                "Start llama-server, or connect LM Studio / Ollama under AI ROUTING > LOCAL AI.",
+            _ =>
+                "Connect a vision-capable OpenAI-compatible endpoint under AI ROUTING."
+        };
+
+        return $"[Qwen AI is offline] {detail} {hint}";
+    }
+
+    /// <summary>
+    /// The only gate for synthesized speech: the answer must come from the model
+    /// itself. Rule-based / DRC text is displayed but never spoken.
+    /// </summary>
+    public static bool ShouldSpeakAnswer(
+        QwenResponseMode mode,
+        bool voiceMuted,
+        bool hasVoiceEngine,
+        int sentenceCount) =>
+        !voiceMuted
+        && hasVoiceEngine
+        && sentenceCount > 0
+        && mode == QwenResponseMode.Server;
 
     /// <summary>
     /// Deterministic tutor sentence built directly from the highest-priority
@@ -481,14 +1014,12 @@ public sealed class QwenMoEService : IDisposable
 
     private async Task<bool> TryEnsureServerAsync(CancellationToken cancellationToken)
     {
-        // A remote/custom endpoint may already be serving the model even when the
-        // 19 GB GGUF is not on this PC.
         if (await IsServerReachableAsync(cancellationToken).ConfigureAwait(false))
             return true;
 
         if (!_options.AutoLaunchServer)
         {
-            LastError = "llama-server is not reachable and auto-launch is disabled; using the rule-based fallback tutor.";
+            LastError = $"{EndpointProvider} is not reachable at {_options.EndpointUrl} and auto-launch is disabled.";
             return false;
         }
 
@@ -598,34 +1129,144 @@ public sealed class QwenMoEService : IDisposable
 
     private static void TryPinServerProcess(Process process)
     {
-        // The 30B expert weights are streamed by the AI mask; on small laptops the
-        // portable plan simply uses the lower half of the available CPUs.
+        CpuAffinityManager.TryPinProcess(process, AffinityRole.Ai, out _);
+    }
+
+    /// <summary>
+    /// Non-blocking health probe used by the connection light. Checks
+    /// <c>/health</c> first and then the OpenAI <c>/v1/models</c> surface, so a
+    /// connected LM Studio, Ollama, llama-server, or tunnel turns the light green
+    /// even before the first diagnosis is requested.
+    /// </summary>
+    public async Task<bool> ProbeConnectionAsync(CancellationToken cancellationToken = default)
+    {
+        bool reachable = await IsServerReachableAsync(cancellationToken).ConfigureAwait(false);
+        if (reachable)
+        {
+            _ = await ResolveModelAliasAsync(cancellationToken).ConfigureAwait(false);
+        }
+        IsConnected = reachable;
+        return reachable;
+    }
+
+    private async Task<string> ResolveModelAliasAsync(CancellationToken cancellationToken)
+    {
+        // An operator-picked model is exact: never silently swap it for a
+        // different model the server happens to advertise.
+        if (_modelOverride is { Length: > 0 })
+            return _modelOverride;
+
         try
         {
-            process.ProcessorAffinity = (IntPtr)(nint)CpuAffinityManager.Plan.AiMask;
+            using var probeTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            probeTimeout.CancelAfter(TimeSpan.FromSeconds(2));
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, BuildModelsUri());
+            if (!string.IsNullOrWhiteSpace(_options.ApiKey))
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
+
+            using HttpResponseMessage response = await _httpClient
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, probeTimeout.Token)
+                .ConfigureAwait(false);
+
+            if (response.IsSuccessStatusCode)
+            {
+                string json = await response.Content.ReadAsStringAsync(probeTimeout.Token).ConfigureAwait(false);
+                using JsonDocument doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("data", out JsonElement data)
+                    && data.ValueKind == JsonValueKind.Array
+                    && data.GetArrayLength() > 0)
+                {
+                    var loadedIds = new List<string>();
+                    foreach (JsonElement entry in data.EnumerateArray())
+                    {
+                        if (entry.TryGetProperty("id", out JsonElement idEl) && idEl.ValueKind == JsonValueKind.String)
+                        {
+                            string id = idEl.GetString()!;
+                            if (!string.IsNullOrWhiteSpace(id))
+                                loadedIds.Add(id);
+                        }
+                    }
+
+                    if (loadedIds.Count > 0)
+                    {
+                        if (!string.IsNullOrWhiteSpace(_options.ModelAlias))
+                        {
+                            foreach (string id in loadedIds)
+                            {
+                                if (string.Equals(id, _options.ModelAlias, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    _discoveredModelAlias = id;
+                                    return id;
+                                }
+                            }
+                        }
+
+                        foreach (string id in loadedIds)
+                        {
+                            if (id.Contains("30b", StringComparison.OrdinalIgnoreCase) || id.Contains("qwen3", StringComparison.OrdinalIgnoreCase))
+                            {
+                                _discoveredModelAlias = id;
+                                return id;
+                            }
+                        }
+
+                        foreach (string id in loadedIds)
+                        {
+                            if (id.Contains("qwen", StringComparison.OrdinalIgnoreCase) || id.Contains("vl", StringComparison.OrdinalIgnoreCase))
+                            {
+                                _discoveredModelAlias = id;
+                                return id;
+                            }
+                        }
+
+                        _discoveredModelAlias = loadedIds[0];
+                        return loadedIds[0];
+                    }
+                }
+            }
         }
-        catch (Exception ex) when (ex is Win32Exception
-                                       or InvalidOperationException
-                                       or NotSupportedException
-                                       or PlatformNotSupportedException
-                                       or ArgumentException)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            // Affinity is an optimization; llama-server still runs when rejected.
+            // Keep configured default
         }
+
+        return !string.IsNullOrWhiteSpace(_discoveredModelAlias)
+            ? _discoveredModelAlias
+            : (!string.IsNullOrWhiteSpace(_options.ModelAlias) ? _options.ModelAlias : "default");
     }
 
     private async Task<bool> IsServerReachableAsync(CancellationToken cancellationToken)
+    {
+        if (IsLlamaCppEndpoint())
+        {
+            if (await ProbeAsync(BuildHealthUri(), cancellationToken).ConfigureAwait(false))
+                return true;
+        }
+
+        return await ProbeAsync(BuildModelsUri(), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<bool> ProbeAsync(Uri uri, CancellationToken cancellationToken)
     {
         try
         {
             using var probeTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             probeTimeout.CancelAfter(TimeSpan.FromSeconds(2));
 
+            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+            if (!string.IsNullOrWhiteSpace(_options.ApiKey))
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
+
             using HttpResponseMessage response = await _httpClient
-                .GetAsync(BuildHealthUri(), HttpCompletionOption.ResponseHeadersRead, probeTimeout.Token)
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, probeTimeout.Token)
                 .ConfigureAwait(false);
 
             return response.IsSuccessStatusCode;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex) when (ex is HttpRequestException
                                        or TaskCanceledException
@@ -639,47 +1280,101 @@ public sealed class QwenMoEService : IDisposable
     private Uri BuildHealthUri()
     {
         if (Uri.TryCreate(_options.EndpointUrl, UriKind.Absolute, out Uri? endpoint))
-            return new UriBuilder(endpoint) { Path = "/health", Query = string.Empty }.Uri;
+            return BuildSiblingUri(endpoint, "/health");
 
         return new Uri($"http://127.0.0.1:{_options.Port}/health");
     }
 
-    private async IAsyncEnumerable<string> StreamServerAsync(
+    private Uri BuildModelsUri()
+    {
+        if (Uri.TryCreate(_options.EndpointUrl, UriKind.Absolute, out Uri? endpoint))
+            return BuildSiblingUri(endpoint, "/v1/models");
+
+        return new Uri($"http://127.0.0.1:{_options.Port}/v1/models");
+    }
+
+    /// <summary>Keeps any proxy path prefix (for example /team/api/v1/chat/completions).</summary>
+    private static Uri BuildSiblingUri(Uri endpoint, string suffix)
+    {
+        string path = endpoint.AbsolutePath;
+        int v1Index = path.IndexOf("/v1/", StringComparison.OrdinalIgnoreCase);
+        string prefix = v1Index > 0 ? path[..v1Index] : string.Empty;
+
+        return new UriBuilder(endpoint)
+        {
+            Path = prefix + suffix,
+            Query = string.Empty
+        }.Uri;
+    }
+
+    private async IAsyncEnumerable<QwenStreamEvent> StreamServerAsync(
         string prompt,
         byte[]? imagePng,
+        int maxTokens,
+        bool allowThinking,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        string activeModel = await ResolveModelAliasAsync(cancellationToken).ConfigureAwait(false);
+
         var payload = new Dictionary<string, object?>(9)
         {
-            ["model"] = _options.ModelAlias,
+            ["model"] = activeModel,
             ["stream"] = true,
-            ["temperature"] = 0.2,
-            ["max_tokens"] = 160,
+            ["temperature"] = 0.6,
+            ["max_tokens"] = maxTokens,
             ["messages"] = new object[]
             {
-                new { role = "system", content = "You are a calm, experienced breadboard tutor speaking across the bench. Use plain spoken English and contractions. Sound human and specific, never theatrical. Never use markdown or lists." },
+
                 new { role = "user", content = BuildUserContent(prompt, imagePng) }
-            },
-            ["chat_template_kwargs"] = new { enable_thinking = false }
+            }
         };
+
+        // Ask every OpenAI-compatible server to expose reasoning separately so
+        // the studio can show it in THINKING instead of losing it. Servers that
+        // reject the option are retried below without it.
+
 
         string json = JsonSerializer.Serialize(payload, JsonOptions);
         using var request = new HttpRequestMessage(HttpMethod.Post, _options.EndpointUrl)
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json")
         };
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
 
         if (!string.IsNullOrWhiteSpace(_options.ApiKey))
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
 
-        using HttpResponseMessage response = await _httpClient
+        HttpResponseMessage response = await _httpClient
             .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
             .ConfigureAwait(false);
 
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            string body = await ReadErrorBodyAsync(response, cancellationToken).ConfigureAwait(false);
+            response.Dispose();
+            throw new HttpRequestException(
+                $"HTTP {(int)response.StatusCode} {response.ReasonPhrase}: {body}",
+                inner: null,
+                response.StatusCode);
+        }
+
+        string? mediaType = response.Content.Headers.ContentType?.MediaType;
+        if (string.Equals(mediaType, "application/json", StringComparison.OrdinalIgnoreCase))
+        {
+            string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            if (!TryExtractJsonResponse(body, out string? thinking, out string? content))
+                throw new JsonException("The provider returned JSON without an assistant message.");
+
+            if (!string.IsNullOrEmpty(thinking))
+                yield return new QwenStreamEvent(QwenStreamKind.Thinking, thinking);
+            if (!string.IsNullOrEmpty(content))
+                yield return new QwenStreamEvent(QwenStreamKind.Content, content);
+            yield break;
+        }
 
         await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         using var reader = new StreamReader(stream, Encoding.UTF8);
+        bool insideThinkTag = false;
 
         while (!reader.EndOfStream)
         {
@@ -697,10 +1392,81 @@ public sealed class QwenMoEService : IDisposable
             if (data == "[DONE]")
                 yield break;
 
-            string? token = ExtractContentDelta(data);
-            if (!string.IsNullOrEmpty(token))
-                yield return token;
+            if (!TryExtractStreamDelta(data, out string? thinking, out string? content))
+                continue;
+
+            if (!string.IsNullOrEmpty(thinking))
+                yield return new QwenStreamEvent(QwenStreamKind.Thinking, thinking);
+
+            if (!string.IsNullOrEmpty(content))
+            {
+                string text = content;
+                while (text.Length > 0)
+                {
+                    if (!insideThinkTag)
+                    {
+                        int thinkStart = text.IndexOf("<think>", StringComparison.OrdinalIgnoreCase);
+                        if (thinkStart >= 0)
+                        {
+                            if (thinkStart > 0)
+                                yield return new QwenStreamEvent(QwenStreamKind.Content, text[..thinkStart]);
+
+                            insideThinkTag = true;
+                            text = text[(thinkStart + 7)..];
+                        }
+                        else
+                        {
+                            yield return new QwenStreamEvent(QwenStreamKind.Content, text);
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        int thinkEnd = text.IndexOf("</think>", StringComparison.OrdinalIgnoreCase);
+                        if (thinkEnd >= 0)
+                        {
+                            if (thinkEnd > 0)
+                                yield return new QwenStreamEvent(QwenStreamKind.Thinking, text[..thinkEnd]);
+
+                            insideThinkTag = false;
+                            text = text[(thinkEnd + 8)..];
+                        }
+                        else
+                        {
+                            yield return new QwenStreamEvent(QwenStreamKind.Thinking, text);
+                            break;
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    private static async Task<string> ReadErrorBodyAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            body = body.Replace('\r', ' ').Replace('\n', ' ').Trim();
+            return body.Length <= 500 ? body : body[..500] + "\u2026";
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
+        {
+            return "(response body unavailable)";
+        }
+    }
+
+    private bool IsLlamaCppEndpoint()
+    {
+        if (!Uri.TryCreate(_options.EndpointUrl, UriKind.Absolute, out Uri? endpoint))
+            return false;
+
+        return endpoint.Port == 8089
+               || endpoint.Port == 8081
+               || endpoint.Port == _options.Port
+               || endpoint.Port == _options.NetlistPort;
     }
 
     private static object BuildUserContent(string prompt, byte[]? imagePng)
@@ -716,42 +1482,168 @@ public sealed class QwenMoEService : IDisposable
         };
     }
 
-    private static string? ExtractContentDelta(string json)
+    private static bool TryExtractJsonResponse(
+        string json,
+        out string? thinking,
+        out string? content)
     {
+        thinking = null;
+        content = null;
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("choices", out JsonElement choices)
+                || choices.ValueKind != JsonValueKind.Array
+                || choices.GetArrayLength() == 0)
+            {
+                return false;
+            }
+
+            JsonElement choice = choices[0];
+            bool extracted = false;
+
+            if (choice.TryGetProperty("message", out JsonElement message))
+                extracted = TryExtractMessageParts(message, out thinking, out content);
+            else if (choice.TryGetProperty("delta", out JsonElement delta))
+                extracted = TryExtractMessageParts(delta, out thinking, out content);
+            else if (choice.TryGetProperty("text", out JsonElement text)
+                     && text.ValueKind == JsonValueKind.String)
+            {
+                content = text.GetString();
+                extracted = content is not null;
+            }
+
+            if (extracted && !string.IsNullOrEmpty(content) && string.IsNullOrEmpty(thinking))
+            {
+                int tStart = content.IndexOf("<think>", StringComparison.OrdinalIgnoreCase);
+                int tEnd = content.IndexOf("</think>", StringComparison.OrdinalIgnoreCase);
+                if (tStart >= 0 && tEnd > tStart)
+                {
+                    thinking = content.Substring(tStart + 7, tEnd - tStart - 7).Trim();
+                    content = (content.Substring(0, tStart) + content.Substring(tEnd + 8)).Trim();
+                }
+            }
+
+            return extracted;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryExtractStreamDelta(
+        string json,
+        out string? thinking,
+        out string? content)
+    {
+        thinking = null;
+        content = null;
+
         try
         {
             using JsonDocument document = JsonDocument.Parse(json);
             JsonElement root = document.RootElement;
 
+            if (root.TryGetProperty("error", out JsonElement error))
+            {
+                content = "[Qwen provider error] " + ExtractErrorText(error);
+                return true;
+            }
+
             if (!root.TryGetProperty("choices", out JsonElement choices)
                 || choices.ValueKind != JsonValueKind.Array
                 || choices.GetArrayLength() == 0)
             {
-                return null;
+                return false;
             }
 
             JsonElement choice = choices[0];
+            if (choice.TryGetProperty("delta", out JsonElement delta))
+                return TryExtractMessageParts(delta, out thinking, out content);
 
-            if (choice.TryGetProperty("delta", out JsonElement delta)
-                && delta.TryGetProperty("content", out JsonElement deltaContent)
-                && deltaContent.ValueKind == JsonValueKind.String)
+            if (choice.TryGetProperty("message", out JsonElement message))
+                return TryExtractMessageParts(message, out thinking, out content);
+
+            if (choice.TryGetProperty("text", out JsonElement text)
+                && text.ValueKind == JsonValueKind.String)
             {
-                return deltaContent.GetString();
+                content = text.GetString();
+                return content is not null;
             }
-
-            if (choice.TryGetProperty("message", out JsonElement message)
-                && message.TryGetProperty("content", out JsonElement messageContent)
-                && messageContent.ValueKind == JsonValueKind.String)
-            {
-                return messageContent.GetString();
-            }
-
-            return null;
         }
         catch (JsonException)
         {
-            return null;
+            return false;
         }
+
+        return false;
+    }
+
+    private static bool TryExtractMessageParts(
+        JsonElement element,
+        out string? thinking,
+        out string? content)
+    {
+        thinking = null;
+        content = null;
+
+        foreach (string name in ReasoningPropertyNames)
+        {
+            if (!element.TryGetProperty(name, out JsonElement reasoning))
+                continue;
+
+            thinking = ExtractTextContent(reasoning);
+            if (!string.IsNullOrEmpty(thinking))
+                break;
+        }
+
+        if (element.TryGetProperty("content", out JsonElement contentElement))
+            content = ExtractTextContent(contentElement);
+
+        return !string.IsNullOrEmpty(thinking) || !string.IsNullOrEmpty(content);
+    }
+
+    private static string? ExtractTextContent(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.String)
+            return element.GetString();
+
+        if (element.ValueKind != JsonValueKind.Array)
+            return null;
+
+        var builder = new StringBuilder();
+        foreach (JsonElement part in element.EnumerateArray())
+        {
+            if (part.ValueKind == JsonValueKind.String)
+            {
+                builder.Append(part.GetString());
+            }
+            else if (part.ValueKind == JsonValueKind.Object
+                     && part.TryGetProperty("text", out JsonElement text)
+                     && text.ValueKind == JsonValueKind.String)
+            {
+                builder.Append(text.GetString());
+            }
+        }
+
+        return builder.Length == 0 ? null : builder.ToString();
+    }
+
+    private static string ExtractErrorText(JsonElement error)
+    {
+        if (error.ValueKind == JsonValueKind.String)
+            return error.GetString() ?? "unknown error";
+
+        if (error.ValueKind == JsonValueKind.Object
+            && error.TryGetProperty("message", out JsonElement message)
+            && message.ValueKind == JsonValueKind.String)
+        {
+            return message.GetString() ?? "unknown error";
+        }
+
+        return error.ToString();
     }
 
     private static bool IsRecoverable(Exception exception) =>

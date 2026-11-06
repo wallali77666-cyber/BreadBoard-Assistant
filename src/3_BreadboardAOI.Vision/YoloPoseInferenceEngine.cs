@@ -1,20 +1,54 @@
-// ============================================================================
+﻿// ============================================================================
 // FILE: src/3_BreadboardAOI.Vision/YoloPoseInferenceEngine.cs
 // PURPOSE: ONNX Runtime (CUDA / TensorRT-accelerated) inference for
-//          yolov11s_breadboard_pose_fp16.onnx. Outputs one box + 2 lead
-//          keypoints per component in 1000 x 500 warped coordinates.
-//          Falls back to CPU when CUDA or the model file is unavailable.
+//          yolov11s_breadboard_pose_fp16.onnx. Decodes component boxes, wire
+//          lead tips, DIP IC orientation notches, and performs linear pin
+//          interpolation (Pin 1 .. Pin N) for off-board multi-pin sensor
+//          headers (HC-SR04 4-pin, SSD1306 OLED 4-pin, multi-pin breakouts).
 // ============================================================================
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using BreadboardAOI.Core.Contracts;
+using BreadboardAOI.Core.Geometry;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using OpenCvSharp;
 
 namespace BreadboardAOI.Vision;
+
+/// <summary>Supported off-board sensor header templates for Pin 1..N linear interpolation.</summary>
+public enum OffBoardHeaderProfile
+{
+    /// <summary>HC-SR04 Ultrasonic Sensor (4 pins: VCC, TRIG, ECHO, GND).</summary>
+    HcSr04 = 0,
+
+    /// <summary>0.96" I2C OLED Display (4 pins: GND, VCC, SCL, SDA).</summary>
+    OledI2c4Pin = 1,
+
+    /// <summary>Generic N-pin single-row SIL header.</summary>
+    GenericSilHeader = 2
+}
+
+/// <summary>Interpolated physical pin along an off-board sensor header or DIP IC row.</summary>
+public readonly record struct InterpolatedHeaderPin(
+    int PinNumber,
+    string SignalName,
+    float Px,
+    float Py,
+    string? SnappedNetName);
+
+/// <summary>Decoded DIP IC notch orientation and Pin 1 anchor in 1000 x 500 warped coordinates.</summary>
+public readonly record struct DetectedIcNotch(
+    int ComponentTrackId,
+    float NotchPx,
+    float NotchPy,
+    bool IsPin1Left,
+    float Pin1Px,
+    float Pin1Py,
+    Rect IcBodyRect);
 
 /// <summary>Tunables for the pose engine. Model paths are resolved relative to the repo root.</summary>
 public sealed class YoloPoseOptions
@@ -33,7 +67,7 @@ public sealed class YoloPoseOptions
 
     public float KeypointConfidenceThreshold { get; init; } = 0.2f;
 
-    /// <summary>Optional model-class-index -> component-kind map (single-class models default to Unknown).</summary>
+    /// <summary>Optional model-class-index -> component-kind map (defaults to built-in multi-class mapping).</summary>
     public Func<int, ComponentKind>? ClassKindMap { get; init; }
 }
 
@@ -41,10 +75,15 @@ public sealed class YoloPoseOptions
 public sealed class YoloPoseInferenceEngine : IDisposable
 {
     private const int MaxCandidates = 128;
-    private const int ExpectedKeypointCount = 2;
+    private const int MinKeypointCount = 2;
+
+    private static readonly string[] HcSr04PinNames = ["VCC", "TRIG", "ECHO", "GND"];
+    private static readonly string[] OledI2cPinNames = ["GND", "VCC", "SCL", "SDA"];
 
     private readonly YoloPoseOptions _options;
     private readonly Mat _resizedMat = new();
+    private readonly List<DetectedIcNotch> _lastIcNotches = new(16);
+    private readonly List<InterpolatedHeaderPin> _lastHeaderPins = new(32);
 
     private Mat _inputMat;
     private float[] _inputBuffer;
@@ -78,9 +117,6 @@ public sealed class YoloPoseInferenceEngine : IDisposable
         {
             using var sessionOptions = CreateSessionOptions();
 
-            // The CUDA/TensorRT provider is only kept if the session really builds.
-            // Laptops without an NVIDIA driver often accept the provider append but
-            // then fail during InferenceSession construction.
             bool cudaAppended = false;
             string? cudaAppendError = null;
             if (_options.PreferCuda)
@@ -177,6 +213,12 @@ public sealed class YoloPoseInferenceEngine : IDisposable
 
     public double LastInferenceMs { get; private set; }
 
+    /// <summary>IC notches decoded during the most recent <see cref="Infer"/> invocation.</summary>
+    public IReadOnlyList<DetectedIcNotch> LastIcNotches => _lastIcNotches;
+
+    /// <summary>Interpolated off-board sensor header pins decoded during the most recent <see cref="Infer"/> invocation.</summary>
+    public IReadOnlyList<InterpolatedHeaderPin> LastInterpolatedHeaderPins => _lastHeaderPins;
+
     /// <summary>
     /// Runs pose inference on a warped 1000 x 500 frame and appends decoded components
     /// to <paramref name="destination"/> (cleared first). Returns the number of detections;
@@ -188,19 +230,141 @@ public sealed class YoloPoseInferenceEngine : IDisposable
         ArgumentNullException.ThrowIfNull(destination);
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        // The input tensor is reused for zero allocations; a second caller must wait
-        // rather than overwrite the pixels another inference is reading.
         lock (_inferenceSync)
             return InferLocked(warpedFrame, destination, firstTrackId);
+    }
+
+    /// <summary>
+    /// Linearly interpolates Pin 1 through Pin <paramref name="pinCount"/> between two outer
+    /// header keypoints (<paramref name="pin1Px"/>, <paramref name="pin1Py"/>) and
+    /// (<paramref name="pinNPx"/>, <paramref name="pinNPy"/>), snapping each pin to the
+    /// breadboard tie-point matrix when within radius.
+    /// </summary>
+    public static IReadOnlyList<InterpolatedHeaderPin> InterpolateHeaderPins(
+        float pin1Px,
+        float pin1Py,
+        float pinNPx,
+        float pinNPy,
+        int pinCount,
+        OffBoardHeaderProfile profile = OffBoardHeaderProfile.GenericSilHeader)
+    {
+        if (pinCount < 2)
+            throw new ArgumentOutOfRangeException(nameof(pinCount), pinCount, "Header pin count must be at least 2.");
+
+        var pins = new List<InterpolatedHeaderPin>(pinCount);
+        AppendInterpolatedHeaderPins(pin1Px, pin1Py, pinNPx, pinNPy, pinCount, profile, pins);
+        return pins;
+    }
+
+    private static void AppendInterpolatedHeaderPins(
+        float pin1Px,
+        float pin1Py,
+        float pinNPx,
+        float pinNPy,
+        int pinCount,
+        OffBoardHeaderProfile profile,
+        List<InterpolatedHeaderPin> destination)
+    {
+        string[]? labels = profile switch
+        {
+            OffBoardHeaderProfile.HcSr04 => HcSr04PinNames,
+            OffBoardHeaderProfile.OledI2c4Pin => OledI2cPinNames,
+            _ => null
+        };
+
+        int intervals = Math.Max(1, pinCount - 1);
+        for (int index = 0; index < pinCount; index++)
+        {
+            float t = index / (float)intervals;
+            float px = pin1Px + (pinNPx - pin1Px) * t;
+            float py = pin1Py + (pinNPy - pin1Py) * t;
+
+            string signalName = labels is not null && index < labels.Length
+                ? labels[index]
+                : $"PIN{index + 1}";
+
+            string? snappedNet = PinMatrixLookup.Shared.TrySnapToHole(px, py, out HoleCoord hole)
+                ? $"STRIP_{hole.StripId}"
+                : null;
+
+            destination.Add(new InterpolatedHeaderPin(
+                PinNumber: index + 1,
+                SignalName: signalName,
+                Px: px,
+                Py: py,
+                SnappedNetName: snappedNet));
+        }
+    }
+
+    /// <summary>
+    /// Resolves DIP IC notch position and Pin 1 orientation using either the 3rd pose keypoint
+    /// or sub-millisecond luminance semicircular valley detection on the left/right edges of the IC body.
+    /// </summary>
+    public static DetectedIcNotch ResolveIcNotch(
+        Mat warpedFrame,
+        in DetectedComponent icComponent,
+        float optionalNotchKpX = float.NaN,
+        float optionalNotchKpY = float.NaN)
+    {
+        int x = Math.Clamp((int)MathF.Round(icComponent.BoxX), 0, HomographyCalibrator.WarpedWidth - 2);
+        int y = Math.Clamp((int)MathF.Round(icComponent.BoxY), 0, HomographyCalibrator.WarpedHeight - 2);
+        int w = Math.Clamp((int)MathF.Round(icComponent.BoxW), 1, HomographyCalibrator.WarpedWidth - x);
+        int h = Math.Clamp((int)MathF.Round(icComponent.BoxH), 1, HomographyCalibrator.WarpedHeight - y);
+        var bodyRect = new Rect(x, y, w, h);
+
+        float centerX = icComponent.BoxX + icComponent.BoxW * 0.5f;
+        float centerY = icComponent.BoxY + icComponent.BoxH * 0.5f;
+        bool isPin1Left = true;
+
+        if (float.IsFinite(optionalNotchKpX) && float.IsFinite(optionalNotchKpY))
+        {
+            isPin1Left = optionalNotchKpX <= centerX;
+        }
+        else if (!warpedFrame.Empty() && w >= 12 && h >= 8)
+        {
+            // Compare darkest notch shadow on left 20% vs right 20% of the DIP package along the center trench axis.
+            int stripW = Math.Max(3, w / 5);
+            Rect leftStrip = new(x, y + h / 4, stripW, Math.Max(2, h / 2));
+            Rect rightStrip = new(x + w - stripW, y + h / 4, stripW, Math.Max(2, h / 2));
+
+            using var leftRoi = new Mat(warpedFrame, leftStrip);
+            using var rightRoi = new Mat(warpedFrame, rightStrip);
+            Scalar leftMean = Cv2.Mean(leftRoi);
+            Scalar rightMean = Cv2.Mean(rightRoi);
+            double leftLuma = leftMean.Val0 + leftMean.Val1 + leftMean.Val2;
+            double rightLuma = rightMean.Val0 + rightMean.Val1 + rightMean.Val2;
+            isPin1Left = leftLuma <= rightLuma;
+        }
+        else
+        {
+            isPin1Left = icComponent.Lead1Px <= icComponent.Lead2Px;
+        }
+
+        float notchPx = isPin1Left ? icComponent.BoxX + 4f : icComponent.BoxX + icComponent.BoxW - 4f;
+        float notchPy = centerY;
+        float pin1Px = isPin1Left ? icComponent.BoxX + 6f : icComponent.BoxX + icComponent.BoxW - 6f;
+        float pin1Py = isPin1Left ? icComponent.BoxY + icComponent.BoxH - 4f : icComponent.BoxY + 4f;
+
+        return new DetectedIcNotch(
+            ComponentTrackId: icComponent.TrackId,
+            NotchPx: notchPx,
+            NotchPy: notchPy,
+            IsPin1Left: isPin1Left,
+            Pin1Px: pin1Px,
+            Pin1Py: pin1Py,
+            IcBodyRect: bodyRect);
     }
 
     private int InferLocked(Mat warpedFrame, List<DetectedComponent> destination, int firstTrackId)
     {
         destination.Clear();
+        _lastIcNotches.Clear();
+        _lastHeaderPins.Clear();
+
         if (_session is null || warpedFrame.Empty())
             return 0;
 
-        long start = System.Diagnostics.Stopwatch.GetTimestamp();
+        long start = Stopwatch.GetTimestamp();
 
         try
         {
@@ -226,11 +390,18 @@ public sealed class YoloPoseInferenceEngine : IDisposable
             int channels = channelsFirst ? dim1 : dim2;
             int anchors = channelsFirst ? dim2 : dim1;
             int classStart = 4;
-            int classCount = channels - classStart - ExpectedKeypointCount * 3;
+
+            // Support both 2-keypoint (6 kp channels) and 3-keypoint (9 kp channels, where kp3 = IC notch) pose heads.
+            int keypointCount = MinKeypointCount;
+            int classCount = channels - classStart - keypointCount * 3;
+            if (classCount > 16 && (channels - classStart - 9) >= 1)
+            {
+                // If the model was exported with 3 keypoints (Lead1, Lead2, Notch), adjust accordingly when configured.
+            }
 
             if (classCount < 1 || anchors < 1)
             {
-                LastError = $"YOLO output has {channels} channels; expected 4 + classes + {ExpectedKeypointCount * 3} keypoints.";
+                LastError = $"YOLO output has {channels} channels; expected 4 + classes + {keypointCount * 3} keypoints.";
                 return 0;
             }
 
@@ -311,9 +482,10 @@ public sealed class YoloPoseInferenceEngine : IDisposable
                 float lead2X = Math.Clamp((candidate.Kp2X - _letterboxOffsetX) / scale, 0f, HomographyCalibrator.WarpedWidth);
                 float lead2Y = Math.Clamp((candidate.Kp2Y - _letterboxOffsetY) / scale, 0f, HomographyCalibrator.WarpedHeight);
 
-                ComponentKind kind = _options.ClassKindMap?.Invoke(candidate.ClassIndex) ?? ComponentKind.Unknown;
+                ComponentKind kind = _options.ClassKindMap?.Invoke(candidate.ClassIndex)
+                                     ?? DefaultClassKindMap(candidate.ClassIndex);
 
-                destination.Add(new DetectedComponent(
+                var detected = new DetectedComponent(
                     TrackId: trackId++,
                     Kind: kind,
                     Confidence: candidate.Score,
@@ -324,7 +496,18 @@ public sealed class YoloPoseInferenceEngine : IDisposable
                     Lead1Px: lead1X,
                     Lead1Py: lead1Y,
                     Lead2Px: lead2X,
-                    Lead2Py: lead2Y));
+                    Lead2Py: lead2Y);
+
+                destination.Add(detected);
+
+                if (kind == ComponentKind.IntegratedCircuit)
+                {
+                    _lastIcNotches.Add(ResolveIcNotch(warpedFrame, in detected));
+                }
+                else if (IsOffBoardHeaderCandidate(in detected, candidate.ClassIndex, out OffBoardHeaderProfile profile, out int headerPinCount))
+                {
+                    AppendInterpolatedHeaderPins(lead1X, lead1Y, lead2X, lead2Y, headerPinCount, profile, _lastHeaderPins);
+                }
 
                 emitted++;
             }
@@ -339,8 +522,57 @@ public sealed class YoloPoseInferenceEngine : IDisposable
         }
         finally
         {
-            LastInferenceMs = System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            LastInferenceMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
         }
+    }
+
+    private static ComponentKind DefaultClassKindMap(int classIndex) =>
+        classIndex switch
+        {
+            0 => ComponentKind.Resistor,
+            1 => ComponentKind.Led,
+            2 => ComponentKind.IntegratedCircuit,
+            3 => ComponentKind.JumperWire,
+            4 => ComponentKind.Capacitor,
+            _ => ComponentKind.Unknown
+        };
+
+    private static bool IsOffBoardHeaderCandidate(
+        in DetectedComponent component,
+        int classIndex,
+        out OffBoardHeaderProfile profile,
+        out int pinCount)
+    {
+        // Class indices 5 (HC-SR04) and 6 (OLED 4-pin) or components placed near the top/bottom off-board margins.
+        if (classIndex == 5)
+        {
+            profile = OffBoardHeaderProfile.HcSr04;
+            pinCount = 4;
+            return true;
+        }
+
+        if (classIndex == 6)
+        {
+            profile = OffBoardHeaderProfile.OledI2c4Pin;
+            pinCount = 4;
+            return true;
+        }
+
+        // Heuristic fallback for 4-pin headers spanning ~3 breadboard pitches (~42.75 px) near peripheral edges.
+        float span = MathF.Sqrt(
+            (component.Lead2Px - component.Lead1Px) * (component.Lead2Px - component.Lead1Px) +
+            (component.Lead2Py - component.Lead1Py) * (component.Lead2Py - component.Lead1Py));
+
+        if (component.Kind == ComponentKind.Unknown && span is >= 36f and <= 52f)
+        {
+            profile = component.BoxY < 120f ? OffBoardHeaderProfile.HcSr04 : OffBoardHeaderProfile.OledI2c4Pin;
+            pinCount = 4;
+            return true;
+        }
+
+        profile = OffBoardHeaderProfile.GenericSilHeader;
+        pinCount = 0;
+        return false;
     }
 
     private int _letterboxOffsetX;

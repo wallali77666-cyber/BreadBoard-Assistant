@@ -1,10 +1,14 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>BreadboardAOI.Hardware</AssemblyName>
     <RootNamespace>BreadboardAOI.Hardware</RootNamespace>
   </PropertyGroup>
 
-  <!-- Pure Win32 P/Invoke: kernel32.dll (SetThreadAffinityMask, VirtualLock), nvml.dll. No NuGet deps by design. -->
+  <!-- Pure Win32 P/Invoke: kernel32.dll (SetThreadAffinityMask, VirtualLock, SetProcessWorkingSetSize), nvml.dll. No NuGet deps by design. -->
 
 </Project>

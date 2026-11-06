@@ -123,4 +123,43 @@ public sealed class CameraCaptureServiceTests : IDisposable
         service.ActiveSource.Should().Be(CameraSource.Synthetic);
         service.LastError.Should().NotBeNullOrWhiteSpace().And.Contain("could not be decoded");
     }
+
+    [Fact]
+    public void VideoFile_WithoutPath_FallsBackToSyntheticBoard()
+    {
+        using var service = new CameraCaptureService(CameraSource.VideoFile);
+
+        service.ActiveSource.Should().Be(CameraSource.Synthetic);
+        service.IsSynthetic.Should().BeTrue();
+        service.IsVideo.Should().BeFalse();
+        service.LastError.Should().NotBeNullOrWhiteSpace().And.Contain("No video file");
+    }
+
+    [Fact]
+    public void CameraSource_Helpers_MapIndicesCorrectly()
+    {
+        CameraCaptureService.GetDeviceIndex(CameraSource.Camera0).Should().Be(0);
+        CameraCaptureService.GetDeviceIndex(CameraSource.Camera1).Should().Be(1);
+        CameraCaptureService.GetDeviceIndex(CameraSource.Camera2).Should().Be(2);
+        CameraCaptureService.GetDeviceIndex(CameraSource.Camera3).Should().Be(3);
+        CameraCaptureService.GetDeviceIndex(CameraSource.Synthetic).Should().Be(-1);
+
+        CameraCaptureService.GetSourceFromIndex(0).Should().Be(CameraSource.Camera0);
+        CameraCaptureService.GetSourceFromIndex(1).Should().Be(CameraSource.Camera1);
+        CameraCaptureService.GetSourceFromIndex(2).Should().Be(CameraSource.Camera2);
+        CameraCaptureService.GetSourceFromIndex(3).Should().Be(CameraSource.Camera3);
+
+        CameraCaptureService.IsPhysicalCamera(CameraSource.Camera0).Should().BeTrue();
+        CameraCaptureService.IsPhysicalCamera(CameraSource.Camera1).Should().BeTrue();
+        CameraCaptureService.IsPhysicalCamera(CameraSource.Synthetic).Should().BeFalse();
+        CameraCaptureService.IsPhysicalCamera(CameraSource.ImageFile).Should().BeFalse();
+        CameraCaptureService.IsPhysicalCamera(CameraSource.VideoFile).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ProbeAvailableCameras_DoesNotThrow()
+    {
+        var probed = CameraCaptureService.ProbeAvailableCameras();
+        probed.Should().NotBeNull();
+    }
 }

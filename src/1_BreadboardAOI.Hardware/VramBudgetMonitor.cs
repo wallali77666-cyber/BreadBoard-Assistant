@@ -1,10 +1,10 @@
 // ============================================================================
 // FILE: src/1_BreadboardAOI.Hardware/VramBudgetMonitor.cs
-// PURPOSE: Live RTX 3060 12 GB VRAM telemetry via nvml.dll so the orchestrator
-//          can refuse to load Qwen3-VL if YOLO + Skia swap-chain already ate the
-//          headroom. On machines without an NVIDIA driver it reports a clearly
-//          flagged mock 12 GB profile instead of throwing, so the UI and the
-//          Qwen pre-flight check keep working everywhere.
+// PURPOSE: Live VRAM telemetry via nvml.dll for NVIDIA RTX 3060 12GB and
+//          NVIDIA RTX 5050 8GB workstations. Enables the orchestrator to verify
+//          safe headroom before launching llama-server with Qwen3-VL MoE.
+//          RTX 3060 12GB: --n-cpu-moe 22 (10.6 GB GPU budget, 22 CPU experts)
+//          RTX 5050 8GB:  --n-cpu-moe 34 (6.6 GB GPU budget, 34 CPU experts)
 // ============================================================================
 
 using System;
@@ -20,7 +20,8 @@ public readonly record struct VramSnapshot(
     ulong FreeBytes,
     ulong UsedBytes,
     string? Diagnostic,
-    bool IsMocked = false)
+    bool IsMocked = false,
+    GpuHardwareTier DetectedTier = GpuHardwareTier.Rtx3060_12Gb)
 {
     /// <summary>True only when the values came from a real NVML device.</summary>
     public bool IsRealGpu => IsAvailable && !IsMocked;
@@ -32,7 +33,10 @@ public readonly record struct VramSnapshot(
     public double FreeGigabytes => IsAvailable ? FreeBytes / 1024d / 1024d / 1024d : 0d;
 }
 
-/// <summary>NVML wrapper with the fixed VRAM budget of the target RTX 3060 workstation.</summary>
+/// <summary>
+/// NVML telemetry wrapper with dual-tier budget profiling for both
+/// RTX 3060 12GB and RTX 5050 8GB workstations.
+/// </summary>
 public sealed class VramBudgetMonitor : IDisposable
 {
     private const string NvmlLibrary = "nvml.dll";
@@ -43,11 +47,21 @@ public sealed class VramBudgetMonitor : IDisposable
     public const ulong Megabyte = 1024UL * 1024UL;
     public const ulong Gigabyte = 1024UL * Megabyte;
 
-    public const ulong YuoPoseModelBudgetBytes = 450UL * Megabyte;
+    // Shared Vision, UI, and OS Headroom Reservations
+    public const ulong YoloPoseModelBudgetBytes = 450UL * Megabyte;
     public const ulong SkiaSwapChainBudgetBytes = 350UL * Megabyte;
-    public const ulong QwenMoEBudgetBytes = 10_600UL * Megabyte;
     public const ulong OsReserveBytes = 600UL * Megabyte;
-    public const ulong TargetTotalVramBytes = 12UL * Gigabyte;
+
+    // RTX 3060 12GB Profile Constants (--n-cpu-moe 22)
+    public const ulong Rtx3060TotalVramBytes = 12UL * Gigabyte;
+    public const ulong Rtx3060QwenMoEBudgetBytes = 10_600UL * Megabyte;
+    public const int Rtx3060CpuMoeCount = 22;
+
+    // RTX 5050 8GB Profile Constants (--n-cpu-moe 34)
+    public const ulong Rtx5050TotalVramBytes = 8UL * Gigabyte;
+    public const ulong Rtx5050QwenMoEBudgetBytes = 6_600UL * Megabyte;
+    public const ulong TargetTotalVramBytes = Rtx3060TotalVramBytes;
+    public const int Rtx5050CpuMoeCount = 34;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NvmlMemory
@@ -77,6 +91,7 @@ public sealed class VramBudgetMonitor : IDisposable
     private bool _disposed;
     private bool _nativeLibraryPreloaded;
     private string? _lastError;
+    private GpuHardwareTier? _manualTierOverride;
 
     /// <summary>True once <c>nvmlInit_v2</c> + GPU handle acquisition succeeded.</summary>
     public bool IsAvailable => _initialized && _device != IntPtr.Zero;
@@ -84,11 +99,43 @@ public sealed class VramBudgetMonitor : IDisposable
     /// <summary>True when a real NVIDIA GPU is being monitored (false when running on the mock profile).</summary>
     public bool HasRealGpu => IsAvailable;
 
-    /// <summary>Human-readable GPU name reported by NVML, when available.</summary>
-    public string DeviceName { get; private set; } = "No NVIDIA GPU detected";
+    private static readonly (string Name, ulong VramBytes) SystemGpuInfo = QuerySystemGpu();
+
+    /// <summary>True if a real GPU (Intel, AMD, Qualcomm, etc.) was detected via Windows registry/system.</summary>
+    public bool IsSystemGpuDetected => !string.IsNullOrEmpty(SystemGpuInfo.Name) && !SystemGpuInfo.Name.Contains("No GPU", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>System GPU name (e.g. Intel(R) Iris(R) Xe Graphics) detected when NVIDIA NVML is not present.</summary>
+    public string SystemGpuName => SystemGpuInfo.Name;
+
+    /// <summary>System GPU dedicated/adapter RAM in bytes (e.g. 2 GB for Iris Xe).</summary>
+    public ulong SystemVramBytes => SystemGpuInfo.VramBytes;
+
+    /// <summary>Human-readable GPU name reported by NVML, or active system GPU.</summary>
+    public string DeviceName { get; private set; } = SystemGpuInfo.Name;
 
     /// <summary>Last NVML/driver error, or null when everything is healthy.</summary>
     public string? LastError => _lastError;
+
+    /// <summary>Current active hardware tier (auto-detected or manually selected).</summary>
+    public GpuHardwareTier ActiveTier => _manualTierOverride ?? DetectedTier;
+
+    /// <summary>Auto-detected hardware tier based on device name and VRAM size.</summary>
+    public GpuHardwareTier DetectedTier { get; private set; } = GpuHardwareTier.Rtx3060_12Gb;
+
+    /// <summary>Number of MoE experts to offload to CPU (22 for RTX 3060, 34 for RTX 5050).</summary>
+    public int CpuMoeCount => ActiveTier == GpuHardwareTier.Rtx5050_8Gb ? Rtx5050CpuMoeCount : Rtx3060CpuMoeCount;
+
+    /// <summary>llama-server CLI argument snippet for CPU MoE offloading.</summary>
+    public string LlamaServerCpuMoeArg => ActiveTier == GpuHardwareTier.Rtx5050_8Gb ? "--n-cpu-moe 34" : "--n-cpu-moe 22";
+
+    /// <summary>Active MoE hardware profile.</summary>
+    public GpuMoEProfile ActiveProfile => CpuAffinityManager.GetProfile(ActiveTier);
+
+    /// <summary>Override detected tier with an explicit tier (e.g. from installer UI).</summary>
+    public void SetHardwareTier(GpuHardwareTier tier)
+    {
+        _manualTierOverride = tier;
+    }
 
     /// <summary>
     /// Attempts to initialize NVML. Safe to call repeatedly; failures are cached.
@@ -127,6 +174,13 @@ public sealed class VramBudgetMonitor : IDisposable
 
             _device = device;
             DeviceName = ReadDeviceName(device) ?? "NVIDIA GPU";
+
+            // Inspect device memory to auto-classify tier
+            if (NvmlDeviceGetMemoryInfo(_device, out NvmlMemory mem) == 0)
+            {
+                DetectedTier = CpuAffinityManager.DetectGpuProfile(DeviceName, mem.Total).Tier;
+            }
+
             return true;
         }
         catch (DllNotFoundException)
@@ -159,7 +213,7 @@ public sealed class VramBudgetMonitor : IDisposable
     {
         if (!TryInitialize())
         {
-            snapshot = CreateMockSnapshot(_lastError);
+            snapshot = CreateMockSnapshot(_lastError, ActiveTier);
             return false;
         }
 
@@ -169,25 +223,25 @@ public sealed class VramBudgetMonitor : IDisposable
             if (status != 0)
             {
                 _lastError = $"nvmlDeviceGetMemoryInfo failed with status {status}.";
-                snapshot = CreateMockSnapshot(_lastError);
+                snapshot = CreateMockSnapshot(_lastError, ActiveTier);
                 return false;
             }
 
-            snapshot = new VramSnapshot(true, memory.Total, memory.Free, memory.Used, null);
+            snapshot = new VramSnapshot(true, memory.Total, memory.Free, memory.Used, null, false, ActiveTier);
             _lastError = null;
             return true;
         }
         catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException or SEHException)
         {
             _lastError = ex.Message;
-            snapshot = CreateMockSnapshot(_lastError);
+            snapshot = CreateMockSnapshot(_lastError, ActiveTier);
             return false;
         }
     }
 
     /// <summary>
     /// Always returns a usable snapshot: real NVML numbers when a GPU is present,
-    /// otherwise a flagged 12 GB mock profile so the dashboard never shows blanks.
+    /// otherwise a simulated profile (12 GB for 3060, 8 GB for 5050) so UI never shows blanks.
     /// </summary>
     public VramSnapshot GetSnapshot()
     {
@@ -196,9 +250,9 @@ public sealed class VramBudgetMonitor : IDisposable
     }
 
     /// <summary>
-    /// True when the Qwen3-VL budget would still fit after the YOLO, Skia and OS
-    /// reservations. Returns false (never throws) when no real GPU is present.
-    /// Used before spawning llama-server.exe.
+    /// True when the Qwen3-VL MoE budget will fit given the active GPU hardware profile.
+    /// For RTX 3060 12GB: checks headroom against 10.6 GB MoE budget (--n-cpu-moe 22).
+    /// For RTX 5050 8GB: checks headroom against 6.6 GB MoE budget (--n-cpu-moe 34).
     /// </summary>
     public bool CanLoadQwen(out ulong projectedFreeAfterLoad)
     {
@@ -206,25 +260,31 @@ public sealed class VramBudgetMonitor : IDisposable
         if (!TryGetSnapshot(out VramSnapshot snapshot) || !snapshot.IsRealGpu)
             return false;
 
-        ulong overhead = YuoPoseModelBudgetBytes + SkiaSwapChainBudgetBytes + OsReserveBytes;
-        ulong required = overhead + QwenMoEBudgetBytes;
+        ulong overhead = YoloPoseModelBudgetBytes + SkiaSwapChainBudgetBytes + OsReserveBytes;
+        ulong moeBudget = ActiveTier == GpuHardwareTier.Rtx5050_8Gb
+            ? Rtx5050QwenMoEBudgetBytes
+            : Rtx3060QwenMoEBudgetBytes;
+
+        ulong required = overhead + moeBudget;
         projectedFreeAfterLoad = snapshot.TotalBytes > required ? snapshot.TotalBytes - required : 0;
         return snapshot.TotalBytes >= required;
     }
 
-    private static VramSnapshot CreateMockSnapshot(string? diagnostic) =>
-        new(
+    private static VramSnapshot CreateMockSnapshot(string? diagnostic, GpuHardwareTier tier)
+    {
+        ulong total = tier == GpuHardwareTier.Rtx5050_8Gb ? Rtx5050TotalVramBytes : Rtx3060TotalVramBytes;
+        return new VramSnapshot(
             IsAvailable: true,
-            TotalBytes: TargetTotalVramBytes,
-            FreeBytes: TargetTotalVramBytes,
+            TotalBytes: total,
+            FreeBytes: total,
             UsedBytes: 0,
-            Diagnostic: diagnostic ?? "No NVIDIA GPU detected; VRAM telemetry is simulated.",
-            IsMocked: true);
+            Diagnostic: diagnostic ?? (SystemGpuInfo.VramBytes > 0
+                ? $"GPU: {SystemGpuInfo.Name} · {SystemGpuInfo.VramBytes / 1024d / 1024d / 1024d:0.0} GB VRAM · DIRECTX 12 / iGPU"
+                : "No NVIDIA GPU detected; simulated VRAM telemetry."),
+            IsMocked: true,
+            DetectedTier: tier);
+    }
 
-    /// <summary>
-    /// Resolves nvml.dll from the standard NVSMI folder when it is not on PATH.
-    /// Called once before the first P/Invoke so laptops with only integrated GPUs fail fast.
-    /// </summary>
     private void EnsureNvmlProbePath()
     {
         if (_nativeLibraryPreloaded || !OperatingSystem.IsWindows())
@@ -234,15 +294,14 @@ public sealed class VramBudgetMonitor : IDisposable
 
         try
         {
-            if (!NativeLibrary.TryLoad(NvmlLibrary, out _)
-                && File.Exists(NvmlFallbackPath))
+            if (!NativeLibrary.TryLoad(NvmlLibrary, out _) && File.Exists(NvmlFallbackPath))
             {
                 NativeLibrary.TryLoad(NvmlFallbackPath, out _);
             }
         }
         catch (Exception ex) when (ex is DllNotFoundException or BadImageFormatException or InvalidOperationException)
         {
-            // Probing is best-effort; the P/Invoke below will surface the real error.
+            // Best-effort probe
         }
     }
 
@@ -271,7 +330,7 @@ public sealed class VramBudgetMonitor : IDisposable
         }
         catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
         {
-            // Driver disappeared mid-run; nothing left to release.
+            // Driver disappeared mid-run
         }
 
         _initialized = false;
@@ -285,5 +344,66 @@ public sealed class VramBudgetMonitor : IDisposable
 
         _disposed = true;
         TryShutdown();
+    }
+
+    /// <summary>
+    /// Probes Windows Registry / VideoController for the active system GPU when NVML is not present.
+    /// Returns the exact GPU name (e.g. "Intel(R) Iris(R) Xe Graphics") and adapter memory in bytes.
+    /// </summary>
+    public static (string Name, ulong VramBytes) QuerySystemGpu()
+    {
+        if (!OperatingSystem.IsWindows())
+            return ("DirectX / iGPU Path", 0);
+
+        try
+        {
+            using var videoClass = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}");
+            if (videoClass != null)
+            {
+                foreach (string subKeyName in videoClass.GetSubKeyNames())
+                {
+                    if (subKeyName.Length == 4 && char.IsDigit(subKeyName[0]))
+                    {
+                        using var subKey = videoClass.OpenSubKey(subKeyName);
+                        if (subKey == null) continue;
+
+                        string? driverDesc = subKey.GetValue("DriverDesc") as string;
+                        if (string.IsNullOrWhiteSpace(driverDesc) ||
+                            driverDesc.Contains("Basic Display", StringComparison.OrdinalIgnoreCase) ||
+                            driverDesc.Contains("Remote", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        ulong vram = 0;
+                        object? qwMem = subKey.GetValue("HardwareInformation.qwMemorySize");
+                        if (qwMem is long l && l > 0) vram = (ulong)l;
+                        else if (qwMem is ulong ul) vram = ul;
+
+                        if (vram == 0)
+                        {
+                            object? mem = subKey.GetValue("HardwareInformation.MemorySize");
+                            if (mem is byte[] b && b.Length >= 4)
+                                vram = BitConverter.ToUInt32(b, 0);
+                            else if (mem is int i && i > 0)
+                                vram = (ulong)i;
+                        }
+
+                        if (vram == 0)
+                        {
+                            object? ram = subKey.GetValue("AdapterRAM");
+                            if (ram is int r && r > 0) vram = (ulong)r;
+                            else if (ram is long lr && lr > 0) vram = (ulong)lr;
+                        }
+
+                        return (driverDesc.Trim(), vram);
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Registry probe failed
+        }
+
+        return ("DirectX Compatible GPU", 0);
     }
 }

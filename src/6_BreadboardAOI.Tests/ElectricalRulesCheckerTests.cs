@@ -1,3 +1,5 @@
+﻿using System;
+using System.Linq;
 using BreadboardAOI.Core.Contracts;
 using BreadboardAOI.Core.DrcEngine;
 using BreadboardAOI.Core.Geometry;
@@ -55,11 +57,8 @@ public sealed class ElectricalRulesCheckerTests
         var led = Create(ComponentKind.Led, a15, d15, trackId: 3);
         var checker = new ElectricalRulesChecker(Lookup);
 
-        // Warm up JIT so the measured frame reflects steady-state DRC cost.
         checker.EvaluateBoard(0, 0, Array.Empty<DetectedComponent>());
 
-        // The 100 us gate is a steady-state figure. Take the fastest of several
-        // runs so scheduler jitter or a GC from a parallel test cannot fail it.
         DrcStatePacket packet = null!;
         double bestMs = double.MaxValue;
         for (int run = 0; run < 7; run++)
@@ -190,7 +189,8 @@ public sealed class ElectricalRulesCheckerTests
     }
 
     [Fact]
-    public void Shipped_target_netlist_produces_ratsnest_air_wires()    {
+    public void Shipped_target_netlist_produces_ratsnest_air_wires()
+    {
         TargetSchematic? target = TargetSchematicLoader.TryLoadDefault(out string? error);
         target.Should().NotBeNull(error);
 

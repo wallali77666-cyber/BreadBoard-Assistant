@@ -1,65 +1,49 @@
-# Build output
-[Bb]in/
-[Oo]bj/
-[Ll]og/
-[Ll]ogs/
-
-# Visual Studio / Rider / VS Code
+# ZERO-DATA BANDWIDTH SHIELD (DO NOT REMOVE)
+*.gguf
+*.onnx
+*.engine
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.zip
+*.7z
+*.mp4
+*.avi
+*.wav
+*.pdf
+*.db
+*.sqlite
+bin/
+obj/
 .vs/
-.vscode/
-.idea/
-*.user
-*.suo
-*.userosscache
-*.sln.docstates
-*.DotSettings.user
-
-# Test + coverage artifacts
-TestResults/
-*.trx
-*.coverage
-coverage*.json
-coverage*.xml
-coverage*.info
-
-# NuGet
-*.nupkg
-*.snupkg
 packages/
-.nuget/
+models/
+tools/
+assets/models/
+bundled_tools/
+dist/
+app_payload/
+BreadboardAOI_Complete_Build/
+BreadboardAOI_Ghost_400KB/
+BreadboardAOI_Full_Setup.exe
+BreadboardAOI_Setup.exe
+*.exe
 
-# OS junk
-Thumbs.db
-desktop.ini
-.DS_Store
-
-# Local model weights / large binaries (download separately, see assets/models/README.md)
-assets/models/*.gguf
-assets/models/*.onnx
-assets/models/*.bin
-assets/models/*.exe
-assets/models/*.dll
-assets/models/*.engine
-assets/models/**/*.gguf
-assets/models/**/*.onnx
-assets/models/**/*.bin
-assets/models/**/*.exe
-assets/models/**/*.dll
-assets/models/**/*.engine
-assets/models/**/*.wav
-*.gguf.part*
-
-# Local helper binaries (llama-server download / scratch tools)
-tools/*.exe
-tools/*.dll
-tools/*.zip
-
-# Google OAuth client secrets / Drive session cache live outside the repo, never here
-google-client.json
-breadboardaoi-colab.json
-
-# Generated frame dumps / micro-crops
-artifacts/
-frames/
-*.png.tmp
+# Local scratch and debug dumps
+New folder/
+* - Copy.ps1
+dump_*.txt
+exact_avometer_match.txt
+avometer_restored_raw.txt
+original_avometer_block.xaml
+output_lines_*.txt
+stderr.txt
+stdout.txt
+step_*.txt
+scratch_box.png
 session-*.md
+.antigravity/
+.antigravityrc
+.ignore
+_SwarmBridge/

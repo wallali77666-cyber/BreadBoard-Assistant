@@ -9,8 +9,20 @@
         TextOptions.TextFormattingMode="Display"
         WindowStartupLocation="Manual"
         UseLayoutRounding="True"
-        SnapsToDevicePixels="True">
+        SnapsToDevicePixels="True"
+        Icon="pack://application:,,,/BreadboardAOI.App;component/Resources/app.ico">
 
+    <Window.InputBindings>
+        <KeyBinding Modifiers="Control" Key="Z" Command="{Binding UndoCircuitPartCommand}" />
+        <KeyBinding Modifiers="Control+Shift" Key="Z" Command="{Binding RedoCircuitPartCommand}" />
+        <KeyBinding Modifiers="Control" Key="Y" Command="{Binding RedoCircuitPartCommand}" />
+        <KeyBinding Modifiers="Control" Key="OemPlus" Command="{Binding ZoomInCommand}" />
+        <KeyBinding Modifiers="Control" Key="Add" Command="{Binding ZoomInCommand}" />
+        <KeyBinding Modifiers="Control" Key="OemMinus" Command="{Binding ZoomOutCommand}" />
+        <KeyBinding Modifiers="Control" Key="Subtract" Command="{Binding ZoomOutCommand}" />
+        <KeyBinding Modifiers="Control" Key="D0" Command="{Binding ResetZoomCommand}" />
+        <KeyBinding Modifiers="Control" Key="NumPad0" Command="{Binding ResetZoomCommand}" />
+    </Window.InputBindings>
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
     </Window.Resources>
@@ -31,8 +43,12 @@
                             Orientation="Horizontal"
                             VerticalAlignment="Center"
                             Margin="0,0,16,0">
-                    <Border Width="4" Height="26" Margin="0,0,10,0"
-                            Background="{StaticResource AccentBlueBrush}" />
+                    <Border Width="26" Height="26" Margin="0,0,10,0"
+                            CornerRadius="5"
+                            ClipToBounds="True">
+                        <Image Source="pack://application:,,,/BreadboardAOI.App;component/Resources/app_icon.png"
+                               RenderOptions.BitmapScalingMode="HighQuality" />
+                    </Border>
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="{Binding AppTitle}"
                                    FontFamily="{StaticResource UiFontFamily}"
@@ -64,6 +80,25 @@
 
                     <Border Style="{StaticResource ToolbarSeparatorStyle}" Margin="0,2,10,0" />
 
+                    <!-- DEV BOARD PLATFORM SWITCHER -->
+                    <StackPanel Margin="0,0,10,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="DEV BOARD" Style="{StaticResource ToolbarGroupLabelStyle}" />
+                            <Border Background="#1E293B" CornerRadius="3" Padding="5,1" Margin="6,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding ActiveDevBoardName}" FontSize="8.5" FontWeight="Bold" Foreground="{StaticResource AccentCyanBrush}" />
+                            </Border>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="UNO" Style="{StaticResource ToolbarButtonStyle}" Command="{Binding SelectDevBoardTypeCommand}" CommandParameter="uno" ToolTip="Arduino Uno R3/R4 (ATmega328P, 5V Logic)" />
+                            <Button Content="MEGA" Style="{StaticResource ToolbarButtonStyle}" Command="{Binding SelectDevBoardTypeCommand}" CommandParameter="mega" ToolTip="Arduino Mega 2560 (54 DIO, 5V Logic)" />
+                            <Button Content="ESP32" Style="{StaticResource ToolbarButtonStyle}" Command="{Binding SelectDevBoardTypeCommand}" CommandParameter="esp32" ToolTip="ESP32 DevKit V1 (3.3V Logic, Dual Xtensa, Wi-Fi/BLE)" />
+                            <Button Content="S2 MINI" Style="{StaticResource ToolbarButtonStyle}" Command="{Binding SelectDevBoardTypeCommand}" CommandParameter="s2" ToolTip="WEMOS ESP32-S2 Mini (3.3V Logic, Type-C OTG)" />
+                            <Button Content="STM32" Style="{StaticResource ToolbarButtonStyle}" Command="{Binding SelectDevBoardTypeCommand}" CommandParameter="stm32" ToolTip="STM32 Blue Pill ARM Cortex-M3 (3.3V Logic, 5V-Tolerant GPIO)" />
+                            <Button Content="NO MCU" Style="{StaticResource ToolbarButtonStyle}" Command="{Binding RemoveDevBoardCommand}" ToolTip="Remove Dev Board (Pure Standalone Breadboard Mode)" Background="#3B4252" Foreground="#D8DEE9" />
+                            <ToggleButton Content="DOCK" Style="{StaticResource ToolbarToggleButtonStyle}" IsChecked="{Binding IsDevBoardDocked, Mode=TwoWay}" ToolTip="Dock/Undock Dev Board beside breadboard in CAD viewport" />
+                        </StackPanel>
+                    </StackPanel>
+                    <Border Style="{StaticResource ToolbarSeparatorStyle}" Margin="0,2,10,0" />
                     <!-- IMAGE -->
                     <StackPanel Margin="0,0,10,0">
                         <TextBlock Text="IMAGE" Style="{StaticResource ToolbarGroupLabelStyle}" />
@@ -76,6 +111,32 @@
                                     Style="{StaticResource ToolbarButtonStyle}"
                                     Command="{Binding LoadImageFileCommand}"
                                     ToolTip="Replay a breadboard photo as the camera frame. You can also drag a photo onto the CAD viewport." />
+                            <Button Content="AI STUDIO"
+                                    Style="{StaticResource ToolbarButtonStyle}"
+                                    Command="{Binding OpenAiVisionInspectorCommand}"
+                                    ToolTip="Open the AI Live Studio: live camera or uploaded photo, Qwen thinking, action-first result, and voice." />
+                            <Button Content="BOX CODE"
+                                    Style="{StaticResource ToolbarButtonStyle}"
+                                    Command="{Binding OpenBoxCodingStudioCommand}"
+                                    Background="#6A1B9A" Foreground="#E1BEE7" FontWeight="Bold"
+                                    ToolTip="Open Scratch-Style Box Coding Studio: visual block coding for dev board and sensors." />
+                            <Button Content="WIRING GUIDE"
+                                    Style="{StaticResource ToolbarButtonStyle}"
+                                    Command="{Binding OpenWiringGuideStudioCommand}"
+                                    Background="#00695C" Foreground="#B2DFDB" FontWeight="Bold"
+                                    ToolTip="Open DevBoard &amp; Sensor Wiring Guide Studio: step-by-step connection instructions and tutor." />
+                            <ToggleButton Content="PIN LABELS"
+                                          Style="{StaticResource ToolbarToggleButtonStyle}"
+                                          IsChecked="{Binding ShowSensorPinLabels, Mode=TwoWay}"
+                                          ToolTip="Toggle live AR pin badges on sensors and components (VCC, GND, TRIG, ECHO, etc.)" />
+                            <ToggleButton Content="WIRING DOCK"
+                                          Style="{StaticResource ToolbarToggleButtonStyle}"
+                                          IsChecked="{Binding IsWiringGuideDocked, Mode=TwoWay}"
+                                          ToolTip="Toggle docking the DevBoard-Sensor Wiring Guide in the Left Panel" />
+                            <ToggleButton Content="LCD SIM"
+                                          Style="{StaticResource ToolbarToggleButtonStyle}"
+                                          IsChecked="{Binding ShowLcdSimulation, Mode=TwoWay}"
+                                          ToolTip="Toggle live 16x2 Character LCD AR visual simulation on breadboard (Blue backlight + dot matrix text)" />
                         </StackPanel>
                     </StackPanel>
 
@@ -187,6 +248,14 @@
                                     <CheckBox Content="Show component labels"
                                               Style="{StaticResource LayerCheckBoxStyle}"
                                               IsChecked="{Binding ShowComponentLabels, Mode=TwoWay}" />
+                                    <CheckBox Content="Show sensor &amp; component pin labels"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding ShowSensorPinLabels, Mode=TwoWay}"
+                                              ToolTip="Live AR pin labels on sensors and components (VCC, GND, TRIG, ECHO, A+, K-)" />
+                                    <CheckBox Content="Simulate 16x2 I2C LCD screen"
+                                              Style="{StaticResource LayerCheckBoxStyle}"
+                                              IsChecked="{Binding ShowLcdSimulation, Mode=TwoWay}"
+                                              ToolTip="Renders blue backlight and live simulated dot-matrix text on placed 16x2 LCD modules" />
                                     <CheckBox Content="Show CAD rulers"
                                               Style="{StaticResource LayerCheckBoxStyle}"
                                               IsChecked="{Binding ShowRulers, Mode=TwoWay}" />
@@ -259,6 +328,123 @@
                                                TextWrapping="Wrap"
                                                Margin="0,6,0,0" />
 
+                                    <!-- ======================================================== -->
+                                    <!-- PERSISTENT DEV BOARD PLATFORM & CONTROLLER CARD          -->
+                                    <!-- ======================================================== -->
+                                    <Border Background="#161B22" BorderBrush="#30363D" BorderThickness="1" CornerRadius="6" Padding="8,7" Margin="0,4,0,8">
+                                        <StackPanel>
+                                            <DockPanel LastChildFill="False" Margin="0,0,0,5">
+                                                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <Ellipse Width="8" Height="8" Fill="{StaticResource AccentCyanBrush}" Margin="0,0,5,0" VerticalAlignment="Center" />
+                                                    <TextBlock Text="DEV BOARD &amp; CONTROLLER" Style="{StaticResource StatusTextStyle}" FontWeight="Bold" />
+                                                </StackPanel>
+                                                <Border DockPanel.Dock="Right" Background="#0D1117" BorderBrush="#30363D" BorderThickness="1" CornerRadius="3" Padding="6,2">
+                                                    <TextBlock Text="{Binding ActiveDevBoardName}" FontSize="8.5" FontWeight="Bold" Foreground="{StaticResource AccentCyanBrush}" />
+                                                </Border>
+                                            </DockPanel>
+                                            <!-- 5 DEV BOARD BUTTONS -->
+                                            <UniformGrid Columns="2" Margin="0,2,0,3">
+                                                <Button Style="{StaticResource DockButtonStyle}" Margin="1"
+                                                        Command="{Binding SelectDevBoardTypeCommand}" CommandParameter="uno"
+                                                        ToolTip="Arduino Uno R3 / R4 (ATmega328P, 14 DIO, 6 AIN, 5V Logic)">
+                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                        <Ellipse Width="8" Height="8" Fill="#00979D" Margin="0,0,5,0" VerticalAlignment="Center" />
+                                                        <TextBlock Text="ARDUINO UNO" FontWeight="SemiBold" FontSize="9.5" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                </Button>
+                                                <Button Style="{StaticResource DockButtonStyle}" Margin="1"
+                                                        Command="{Binding SelectDevBoardTypeCommand}" CommandParameter="mega"
+                                                        ToolTip="Arduino Mega 2560 (ATmega2560, 54 DIO, 16 AIN, 4 UARTs, 5V Logic)">
+                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                        <Ellipse Width="8" Height="8" Fill="#00838F" Margin="0,0,5,0" VerticalAlignment="Center" />
+                                                        <TextBlock Text="MEGA 2560" FontWeight="SemiBold" FontSize="9.5" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                </Button>
+                                                <Button Style="{StaticResource DockButtonStyle}" Margin="1"
+                                                        Command="{Binding SelectDevBoardTypeCommand}" CommandParameter="esp32"
+                                                        ToolTip="ESP32 DevKit V1 (ESP-WROOM-32, Dual Xtensa LX6, Wi-Fi/BLE, 3.3V Logic)">
+                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                        <Ellipse Width="8" Height="8" Fill="#E65100" Margin="0,0,5,0" VerticalAlignment="Center" />
+                                                        <TextBlock Text="ESP32 DEVKIT" FontWeight="SemiBold" FontSize="9.5" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                </Button>
+                                                <Button Style="{StaticResource DockButtonStyle}" Margin="1"
+                                                        Command="{Binding SelectDevBoardTypeCommand}" CommandParameter="s2"
+                                                        ToolTip="WEMOS ESP32-S2 Mini (ESP32-S2FN4R2, Native USB OTG, 27 GPIO, Purple PCB)">
+                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                        <Ellipse Width="8" Height="8" Fill="#7B1FA2" Margin="0,0,5,0" VerticalAlignment="Center" />
+                                                        <TextBlock Text="WEMOS S2 MINI" FontWeight="SemiBold" FontSize="9.5" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                </Button>
+                                            </UniformGrid>
+                                            <Button Style="{StaticResource DockButtonStyle}" Margin="1,0,1,4"
+                                                    Command="{Binding SelectDevBoardTypeCommand}" CommandParameter="stm32"
+                                                    ToolTip="STM32 Blue Pill (STM32F103C8T6 ARM Cortex-M3 72MHz, 32 GPIO, 3.3V Logic, Blue PCB)">
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                    <Ellipse Width="8" Height="8" Fill="#1976D2" Margin="0,0,5,0" VerticalAlignment="Center" />
+                                                    <TextBlock Text="STM32 BLUE PILL (F103C8)" FontWeight="SemiBold" FontSize="9.5" VerticalAlignment="Center" />
+                                                </StackPanel>
+                                            </Button>
+                                            <UniformGrid Columns="3" Margin="0,0,0,4">
+                                                <Button Style="{StaticResource DockButtonStyle}" Margin="1"
+                                                        Command="{Binding RemoveDevBoardCommand}"
+                                                        ToolTip="Remove Dev Board (Pure Standalone Breadboard Mode)">
+                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                        <TextBlock Text="✕" Foreground="#E06C75" FontWeight="Bold" Margin="0,0,4,0" VerticalAlignment="Center" />
+                                                        <TextBlock Text="REMOVE" FontWeight="SemiBold" FontSize="9" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                </Button>
+                                                <Button Style="{StaticResource DockButtonStyle}" Margin="1"
+                                                        Command="{Binding OpenBoxCodingStudioCommand}"
+                                                        Background="#3B1C54" BorderBrush="#8A2BE2"
+                                                        ToolTip="Launch Visual Scratch-Style Box Coding Studio for this Board">
+                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                        <TextBlock Text="⚡" Foreground="#FFD700" FontWeight="Bold" Margin="0,0,4,0" VerticalAlignment="Center" />
+                                                        <TextBlock Text="BOX CODE" FontWeight="Bold" FontSize="9" Foreground="#E1BEE7" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                </Button>
+                                                <Button Style="{StaticResource DockButtonStyle}" Margin="1"
+                                                        Command="{Binding OpenWiringGuideStudioCommand}"
+                                                        Background="#004D40" BorderBrush="#00897B"
+                                                        ToolTip="Launch Step-by-Step Wiring &amp; Interface Tutor for this Board">
+                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                        <TextBlock Text="🔌" Foreground="#64FFDA" FontWeight="Bold" Margin="0,0,4,0" VerticalAlignment="Center" />
+                                                        <TextBlock Text="WIRING" FontWeight="Bold" FontSize="9" Foreground="#B2DFDB" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                </Button>
+                                            </UniformGrid>
+                                            <!-- ACTIVE BOARD SUMMARY CARD -->
+                                            <Border Background="{StaticResource PanelBackgroundBrush}" BorderBrush="{StaticResource BorderSubtleBrush}" BorderThickness="1" CornerRadius="4" Padding="6,5" Margin="0,2,0,4">
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding DevBoardSummary}" Style="{StaticResource MonoSecondaryTextStyle}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                    <TextBlock Text="{Binding DevBoardStrappingNotes}" Style="{StaticResource MonoSecondaryTextStyle}" FontSize="8.5" TextWrapping="Wrap" Margin="0,3,0,0" Foreground="{StaticResource TextMutedBrush}" />
+                                                </StackPanel>
+                                            </Border>
+                                            <!-- DOCK & AUTO-WIRING CONTROLS -->
+                                            <UniformGrid Columns="2" Margin="0,2,0,2">
+                                                <ToggleButton Style="{StaticResource ToolbarToggleButtonStyle}" Margin="1"
+                                                              IsChecked="{Binding IsDevBoardDocked, Mode=TwoWay}"
+                                                              Content="DOCK / UNDOCK"
+                                                              ToolTip="Toggle dev board docked on CAD viewport margin" />
+                                                <Button Style="{StaticResource DockButtonStyle}" Margin="1"
+                                                        Command="{Binding WirePowerRailsCommand}"
+                                                        Content="WIRE POWER"
+                                                        ToolTip="Auto-wire VCC (5V/3.3V) and GND from MCU to breadboard power rails" />
+                                            </UniformGrid>
+                                            <UniformGrid Columns="2" Margin="0,1,0,2">
+                                                <Button Style="{StaticResource DockButtonStyle}" Margin="1"
+                                                        Command="{Binding WireSensorCommand}"
+                                                        Content="WIRE SENSOR"
+                                                        ToolTip="Auto-connect VCC, GND and GPIO to placed sensor or LED" />
+                                                <Button Style="{StaticResource DockButtonStyle}" Margin="1"
+                                                        Command="{Binding ClearDevBoardWiresCommand}"
+                                                        Content="CLEAR WIRES"
+                                                        ToolTip="Remove all jumper wires attached to the microcontroller" />
+                                            </UniformGrid>
+                                            <TextBlock Text="* Click any MCU pin socket on CAD canvas, then click a breadboard tie point to route jumper wires."
+                                                       Style="{StaticResource MonoSecondaryTextStyle}" FontSize="8.5" Margin="0,3,0,0" TextWrapping="Wrap" Foreground="{StaticResource TextMutedBrush}" />
+                                        </StackPanel>
+                                    </Border>
                                     <TextBlock Text="PART PALETTE"
                                                Style="{StaticResource StatusTextStyle}"
                                                Margin="0,10,0,3" />
@@ -279,47 +465,274 @@
                                         </ListBox.ItemTemplate>
                                     </ListBox>
 
-                                    <TextBlock Text="QUICK PRESET / IC TYPE"
-                                               Style="{StaticResource StatusTextStyle}"
-                                               Margin="0,8,0,3" />
-                                    <ComboBox Style="{StaticResource DockComboBoxStyle}"
-                                              ItemsSource="{Binding PartValuePresets}"
-                                              SelectedItem="{Binding SelectedPartValuePreset, Mode=TwoWay}"
-                                              DisplayMemberPath="Label"
-                                              ToolTip="One click fills the value, the KiCad symbol and the DIP pin count. Pick RESISTOR for 220R / 10K, or IC for NE555P / LM358 / 74LS00 / CD4017 / ATmega328P." />
+                                    <!-- ========================================== -->
+                                    <!-- CONTEXTUAL PANEL 1: RESISTOR               -->
+                                    <!-- ========================================== -->
+                                    <StackPanel Visibility="{Binding IsResistorSelected, Converter={StaticResource BoolToVis}}" Margin="0,6,0,0">
+                                        <TextBlock Text="RESISTANCE VALUE (Ω)" Style="{StaticResource StatusTextStyle}" Margin="0,4,0,3" />
+                                        <DockPanel LastChildFill="True">
+                                            <TextBlock DockPanel.Dock="Right" Text="Ω" Style="{StaticResource MonoSecondaryTextStyle}" VerticalAlignment="Center" Margin="6,0,0,0" />
+                                            <TextBox Style="{StaticResource DockTextBoxStyle}"
+                                                     Text="{Binding NewPartValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                     ToolTip="Resistance in Ohms, e.g. 220, 330, 1K, 4K7, 10K, 100K, 1M." />
+                                        </DockPanel>
 
-                                    <TextBlock Text="FOOTPRINT"
-                                               Style="{StaticResource StatusTextStyle}"
-                                               Margin="0,8,0,3" />
-                                    <ComboBox Style="{StaticResource DockComboBoxStyle}"
-                                              ItemsSource="{Binding PinCountOptions}"
-                                              SelectedItem="{Binding SelectedPinCount, Mode=TwoWay}"
-                                              DisplayMemberPath="Label"
-                                              ToolTip="A DIP or 3-pin footprint is placed whole from a single click on pin 1." />
+                                        <!-- LIVE 4-BAND RESISTOR COLOUR CODE DISPLAY -->
+                                        <Border Background="#141414" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,6,0,4" Padding="6,4">
+                                            <StackPanel>
+                                                <TextBlock Text="4-BAND EIA COLOUR CODE" Style="{StaticResource PanelHeaderTextStyle}" FontSize="9" Margin="0,0,0,4" />
+                                                <Grid Height="14" Margin="0,2">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="20" />
+                                                        <ColumnDefinition Width="20" />
+                                                        <ColumnDefinition Width="20" />
+                                                        <ColumnDefinition Width="14" />
+                                                        <ColumnDefinition Width="20" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Grid.Column="0" Grid.ColumnSpan="7" Background="#D9C79E" BorderBrush="#5A4D3B" BorderThickness="1" CornerRadius="3" />
+                                                    <Border Grid.Column="1" Background="{Binding ResistorBand1Color}" Margin="2,0" />
+                                                    <Border Grid.Column="2" Background="{Binding ResistorBand2Color}" Margin="2,0" />
+                                                    <Border Grid.Column="3" Background="{Binding ResistorBand3Color}" Margin="2,0" />
+                                                    <Border Grid.Column="5" Background="{Binding ResistorBand4Color}" Margin="2,0" />
+                                                </Grid>
+                                                <TextBlock Text="{Binding ResistorBandDescription}" Style="{StaticResource MonoSecondaryTextStyle}" FontSize="9.5" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                            </StackPanel>
+                                        </Border>
 
-                                    <TextBlock Text="VALUE"
-                                               Style="{StaticResource StatusTextStyle}"
-                                               Margin="0,4,0,3" />
-                                    <TextBox Style="{StaticResource DockTextBoxStyle}"
-                                             Text="{Binding NewPartValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                             ToolTip="Printed value, e.g. 4K7, 10uF, NE555P. Blank uses the kind default." />
+                                        <TextBlock Text="COMMON E12 / E24 PRESETS" Style="{StaticResource StatusTextStyle}" Margin="0,4,0,3" />
+                                        <UniformGrid Columns="4" Margin="0,2,0,4">
+                                            <Button Content="220 Ω" Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetResistanceCommand}" CommandParameter="220R" ToolTip="LED current limiter on 5V" />
+                                            <Button Content="330 Ω" Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetResistanceCommand}" CommandParameter="330R" ToolTip="LED current limiter" />
+                                            <Button Content="470 Ω" Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetResistanceCommand}" CommandParameter="470R" />
+                                            <Button Content="1 kΩ" Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetResistanceCommand}" CommandParameter="1K" />
+                                            <Button Content="2.2 kΩ" Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetResistanceCommand}" CommandParameter="2K2" />
+                                            <Button Content="4.7 kΩ" Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetResistanceCommand}" CommandParameter="4K7" ToolTip="I2C pull-up" />
+                                            <Button Content="10 kΩ" Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetResistanceCommand}" CommandParameter="10K" ToolTip="Standard pull-up / pull-down" />
+                                            <Button Content="100 kΩ" Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetResistanceCommand}" CommandParameter="100K" />
+                                        </UniformGrid>
+                                    </StackPanel>
 
-                                    <TextBlock Text="KICAD SYMBOL / FOOTPRINT (OPTIONAL)"
-                                               Style="{StaticResource StatusTextStyle}"
-                                               Margin="0,2,0,3" />
-                                    <DockPanel LastChildFill="True" Margin="0,0,0,2">
-                                        <Button DockPanel.Dock="Right"
-                                                Content="BROWSE"
-                                                Style="{StaticResource DockButtonStyle}"
-                                                Width="70"
-                                                Margin="6,0,0,0"
-                                                Command="{Binding BrowseNewPartSymbolCommand}"
-                                                ToolTip="Search all 22,910 symbols in the bundled KiCad library." />
+                                    <!-- ========================================== -->
+                                    <!-- CONTEXTUAL PANEL 2: CAPACITOR (FARADS)     -->
+                                    <!-- ========================================== -->
+                                    <StackPanel Visibility="{Binding IsCapacitorSelected, Converter={StaticResource BoolToVis}}" Margin="0,6,0,0">
+                                        <TextBlock Text="CAPACITANCE VALUE (FARADS)" Style="{StaticResource StatusTextStyle}" Margin="0,4,0,3" />
+                                        <DockPanel LastChildFill="True">
+                                            <TextBox Style="{StaticResource DockTextBoxStyle}"
+                                                     Text="{Binding NewPartValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                     ToolTip="Capacitance value in Farads, e.g. 100pF, 10nF, 100nF, 1uF, 10uF, 100uF." />
+                                        </DockPanel>
+
+                                        <TextBlock Text="CERAMIC DISC (pF / nF — NON-POLARIZED)" Style="{StaticResource PanelHeaderTextStyle}" FontSize="9.5" Margin="0,6,0,3" Foreground="{StaticResource AccentBlueBrush}" />
+                                        <UniformGrid Columns="4" Margin="0,1,0,4">
+                                            <Button Content="100 pF" Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetCapacitanceCommand}" CommandParameter="100pF|Device/C" ToolTip="100 pF (101)" />
+                                            <Button Content="1 nF" Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetCapacitanceCommand}" CommandParameter="1nF|Device/C" ToolTip="1 nF (102)" />
+                                            <Button Content="10 nF" Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetCapacitanceCommand}" CommandParameter="10nF|Device/C" ToolTip="10 nF (103)" />
+                                            <Button Content="100 nF" Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetCapacitanceCommand}" CommandParameter="100nF|Device/C" ToolTip="100 nF / 0.1 µF (104) Decoupling" />
+                                        </UniformGrid>
+
+                                        <TextBlock Text="ELECTROLYTIC CAN (µF — POLARIZED)" Style="{StaticResource PanelHeaderTextStyle}" FontSize="9.5" Margin="0,4,0,3" Foreground="#E68619" />
+                                        <UniformGrid Columns="4" Margin="0,1,0,4">
+                                            <Button Content="1 µF" Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetCapacitanceCommand}" CommandParameter="1uF|Device/C_Polarized" ToolTip="1 µF 50V Polarized" />
+                                            <Button Content="10 µF" Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetCapacitanceCommand}" CommandParameter="10uF|Device/C_Polarized" ToolTip="10 µF 25V Polarized" />
+                                            <Button Content="47 µF" Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetCapacitanceCommand}" CommandParameter="47uF|Device/C_Polarized" ToolTip="47 µF 25V Polarized" />
+                                            <Button Content="100 µF" Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetCapacitanceCommand}" CommandParameter="100uF|Device/C_Polarized" ToolTip="100 µF 16V Polarized" />
+                                            <Button Content="470 µF" Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetCapacitanceCommand}" CommandParameter="470uF|Device/C_Polarized" ToolTip="470 µF 16V Polarized" />
+                                            <Button Content="1000 µF" Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetCapacitanceCommand}" CommandParameter="1000uF|Device/C_Polarized" ToolTip="1000 µF 16V Power Filter" />
+                                        </UniformGrid>
+                                        <TextBlock Text="* Electrolytic: Lead 1 is Anode (+), Lead 2 is Cathode (- stripe)." Style="{StaticResource MonoSecondaryTextStyle}" FontSize="9" Margin="0,2,0,0" />
+                                    </StackPanel>
+
+                                    <!-- ========================================== -->
+                                    <!-- CONTEXTUAL PANEL 3: IC TYPES               -->
+                                    <!-- ========================================== -->
+                                    <StackPanel Visibility="{Binding IsIcSelected, Converter={StaticResource BoolToVis}}" Margin="0,6,0,0">
+                                        <TextBlock Text="IC CLASSIFICATION &amp; CHIP TYPE" Style="{StaticResource StatusTextStyle}" Margin="0,4,0,3" />
+                                        <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                                  ItemsSource="{Binding PartValuePresets}"
+                                                  SelectedItem="{Binding SelectedPartValuePreset, Mode=TwoWay}"
+                                                  DisplayMemberPath="Label"
+                                                  ToolTip="Choose from standard classified ICs (555 Timers, Op-Amps, 74xx Gates, Counters, Motor Drivers, MCUs)." />
+
+                                        <TextBlock Text="DIP FOOTPRINT (PINS)" Style="{StaticResource StatusTextStyle}" Margin="0,6,0,3" />
+                                        <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                                  ItemsSource="{Binding PinCountOptions}"
+                                                  SelectedItem="{Binding SelectedPinCount, Mode=TwoWay}"
+                                                  DisplayMemberPath="Label"
+                                                  ToolTip="DIP packages straddle the central trench. Click pin 1 to place the entire footprint." />
+
+                                        <TextBlock Text="IC PART NUMBER / LABEL" Style="{StaticResource StatusTextStyle}" Margin="0,4,0,3" />
                                         <TextBox Style="{StaticResource DockTextBoxStyle}"
-                                                 Text="{Binding NewPartSymbol, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                 ToolTip="Library/Symbol, e.g. Timer/NE555P. Blank uses the kind default." />
-                                    </DockPanel>
+                                                 Text="{Binding NewPartValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 ToolTip="Printed chip name, e.g. NE555P, LM358, 74LS04, L293D." />
 
+                                        <TextBlock Text="KICAD SYMBOL (OPTIONAL)" Style="{StaticResource StatusTextStyle}" Margin="0,4,0,3" />
+                                        <DockPanel LastChildFill="True" Margin="0,0,0,2">
+                                            <Button DockPanel.Dock="Right" Content="BROWSE" Style="{StaticResource DockButtonStyle}" Width="65" Margin="4,0,0,0" Command="{Binding BrowseNewPartSymbolCommand}" />
+                                            <TextBox Style="{StaticResource DockTextBoxStyle}" Text="{Binding NewPartSymbol, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        </DockPanel>
+                                    </StackPanel>
+
+                                    <!-- ========================================== -->
+                                    <!-- CONTEXTUAL PANEL 4: JUMPER WIRE COLOURS    -->
+                                    <!-- ========================================== -->
+                                    <StackPanel Visibility="{Binding IsJumperSelected, Converter={StaticResource BoolToVis}}" Margin="0,6,0,0">
+                                        <TextBlock Text="JUMPER WIRE COLOUR" Style="{StaticResource StatusTextStyle}" Margin="0,4,0,3" />
+                                        <ItemsControl ItemsSource="{Binding JumperColors}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <UniformGrid Columns="4" />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Button Margin="2"
+                                                            Padding="4,5"
+                                                            Style="{StaticResource DockButtonStyle}"
+                                                            Command="{Binding DataContext.SelectJumperColorCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                            CommandParameter="{Binding Code}"
+                                                            ToolTip="{Binding Usage}">
+                                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                            <Border Width="10" Height="10" Background="{Binding HexColor}" BorderBrush="#555" BorderThickness="1" CornerRadius="2" Margin="0,0,4,0" />
+                                                            <TextBlock Text="{Binding Name}" FontSize="10" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <TextBlock Text="Selected wire color will be drawn accurately on the 2D canvas." Style="{StaticResource MonoSecondaryTextStyle}" FontSize="9.5" Margin="0,4,0,0" />
+                                    </StackPanel>
+
+                                    <!-- ========================================== -->
+                                    <!-- CONTEXTUAL PANEL 5: LED COLOUR             -->
+                                    <!-- ========================================== -->
+                                    <StackPanel Visibility="{Binding IsLedSelected, Converter={StaticResource BoolToVis}}" Margin="0,6,0,0">
+                                        <TextBlock Text="LED COLOUR &amp; FORWARD VOLTAGE" Style="{StaticResource StatusTextStyle}" Margin="0,4,0,3" />
+                                        <UniformGrid Columns="2" Margin="0,2,0,4">
+                                            <Button Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetLedColorCommand}" CommandParameter="RED 2.0V">
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                    <Ellipse Width="9" Height="9" Fill="#FF1744" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                                    <TextBlock Text="RED 2.0V" VerticalAlignment="Center" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetLedColorCommand}" CommandParameter="GREEN 2.1V">
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                    <Ellipse Width="9" Height="9" Fill="#00E676" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                                    <TextBlock Text="GREEN 2.1V" VerticalAlignment="Center" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetLedColorCommand}" CommandParameter="BLUE 3.2V">
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                    <Ellipse Width="9" Height="9" Fill="#2979FF" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                                    <TextBlock Text="BLUE 3.2V" VerticalAlignment="Center" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetLedColorCommand}" CommandParameter="YELLOW 2.1V">
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                    <Ellipse Width="9" Height="9" Fill="#FFEA00" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                                    <TextBlock Text="YELLOW 2.1V" VerticalAlignment="Center" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetLedColorCommand}" CommandParameter="WHITE 3.0V">
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                    <Ellipse Width="9" Height="9" Fill="#FFFFFF" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                                    <TextBlock Text="WHITE 3.0V" VerticalAlignment="Center" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Style="{StaticResource DockButtonStyle}" Margin="1" Command="{Binding SetLedColorCommand}" CommandParameter="ORANGE 2.0V">
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                    <Ellipse Width="9" Height="9" Fill="#FF9100" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                                    <TextBlock Text="ORANGE 2.0V" VerticalAlignment="Center" />
+                                                </StackPanel>
+                                            </Button>
+                                        </UniformGrid>
+                                        <TextBlock Text="* Polarity: Lead 1 is Anode (+ longer lead), Lead 2 is Cathode (- flat rim)." Style="{StaticResource MonoSecondaryTextStyle}" FontSize="9" Margin="0,2,0,0" />
+                                    </StackPanel>
+
+                                    <!-- ========================================== -->
+                                    <!-- CONTEXTUAL PANEL 6: BUTTON / SWITCH        -->
+                                    <!-- ========================================== -->
+                                    <StackPanel Visibility="{Binding IsButtonSelected, Converter={StaticResource BoolToVis}}" Margin="0,6,0,0">
+                                        <TextBlock Text="SWITCH TYPE" Style="{StaticResource StatusTextStyle}" Margin="0,4,0,3" />
+                                        <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                                  ItemsSource="{Binding PartValuePresets}"
+                                                  SelectedItem="{Binding SelectedPartValuePreset, Mode=TwoWay}"
+                                                  DisplayMemberPath="Label" />
+                                    </StackPanel>
+
+                                    <!-- ========================================== -->
+                                    <!-- CONTEXTUAL PANEL 7: DIODE                  -->
+                                    <!-- ========================================== -->
+                                    <StackPanel Visibility="{Binding IsDiodeSelected, Converter={StaticResource BoolToVis}}" Margin="0,6,0,0">
+                                        <TextBlock Text="DIODE TYPE" Style="{StaticResource StatusTextStyle}" Margin="0,4,0,3" />
+                                        <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                                  ItemsSource="{Binding PartValuePresets}"
+                                                  SelectedItem="{Binding SelectedPartValuePreset, Mode=TwoWay}"
+                                                  DisplayMemberPath="Label" />
+                                    </StackPanel>
+                                    <!-- ========================================== -->
+                                    <!-- CONTEXTUAL PANEL 8: TRANSISTOR             -->
+                                    <!-- ========================================== -->
+                                    <StackPanel Visibility="{Binding IsTransistorSelected, Converter={StaticResource BoolToVis}}" Margin="0,6,0,0">
+                                        <TextBlock Text="TRANSISTOR TYPE" Style="{StaticResource StatusTextStyle}" Margin="0,4,0,3" />
+                                        <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                                  ItemsSource="{Binding PartValuePresets}"
+                                                  SelectedItem="{Binding SelectedPartValuePreset, Mode=TwoWay}"
+                                                  DisplayMemberPath="Label" />
+                                    </StackPanel>
+                                    <!-- ========================================== -->
+                                    <!-- CONTEXTUAL PANEL 9: POTENTIOMETER          -->
+                                    <!-- ========================================== -->
+                                    <StackPanel Visibility="{Binding IsPotentiometerSelected, Converter={StaticResource BoolToVis}}" Margin="0,6,0,0">
+                                        <TextBlock Text="POTENTIOMETER RESISTANCE" Style="{StaticResource StatusTextStyle}" Margin="0,4,0,3" />
+                                        <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                                  ItemsSource="{Binding PartValuePresets}"
+                                                  SelectedItem="{Binding SelectedPartValuePreset, Mode=TwoWay}"
+                                                  DisplayMemberPath="Label" />
+                                    </StackPanel>
+                                    <!-- ========================================== -->
+                                    <!-- CONTEXTUAL PANEL 10: VOLTAGE REGULATOR     -->
+                                    <!-- ========================================== -->
+                                    <StackPanel Visibility="{Binding IsRegulatorSelected, Converter={StaticResource BoolToVis}}" Margin="0,6,0,0">
+                                        <TextBlock Text="VOLTAGE REGULATOR" Style="{StaticResource StatusTextStyle}" Margin="0,4,0,3" />
+                                        <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                                  ItemsSource="{Binding PartValuePresets}"
+                                                  SelectedItem="{Binding SelectedPartValuePreset, Mode=TwoWay}"
+                                                  DisplayMemberPath="Label" />
+                                    </StackPanel>
+                                    <!-- ========================================== -->
+                                    <!-- CONTEXTUAL PANEL 11: BUZZER                -->
+                                    <!-- ========================================== -->
+                                    <StackPanel Visibility="{Binding IsBuzzerSelected, Converter={StaticResource BoolToVis}}" Margin="0,6,0,0">
+                                        <TextBlock Text="BUZZER TYPE" Style="{StaticResource StatusTextStyle}" Margin="0,4,0,3" />
+                                        <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                                  ItemsSource="{Binding PartValuePresets}"
+                                                  SelectedItem="{Binding SelectedPartValuePreset, Mode=TwoWay}"
+                                                  DisplayMemberPath="Label" />
+                                    </StackPanel>
+                                    <!-- ========================================== -->
+                                    <!-- CONTEXTUAL PANEL 12: SENSOR                -->
+                                    <!-- ========================================== -->
+                                    <StackPanel Visibility="{Binding IsSensorSelected, Converter={StaticResource BoolToVis}}" Margin="0,6,0,0">
+                                        <TextBlock Text="SENSOR / MODULE TYPE" Style="{StaticResource StatusTextStyle}" Margin="0,4,0,3" />
+                                        <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                                  ItemsSource="{Binding PartValuePresets}"
+                                                  SelectedItem="{Binding SelectedPartValuePreset, Mode=TwoWay}"
+                                                  DisplayMemberPath="Label" />
+                                    </StackPanel>
+                                    <!-- ========================================== -->
+                                    <!-- CONTEXTUAL PANEL 13: BATTERY               -->
+                                    <!-- ========================================== -->
+                                    <StackPanel Visibility="{Binding IsBatterySelected, Converter={StaticResource BoolToVis}}" Margin="0,6,0,0">
+                                        <TextBlock Text="BATTERY / POWER SOURCE" Style="{StaticResource StatusTextStyle}" Margin="0,4,0,3" />
+                                        <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                                  ItemsSource="{Binding PartValuePresets}"
+                                                  SelectedItem="{Binding SelectedPartValuePreset, Mode=TwoWay}"
+                                                  DisplayMemberPath="Label" />
+                                    </StackPanel>
+                                    <!-- ========================================== -->
                                     <TextBlock Text="LEAD 1 / LEAD 2 (CLICK OR TYPE)"
                                                Style="{StaticResource StatusTextStyle}"
                                                Margin="0,6,0,3" />
@@ -1076,6 +1489,180 @@
                             </StackPanel>
                         </ScrollViewer>
                     </TabItem>
+                    <!-- ============================ WIRING ============================ -->
+                    <TabItem Header="WIRING" Style="{StaticResource DockTabItemStyle}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel Margin="0,0,0,16">
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                <!-- Dock Top Control Bar -->
+                                <Border Style="{StaticResource DockHeaderBorderStyle}">
+                                    <DockPanel LastChildFill="False">
+                                        <TextBlock Text="🔌 WIRING GUIDE &amp; TUTOR" Style="{StaticResource DockHeaderTextStyle}" VerticalAlignment="Center" />
+                                        <Button DockPanel.Dock="Right"
+                                                Content="✕ CLOSE"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Height="20" Padding="6,1"
+                                                Command="{Binding CloseWiringGuideDockCommand}"
+                                                ToolTip="Close the Left Panel Wiring Guide dock" />
+                                        <Button DockPanel.Dock="Right"
+                                                Content="↗ POPUP"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Height="20" Padding="6,1" Margin="0,0,4,0"
+                                                Command="{Binding UndockWiringGuideToPopupCommand}"
+                                                ToolTip="Restore Wiring Guide Studio as a standalone floating window" />
+                                    </DockPanel>
+                                </Border>
+
+                                <!-- Board & Sensor Selection Controls -->
+                                <Border Background="#161822" BorderBrush="#2A2D3D" BorderThickness="1" CornerRadius="4" Margin="10,8,10,6" Padding="10,8">
+                                    <StackPanel>
+                                        <TextBlock Text="TARGET DEV BOARD" Style="{StaticResource StatusTextStyle}" Margin="0,0,0,3" />
+                                        <ComboBox ItemsSource="{Binding AvailableDockedBoards}"
+                                                  SelectedItem="{Binding SelectedDockedBoard, Mode=TwoWay}"
+                                                  Background="#232634" Foreground="#FFFFFF" BorderBrush="#4B5563"
+                                                  Margin="0,0,0,8" Padding="6,3" />
+
+                                        <DockPanel LastChildFill="False" Margin="0,0,0,3">
+                                            <TextBlock Text="ACTIVE SENSOR" Style="{StaticResource StatusTextStyle}" VerticalAlignment="Center" />
+                                            <Button DockPanel.Dock="Right"
+                                                    Content="✨ AUTO-DETECT"
+                                                    Style="{StaticResource DockButtonStyle}"
+                                                    Height="18" Padding="6,0"
+                                                    Command="{Binding AutoDetectDockedSensorCommand}"
+                                                    ToolTip="Auto-detect sensor breakout placed in current breadboard draft" />
+                                        </DockPanel>
+                                        <ComboBox ItemsSource="{Binding DockedSensors}"
+                                                  SelectedItem="{Binding SelectedDockedSensor, Mode=TwoWay}"
+                                                  DisplayMemberPath="DisplayName"
+                                                  Background="#232634" Foreground="#FFFFFF" BorderBrush="#4B5563"
+                                                  Padding="6,3" />
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Sensor Overview Card -->
+                                <Border Background="#151722" BorderBrush="#2A2D3D" BorderThickness="1" CornerRadius="4" Margin="10,4,10,6" Padding="10,8">
+                                    <StackPanel>
+                                        <DockPanel LastChildFill="False" Margin="0,0,0,4">
+                                            <TextBlock Text="{Binding DockedWiringGuide.Sensor.DisplayName}"
+                                                       FontWeight="Bold" FontSize="13" Foreground="#FFFFFF" VerticalAlignment="Center" />
+                                            <Border DockPanel.Dock="Right" Background="#1E293B" BorderBrush="#38BDF8" BorderThickness="1" CornerRadius="3" Padding="4,1">
+                                                <TextBlock Text="{Binding DockedWiringGuide.Sensor.Protocol}"
+                                                           FontSize="9" FontWeight="Bold" Foreground="#38BDF8" />
+                                            </Border>
+                                        </DockPanel>
+
+                                        <TextBlock Text="{Binding DockedWiringGuide.Sensor.Summary}"
+                                                   Style="{StaticResource MonoSecondaryTextStyle}"
+                                                   TextWrapping="Wrap" Margin="0,0,0,6" />
+
+                                        <DockPanel LastChildFill="False">
+                                            <TextBlock Text="OPERATING VOLTAGE:" Style="{StaticResource StatusTextStyle}" FontSize="10" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                            <TextBlock Text="{Binding DockedWiringGuide.Sensor.OperatingVoltage}"
+                                                       FontWeight="Bold" FontSize="10" Foreground="#34D399" VerticalAlignment="Center" />
+                                        </DockPanel>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Level-Shifting / Voltage Warning Card (if required) -->
+                                <Border Background="#2B1D0E" BorderBrush="#D97706" BorderThickness="1" CornerRadius="4"
+                                        Margin="10,4,10,6" Padding="10,8"
+                                        Visibility="{Binding DockedWiringGuide.IsLevelShiftingRequired, Converter={StaticResource BoolToVis}}">
+                                    <StackPanel>
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                            <TextBlock Text="⚠️" FontSize="14" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                            <TextBlock Text="VOLTAGE LEVEL COMPATIBILITY WARNING" FontWeight="Bold" FontSize="11" Foreground="#FBBF24" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding DockedWiringGuide.LevelShiftingAdvice}"
+                                                   Foreground="#FDE68A" FontSize="11" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Step-by-Step Connection Table -->
+                                <Border Style="{StaticResource DockHeaderBorderStyle}" Margin="0,6,0,0">
+                                    <TextBlock Text="CONNECTION &amp; JUMPER WIRE MAP" Style="{StaticResource DockHeaderTextStyle}" />
+                                </Border>
+
+                                <ItemsControl ItemsSource="{Binding DockedWiringGuide.Steps}" Margin="10,4,10,6">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Background="#181A26" BorderBrush="#2A2D3D" BorderThickness="1" CornerRadius="4" Margin="0,0,0,4" Padding="8,6">
+                                                <Grid>
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                    </Grid.RowDefinitions>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+
+                                                    <!-- Pin Number Circle -->
+                                                    <Border Grid.Row="0" Grid.Column="0" Grid.RowSpan="2"
+                                                            Width="22" Height="22" CornerRadius="11"
+                                                            Background="#2A2D3D" Margin="0,0,8,0"
+                                                            VerticalAlignment="Center" HorizontalAlignment="Center">
+                                                        <TextBlock Text="{Binding SensorPinNumber}"
+                                                                   FontWeight="Bold" FontSize="10" Foreground="#E2E8F0"
+                                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                    </Border>
+
+                                                    <!-- Sensor Pin -> Dev Board Pin -->
+                                                    <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding SensorPinName}" FontWeight="Bold" FontSize="12" Foreground="#FFFFFF" />
+                                                        <TextBlock Text=" ➔ " Foreground="#94A3B8" FontSize="12" />
+                                                        <TextBlock Text="{Binding TargetBoardPin}" FontWeight="Bold" FontSize="12" Foreground="#38BDF8" />
+                                                    </StackPanel>
+
+                                                    <!-- Wire Color Pill -->
+                                                    <Border Grid.Row="0" Grid.Column="2" Background="#1E293B" BorderBrush="#334155" BorderThickness="1" CornerRadius="3" Padding="5,2" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding WireColor}" FontWeight="Bold" FontSize="9" Foreground="{Binding WireColorHex}" />
+                                                    </Border>
+
+                                                    <!-- Connection Explanation -->
+                                                    <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2"
+                                                               Text="{Binding Explanation}"
+                                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                                               FontSize="10" TextWrapping="Wrap" Margin="0,2,0,0" />
+
+                                                    <!-- Inline Warning Badge (if present) -->
+                                                    <Border Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2"
+                                                            Background="#3B1212" BorderBrush="#EF4444" BorderThickness="1" CornerRadius="3"
+                                                            Margin="0,4,0,0" Padding="6,3"
+                                                            Visibility="{Binding HasWarning, Converter={StaticResource BoolToVis}}">
+                                                        <TextBlock Text="{Binding Warning}"
+                                                                   Foreground="#FCA5A5" FontSize="9.5" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                    </Border>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <!-- Verification Firmware Card -->
+                                <Border Style="{StaticResource DockHeaderBorderStyle}" Margin="0,6,0,0">
+                                    <DockPanel LastChildFill="False">
+                                        <TextBlock Text="TEST FIRMWARE (ARDUINO / C++)" Style="{StaticResource DockHeaderTextStyle}" VerticalAlignment="Center" />
+                                        <Button DockPanel.Dock="Right"
+                                                Content="📋 COPY CODE"
+                                                Style="{StaticResource DockButtonStyle}"
+                                                Height="20" Padding="8,1"
+                                                Command="{Binding CopyDockedCodeCommand}"
+                                                ToolTip="Copy verification test code to clipboard" />
+                                    </DockPanel>
+                                </Border>
+
+                                <Border Background="#0D0F17" BorderBrush="#2A2D3D" BorderThickness="1" CornerRadius="4" Margin="10,6,10,6" Padding="8">
+                                    <TextBlock Text="{Binding DockedWiringGuide.Sensor.MinimalTestCodeIno}"
+                                               FontFamily="Consolas, Cascadia Code, Courier New"
+                                               FontSize="10" Foreground="#A7F3D0" TextWrapping="Wrap" MaxHeight="160" />
+                                </Border>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
                 </TabControl>
             </Border>
 
@@ -1099,15 +1686,63 @@
                 <Border Grid.Row="1"
                         Background="{StaticResource PasteboardBrush}"
                         ClipToBounds="True">
-                    <skia:SKElement x:Name="Viewport"
-                                    PaintSurface="OnViewportPaintSurface"
-                                    MouseMove="OnViewportMouseMove"
-                                    MouseLeave="OnViewportMouseLeave"
-                                    MouseLeftButtonDown="OnViewportMouseLeftButtonDown"
-                                    MouseRightButtonDown="OnViewportMouseRightButtonDown"
-                                    AllowDrop="True"
-                                    DragOver="OnViewportDragOver"
-                                    Drop="OnViewportDrop" />
+                    <Grid>
+                        <skia:SKElement x:Name="Viewport"
+                                        PaintSurface="OnViewportPaintSurface"
+                                        MouseMove="OnViewportMouseMove"
+                                        MouseLeave="OnViewportMouseLeave"
+                                        MouseLeftButtonDown="OnViewportMouseLeftButtonDown"
+                                        MouseRightButtonDown="OnViewportMouseRightButtonDown"
+                                        MouseUp="OnViewportMouseUp"
+                                        MouseWheel="OnViewportMouseWheel"
+                                        AllowDrop="True"
+                                        DragOver="OnViewportDragOver"
+                                        Drop="OnViewportDrop" />
+                        <!-- FLOATING 2.5D CAD VIEWPORT ZOOM TOOLBAR -->
+                        <Border HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                Margin="0,0,16,16" Background="#EE161920"
+                                CornerRadius="5" BorderBrush="#3B4252" BorderThickness="1"
+                                Padding="5,4">
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="−" Command="{Binding ZoomOutCommand}" Width="28" Height="26"
+                                        ToolTip="Zoom Out (Ctrl+Minus / Wheel Down)"
+                                        Background="#252A34" Foreground="#ECEFF4" BorderBrush="#434C5E"
+                                        FontWeight="Bold" FontSize="13" Cursor="Hand" />
+                                <TextBlock Text="{Binding ViewportZoomText}" VerticalAlignment="Center" Margin="8,0"
+                                           Foreground="#88C0D0" FontWeight="Bold" FontSize="11" FontFamily="Consolas"
+                                           MinWidth="38" TextAlignment="Center" ToolTip="Current Viewport Zoom" />
+                                <Button Content="+" Command="{Binding ZoomInCommand}" Width="28" Height="26"
+                                        ToolTip="Zoom In (Ctrl+Plus / Wheel Up)"
+                                        Background="#252A34" Foreground="#ECEFF4" BorderBrush="#434C5E"
+                                        FontWeight="Bold" FontSize="13" Cursor="Hand" />
+                                <Button Content="FIT" Command="{Binding ResetZoomCommand}" Width="38" Height="26" Margin="4,0,0,0"
+                                        ToolTip="Reset Zoom 100% (Ctrl+0)"
+                                        Background="#2E3440" Foreground="#A3BE8C" BorderBrush="#434C5E"
+                                        FontWeight="Bold" FontSize="10" Cursor="Hand" />
+                                <Border Width="1" Background="#434C5E" Margin="6,2" />
+                                <Button Content="◄" Command="{Binding PanLeftCommand}" Width="26" Height="26"
+                                        ToolTip="Pan Viewport Left (Arrow Left / A)"
+                                        Background="#252A34" Foreground="#ECEFF4" BorderBrush="#434C5E"
+                                        FontWeight="Bold" FontSize="11" Cursor="Hand" />
+                                <Button Content="▲" Command="{Binding PanUpCommand}" Width="26" Height="26" Margin="2,0,0,0"
+                                        ToolTip="Pan Viewport Up (Arrow Up / W)"
+                                        Background="#252A34" Foreground="#ECEFF4" BorderBrush="#434C5E"
+                                        FontWeight="Bold" FontSize="11" Cursor="Hand" />
+                                <Button Content="▼" Command="{Binding PanDownCommand}" Width="26" Height="26" Margin="2,0,0,0"
+                                        ToolTip="Pan Viewport Down (Arrow Down / S)"
+                                        Background="#252A34" Foreground="#ECEFF4" BorderBrush="#434C5E"
+                                        FontWeight="Bold" FontSize="11" Cursor="Hand" />
+                                <Button Content="►" Command="{Binding PanRightCommand}" Width="26" Height="26" Margin="2,0,0,0"
+                                        ToolTip="Pan Viewport Right (Arrow Right / D)"
+                                        Background="#252A34" Foreground="#ECEFF4" BorderBrush="#434C5E"
+                                        FontWeight="Bold" FontSize="11" Cursor="Hand" />
+                                <Button Content="⌖" Command="{Binding ResetPanCommand}" Width="26" Height="26" Margin="3,0,0,0"
+                                        ToolTip="Center Viewport (Reset Pan)"
+                                        Background="#2E3440" Foreground="#88C0D0" BorderBrush="#434C5E"
+                                        FontWeight="Bold" FontSize="12" Cursor="Hand" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
                 </Border>
             </Grid>
 
@@ -1120,7 +1755,10 @@
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="238" />
+                        <RowDefinition Height="120" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
@@ -1250,7 +1888,160 @@
                         </Grid>
                     </StackPanel>
 
-                    <Grid Grid.Row="4">
+                    <Border Grid.Row="4" Style="{StaticResource DockSeparatorStyle}" />
+                    <!-- ========================================================
+                         ZONE 2D — AVOMETER (DIGITAL MULTIMETER)
+                         ======================================================== -->
+                    <StackPanel Grid.Row="5">
+                        <Border Style="{StaticResource DockHeaderBorderStyle}">
+                            <DockPanel LastChildFill="False">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Ellipse Width="7" Height="7" Margin="0,0,6,0">
+                                        <Ellipse.Style>
+                                            <Style TargetType="{x:Type Ellipse}">
+                                                <Setter Property="Fill" Value="{StaticResource TextMutedBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsAvometerActive}" Value="True">
+                                                        <Setter Property="Fill" Value="{StaticResource LedOnlineBrush}" />
+                                                        <Setter Property="Effect">
+                                                            <Setter.Value>
+                                                                <DropShadowEffect Color="#10B981" BlurRadius="6" ShadowDepth="0" Opacity="0.9" />
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Ellipse.Style>
+                                    </Ellipse>
+                                    <TextBlock Text="DIGITAL AVOmeter" Style="{StaticResource DockHeaderTextStyle}" />
+                                </StackPanel>
+                                <CheckBox DockPanel.Dock="Right"
+                                          Content="ACTIVE"
+                                          Style="{StaticResource LayerCheckBoxStyle}"
+                                          IsChecked="{Binding IsAvometerActive, Mode=TwoWay}"
+                                          ToolTip="Toggle AVOmeter needle probes display and simulation on breadboard." />
+                            </DockPanel>
+                        </Border>
+                        <StackPanel Margin="10,6,10,8">
+                            <!-- Digital LCD Bezel Screen -->
+                            <Border Background="#0D1117" BorderBrush="#30363D" BorderThickness="1" CornerRadius="4" Padding="8,6">
+                                <StackPanel>
+                                    <!-- LCD Header / Annunciator Bar -->
+                                    <DockPanel LastChildFill="False">
+                                        <TextBlock Text="{Binding AvometerStatus}"
+                                                   Style="{StaticResource StatusTextStyle}"
+                                                   FontSize="8.5"
+                                                   Foreground="#88C0D0" />
+                                        <Border DockPanel.Dock="Right"
+                                                Background="#D7373F"
+                                                CornerRadius="2"
+                                                Padding="4,1"
+                                                Visibility="{Binding IsContinuityBeep, Converter={StaticResource BoolToVis}}">
+                                            <TextBlock Text="BEEP 🔊"
+                                                       FontFamily="{StaticResource UiFontFamily}"
+                                                       FontSize="8" FontWeight="Bold"
+                                                       Foreground="#FFFFFF" />
+                                        </Border>
+                                    </DockPanel>
+                                    <!-- Main Digital Value & Unit -->
+                                    <DockPanel Margin="0,3,0,1" LastChildFill="True">
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Text="{Binding AvometerUnit}"
+                                                   FontFamily="{StaticResource MonoFontFamily}"
+                                                   FontSize="12" FontWeight="Bold"
+                                                   Foreground="#88C0D0"
+                                                   VerticalAlignment="Bottom"
+                                                   Margin="6,0,0,2" />
+                                        <TextBlock Text="{Binding AvometerDisplayValue}"
+                                                   FontFamily="{StaticResource MonoFontFamily}"
+                                                   FontSize="22" FontWeight="Bold"
+                                                   Foreground="#38BDF8"
+                                                   VerticalAlignment="Center" />
+                                    </DockPanel>
+                                    <!-- Secondary Diagnostic Reading -->
+                                    <TextBlock Text="{Binding AvometerSecondaryReading}"
+                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                               FontSize="9"
+                                               TextTrimming="CharacterEllipsis"
+                                               Margin="0,1,0,3" />
+                                    <!-- Analog Bargraph -->
+                                    <ProgressBar Value="{Binding AvometerBarPercent, Mode=OneWay}"
+                                                 Minimum="0" Maximum="100"
+                                                 Height="4"
+                                                 Margin="0,4,0,2"
+                                                 Background="#16202A"
+                                                 Foreground="#2D9D78"
+                                                 BorderThickness="0" />
+                                </StackPanel>
+                            </Border>
+                            <!-- Mode Selector Buttons -->
+                            <UniformGrid Columns="4" Margin="0,6,0,4">
+                                <Button Content="V DC"
+                                        Style="{StaticResource DockButtonStyle}"
+                                        Margin="1"
+                                        Command="{Binding SetAvometerModeCommand}"
+                                        CommandParameter="V_DC"
+                                        ToolTip="DC Voltage Measurement" />
+                                <Button Content="OHMS (&#x3A9;)"
+                                        Style="{StaticResource DockButtonStyle}"
+                                        Margin="1"
+                                        Command="{Binding SetAvometerModeCommand}"
+                                        CommandParameter="OHMS"
+                                        ToolTip="Resistance / Ohmmeter" />
+                                <Button Content="CONT"
+                                        Style="{StaticResource DockButtonStyle}"
+                                        Margin="1"
+                                        Command="{Binding SetAvometerModeCommand}"
+                                        CommandParameter="CONT"
+                                        ToolTip="Continuity Beeper (&lt; 10 &#x3A9;)" />
+                                <Button Content="mA CURR"
+                                        Style="{StaticResource DockButtonStyle}"
+                                        Margin="1"
+                                        Command="{Binding SetAvometerModeCommand}"
+                                        CommandParameter="I_MA"
+                                        ToolTip="DC Current (mA)" />
+                            </UniformGrid>
+                            <!-- Test Probe Leads Setup -->
+                            <Grid Margin="0,2,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="6" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <!-- COM Probe (Black) -->
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="COM [-] (BLACK PROBE)" Style="{StaticResource PanelHeaderTextStyle}" FontSize="8.5" Foreground="#888888" Margin="0,0,0,2" />
+                                    <TextBox Style="{StaticResource DockTextBoxStyle}"
+                                             Text="{Binding AvometerBlackHole, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="COM hole coordinate (e.g. BOT_GND_1, E15, J20)" />
+                                </StackPanel>
+                                <!-- Positive Probe (Red) -->
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="V/&#x3A9;/mA [+] (RED PROBE)" Style="{StaticResource PanelHeaderTextStyle}" FontSize="8.5" Foreground="#E05050" Margin="0,0,0,2" />
+                                    <TextBox Style="{StaticResource DockTextBoxStyle}"
+                                             Text="{Binding AvometerRedHole, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="V/&#x3A9; hole coordinate (e.g. TOP_VCC_1, A15, F20)" />
+                                </StackPanel>
+                            </Grid>
+                            <!-- Quick Probe Actions -->
+                            <UniformGrid Columns="4" Margin="0,1,0,0">
+                                <Button Content="RAILS" Style="{StaticResource DockButtonStyle}" Margin="1"
+                                        Command="{Binding MeasurePowerRailsCommand}"
+                                        ToolTip="Attach probes to main power rails (GND &amp; VCC)" />
+                                <Button Content="PART" Style="{StaticResource DockButtonStyle}" Margin="1"
+                                        Command="{Binding AttachAvometerToSelectedPartCommand}"
+                                        ToolTip="Attach probes across selected component in PLACED PARTS" />
+                                <Button Content="SWAP" Style="{StaticResource DockButtonStyle}" Margin="1"
+                                        Command="{Binding SwapAvometerProbesCommand}"
+                                        ToolTip="Swap Red and Black probe leads" />
+                                <Button Content="CLEAR" Style="{StaticResource DockButtonStyle}" Margin="1"
+                                        Command="{Binding ClearAvometerProbesCommand}"
+                                        ToolTip="Remove multimeter probes from breadboard" />
+                            </UniformGrid>
+                        </StackPanel>
+                    </StackPanel>
+                    <Border Grid.Row="6" Style="{StaticResource DockSeparatorStyle}" />
+                    <Grid Grid.Row="7">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />

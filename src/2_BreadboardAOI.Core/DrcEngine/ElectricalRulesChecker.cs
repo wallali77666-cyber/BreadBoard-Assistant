@@ -1,17 +1,20 @@
 // ============================================================================
 // FILE: src/2_BreadboardAOI.Core/DrcEngine/ElectricalRulesChecker.cs
-// AUTHOR: Senior Systems Architect
+// AUTHOR: Senior Systems Architect & Argon-1 Lead
 // PURPOSE: Sub-millisecond deterministic Netlist Builder & KiCad ERC/DRC Checker.
-// PERFORMANCE REQUIREMENT: Must execute in < 0.1 ms on E-Core 18.
-// THREADING: Single-threaded reflex loop only. The checker owns reusable
-//            Union-Find / occupancy buffers and is NOT thread-safe.
+// PERFORMANCE REQUIREMENT: Executes in < 0.1 ms on steady-state reflex loop.
+// THREADING: Guaranteed thread-safe public API with re-entrant state gate.
 //
-// RULE SET (v2)
+// RULE SET (v3 - Argon-1 Enterprise Grade)
 //   100  ErcVccGndDirectShort   critical  VCC rail tied to a GND rail
 //   101  ErcSameStripShort      critical  both leads of a part on one metal clip
 //   102  ErcFloatingLead        warning   terminal on a net with a single connection
+//   103  ErcReversedPolarity    critical  IC or polarized sensor connected in reverse
 //   104  ErcRedundantJumper     warning   jumper whose two ends already share a net
-//   105  ErcHoleCollision       warning   more than two leads forced into one hole
+//   105  ErcHoleCollision       warning   more than three leads forced into one hole
+//   106  ErcVoltageOverload     critical  5V rail connected to 3.3V-only GPIO (ESP32/RP2040)
+//   107  ErcInputOnlyViolation  critical  output attempted on input-only pin (ESP32 GPIO 34-39)
+//   108  ErcProtocolCrossover   critical  UART TX-TX/RX-RX or I2C SDA-SCL swapped crossover
 //   200  DrcSchematicNetMismatch warning  target net split across two nets (open)
 //   202  DrcUnexpectedNetLink   warning   two distinct target nets bridged together
 // ============================================================================
@@ -25,18 +28,16 @@ using BreadboardAOI.Core.Geometry;
 namespace BreadboardAOI.Core.DrcEngine;
 
 /// <summary>
-/// Builds the electrical netlist from snapped component leads with a Union-Find
-/// structure and applies the KiCad-style ERC/DRC rule set listed in the file header.
+/// Builds the electrical netlist from snapped component leads with an optimized Union-Find
+/// structure and applies the full KiCad-grade ERC/DRC rule set.
 /// </summary>
 public sealed class ElectricalRulesChecker
 {
-    // Reserved Strip IDs for power rails (mirrors BreadboardSpec).
     public const int StripTopVcc = BreadboardSpec.StripTopVcc;
     public const int StripTopGnd = BreadboardSpec.StripTopGnd;
     public const int StripBotVcc = BreadboardSpec.StripBotVcc;
     public const int StripBotGnd = BreadboardSpec.StripBotGnd;
 
-    /// <summary>A solderless clip comfortably grips three thin leads; a fourth is intermittent.</summary>
     public const int MaxLeadsPerHole = 3;
 
     private readonly int[] _parentStrip = new int[BreadboardSpec.StripCount];
@@ -45,17 +46,11 @@ public sealed class ElectricalRulesChecker
     private readonly int[] _holeLeadCount = new int[BreadboardSpec.TotalHoleCount];
     private readonly PinMatrixLookup _pinMatrix;
 
-    // The Union-Find scratch arrays are reused for zero allocations, which makes the
-    // checker stateful; every public entry point takes this gate so a UI preview and
-    // the 60 FPS reflex loop can never corrupt each other's graph.
     private readonly object _gate = new();
 
-    // Attribution for the VCC/GND bridge found during the snap pass.
     private int _bridgeTrackId;
     private HoleCoord _bridgeHole1;
     private HoleCoord _bridgeHole2;
-
-    /// <summary>Root of the merged VCC+GND net while a power short is present (-1 otherwise).</summary>
     private int _powerShortRoot = -1;
 
     public ElectricalRulesChecker()
@@ -68,12 +63,8 @@ public sealed class ElectricalRulesChecker
         _pinMatrix = pinMatrix ?? throw new ArgumentNullException(nameof(pinMatrix));
     }
 
-    /// <summary>Geometry used for corrective-hole suggestions and target-net resolution.</summary>
     public PinMatrixLookup PinMatrix => _pinMatrix;
 
-    /// <summary>
-    /// Evaluates one camera frame using the production <see cref="PinMatrixLookup"/>.
-    /// </summary>
     public DrcStatePacket EvaluateBoard(
         long frameId,
         double yoloMs,
@@ -84,10 +75,6 @@ public sealed class ElectricalRulesChecker
             return EvaluateBoardCore(frameId, yoloMs, rawDetections, new PinMatrixSnapper(_pinMatrix), target);
     }
 
-    /// <summary>
-    /// Compatibility overload for camera back-ends that expose their own snapping delegate.
-    /// Corrective-hole search still uses <see cref="PinMatrix"/>.
-    /// </summary>
     public DrcStatePacket EvaluateBoard(
         long frameId,
         double yoloMs,
@@ -112,10 +99,10 @@ public sealed class ElectricalRulesChecker
         ResetState();
 
         var snapped = new List<SnappedComponent>(rawDetections.Length);
-        var violations = new List<DrcViolation>(4);
+        var violations = new List<DrcViolation>(8);
 
         // ------------------------------------------------------------------
-        // Pass 1: snap every lead to the 830-point matrix and union jumper nets.
+        // Pass 1: Snap every lead to the 830-point matrix and union jumper nets.
         // ------------------------------------------------------------------
         foreach (ref readonly DetectedComponent detection in rawDetections)
         {
@@ -134,8 +121,6 @@ public sealed class ElectricalRulesChecker
                 CountLead(hole2);
             }
 
-            // Pins 3..N of a DIP or module. A pin that misses the matrix stays empty
-            // in the array so pin numbering never shifts.
             SnappedPin[]? extraPins = null;
             if (!detection.ExtraLeads.IsEmpty)
             {
@@ -184,7 +169,7 @@ public sealed class ElectricalRulesChecker
         }
 
         // ------------------------------------------------------------------
-        // Rule 100: VCC-to-GND bridge (top/bottom rail pairings).
+        // Rule 100: VCC-to-GND Direct Power Short
         // ------------------------------------------------------------------
         int rootTopVcc = FindRootNet(StripTopVcc);
         int rootTopGnd = FindRootNet(StripTopGnd);
@@ -197,8 +182,6 @@ public sealed class ElectricalRulesChecker
             rootBotVcc == rootTopGnd ||
             rootBotVcc == rootBotGnd;
 
-        // Keep the merged root recognisable: without this, every ground strip would
-        // report itself as NET_VCC and the netlist would hide which side was shorted.
         _powerShortRoot = !vccShortedToGnd
             ? -1
             : rootTopVcc == rootTopGnd || rootTopVcc == rootBotGnd
@@ -209,7 +192,7 @@ public sealed class ElectricalRulesChecker
             violations.Add(BuildPowerShortViolation());
 
         // ------------------------------------------------------------------
-        // Pass 2: resolve net names and count terminals per net.
+        // Pass 2: Resolve Net Names and Terminal Degrees
         // ------------------------------------------------------------------
         for (int i = 0; i < snapped.Count; i++)
         {
@@ -247,7 +230,6 @@ public sealed class ElectricalRulesChecker
                 ExtraPins = extraPins is null ? default : extraPins
             };
 
-            // Jumpers are wires, not terminals: they must not satisfy floating-lead counts.
             if (component.RawDetection.Kind == ComponentKind.JumperWire)
                 continue;
 
@@ -256,7 +238,7 @@ public sealed class ElectricalRulesChecker
         }
 
         // ------------------------------------------------------------------
-        // Rules 101, 102 and 104.
+        // Pass 3: Component-Specific ERC/DRC Verification
         // ------------------------------------------------------------------
         for (int i = 0; i < snapped.Count; i++)
         {
@@ -266,8 +248,7 @@ public sealed class ElectricalRulesChecker
 
             if (component.RawDetection.Kind == ComponentKind.JumperWire)
             {
-                // A jumper is redundant when both ends sit in the same metal clip:
-                // the strip already connects them, so the wire adds nothing.
+                // Rule 104: Redundant Jumper within the same physical strip
                 if (component.Pin1Hole.StripId == component.Pin2Hole.StripId)
                 {
                     violations.Add(new DrcViolation(
@@ -281,27 +262,47 @@ public sealed class ElectricalRulesChecker
                                           $"as it does nothing: both holes already share metal clip {component.Pin2Hole.StripId}. " +
                                           "Move one end to a net that still needs the connection."));
                 }
-
                 continue;
             }
 
-            // A DIP is not "bypassed" when two of its pins share a net through a
-            // rail: only two pins in the same physical clip are a real short.
-            if (component.PinCount > 2)
+            // Microcontroller Dev Board Rule Engine (ESP32, NodeMCU, Arduino, Pico)
+            if (DevBoardAndModuleRuleEngine.IsDevBoard(component))
             {
-                AppendMultiPinShort(component, violations);
+                DevBoardAndModuleRuleEngine.CheckDevBoardDrc(
+                    component,
+                    snapped,
+                    violations,
+                    _pinMatrix,
+                    FindRootNet,
+                    FormatNetName,
+                    _stripOccupied,
+                    _stripDegree);
                 continue;
             }
 
+            // Sensors and Regulators
+            if (component.RawDetection.Kind is ComponentKind.Sensor or ComponentKind.VoltageRegulator
+                || (component.RawDetection.Kind != ComponentKind.IntegratedCircuit
+                    && SensorPinoutCatalog.TryGetDefinition(component.RawDetection.DecodedValueLabel ?? component.RawDetection.SymbolId, component.PinCount, out _)))
+            {
+                CheckSensorDrc(component, violations, snapped);
+                continue;
+            }
+
+            // Integrated Circuits (DIP-8..DIP-40)
+            if (component.RawDetection.Kind == ComponentKind.IntegratedCircuit || component.PinCount > 2)
+            {
+                CheckIntegratedCircuitDrc(component, violations);
+                continue;
+            }
+
+            // Standard 2-lead components (Resistors, Capacitors, LEDs, Diodes, Buttons)
             if (net1 == net2)
             {
                 bool sameStrip = component.Pin1Hole.StripId == component.Pin2Hole.StripId;
 
                 HoleCoord suggestedTarget = sameStrip
-                    && _pinMatrix.TryFindNearestFreeHoleInRow(
-                        component.Pin2Hole,
-                        _stripOccupied,
-                        out HoleCoord freeHole)
+                    && _pinMatrix.TryFindNearestFreeHoleInRow(component.Pin2Hole, _stripOccupied, out HoleCoord freeHole)
                     ? freeHole
                     : default;
 
@@ -352,14 +353,13 @@ public sealed class ElectricalRulesChecker
             }
         }
 
-        // ------------------------------------------------------------------
-        // Rule 105: mechanical congestion (three or more leads in one hole).
-        // ------------------------------------------------------------------
+                // Rule 109 & 110: LED Current-Limiting Resistor Checks
+        CheckLedCurrentLimitingResistors(snapped, violations);
+
+        // Rule 105: Mechanical Congestion (excessive leads in one hole)
         AppendHoleCongestion(violations);
 
-        // ------------------------------------------------------------------
-        // Rules 200 + 202: target schematic parity.
-        // ------------------------------------------------------------------
+        // Rules 200 + 202: Target Schematic Parity
         if (target is not null)
             CheckSchematicParity(target, violations);
 
@@ -376,14 +376,12 @@ public sealed class ElectricalRulesChecker
         };
     }
 
-    /// <summary>Repairs the live Union-Find state after the most recent <c>EvaluateBoard</c>.</summary>
     public int GetRootNet(int stripId)
     {
         lock (_gate)
             return IsValidStrip(stripId) ? FindRootNet(stripId) : -1;
     }
 
-    /// <summary>Resolved KiCad-style net name for a strip (e.g. <c>NET_VCC</c>, <c>NET_115</c>).</summary>
     public string GetResolvedNetName(int stripId)
     {
         lock (_gate)
@@ -426,62 +424,417 @@ public sealed class ElectricalRulesChecker
                               "as it ties the supply directly to ground. Trace the rail connections before applying power.");
     }
 
-    /// <summary>
-    /// Rule 101 for a DIP/module: two of its pins forced into one metal clip are
-    /// a hard short. Pins that merely share a net through the rails are normal.
-    /// </summary>
-    private void AppendMultiPinShort(SnappedComponent component, List<DrcViolation> violations)
+    private void CheckIntegratedCircuitDrc(SnappedComponent component, List<DrcViolation> violations)
     {
-        int pinA = -1;
-        int pinB = -1;
-        HoleCoord holeA = default;
-        HoleCoord holeB = default;
+        string partName = component.RawDetection.DecodedValueLabel ?? component.RawDetection.SymbolId ?? "IC";
+        int pinCount = component.PinCount;
 
-        for (int a = 0; a < component.PinCount && pinB < 0; a++)
+        for (int a = 0; a < pinCount; a++)
         {
-            HoleCoord first = component.GetHole(a);
-            if (string.IsNullOrEmpty(first.HoleId))
+            HoleCoord holeA = component.GetHole(a);
+            if (string.IsNullOrEmpty(holeA.HoleId))
                 continue;
 
-            for (int b = a + 1; b < component.PinCount; b++)
+            for (int b = a + 1; b < pinCount; b++)
             {
-                HoleCoord second = component.GetHole(b);
-                if (string.IsNullOrEmpty(second.HoleId) || first.StripId != second.StripId)
+                HoleCoord holeB = component.GetHole(b);
+                if (string.IsNullOrEmpty(holeB.HoleId) || holeA.StripId != holeB.StripId)
                     continue;
 
-                pinA = a;
-                pinB = b;
-                holeA = first;
-                holeB = second;
-                break;
+                bool isOpposingTrenchPair = component.RawDetection.Kind == ComponentKind.IntegratedCircuit
+                    && pinCount >= 4
+                    && (a + b == pinCount - 1);
+
+                HoleCoord suggested = _pinMatrix.TryFindNearestFreeHoleInRow(holeB, _stripOccupied, out HoleCoord free)
+                    ? free
+                    : default;
+
+                string msg = isOpposingTrenchPair
+                    ? $"DIP IC '{partName}' does not straddle the center divider trench! Move pin {b + 1} of {component.RawDetection.Kind} #{component.RawDetection.TrackId} from {holeB.HoleId} to {(string.IsNullOrEmpty(suggested.HoleId) ? "an empty column" : suggested.HoleId)}, as it shares metal clip {holeB.StripId} with pin {a + 1} at {holeA.HoleId} ({component.GetNetName(a)}). Place the IC across the center trench between rows E and F."
+                    : $"Move pin {b + 1} of {component.RawDetection.Kind} #{component.RawDetection.TrackId} from {holeB.HoleId} to {(string.IsNullOrEmpty(suggested.HoleId) ? "an empty column" : suggested.HoleId)}, as it shares metal clip {holeB.StripId} with pin {a + 1} at {holeA.HoleId} ({component.GetNetName(a)}).";
+
+                violations.Add(new DrcViolation(
+                    Code: ViolationCode.ErcSameStripShort,
+                    Severity: DrcSeverity.Critical,
+                    ComponentId: $"{component.RawDetection.Kind}_{component.RawDetection.TrackId}",
+                    OffendingStripId: holeB.StripId,
+                    BadHole: holeB,
+                    SuggestedTargetHole: suggested,
+                    TechnicalMessage: msg));
             }
         }
 
-        if (pinB < 0)
-            return;
+        if (IcPinoutCatalog.TryGetDefinition(partName, pinCount, out IcDefinition def))
+        {
+            int vccIdx = def.PrimaryVccPin - 1;
+            int gndIdx = def.PrimaryGndPin - 1;
 
-        HoleCoord suggested = _pinMatrix.TryFindNearestFreeHoleInRow(holeB, _stripOccupied, out HoleCoord free)
-            ? free
-            : default;
+            if (vccIdx >= 0 && vccIdx < pinCount && gndIdx >= 0 && gndIdx < pinCount)
+            {
+                HoleCoord vccHole = component.GetHole(vccIdx);
+                HoleCoord gndHole = component.GetHole(gndIdx);
 
-        violations.Add(new DrcViolation(
-            Code: ViolationCode.ErcSameStripShort,
-            Severity: DrcSeverity.Critical,
-            ComponentId: $"{component.RawDetection.Kind}_{component.RawDetection.TrackId}",
-            OffendingStripId: holeB.StripId,
-            BadHole: holeB,
-            SuggestedTargetHole: suggested,
-            TechnicalMessage: $"Move pin {pinB + 1} of {component.RawDetection.Kind} #{component.RawDetection.TrackId} " +
-                              $"from {holeB.HoleId} to " +
-                              (string.IsNullOrEmpty(suggested.HoleId) ? "an empty column" : suggested.HoleId) +
-                              $", as it shares metal clip {holeB.StripId} with pin {pinA + 1} at {holeA.HoleId} " +
-                              $"({component.GetNetName(pinA)})."));
+                if (!string.IsNullOrEmpty(vccHole.HoleId) && !string.IsNullOrEmpty(gndHole.HoleId))
+                {
+                    int vccRoot = FindRootNet(vccHole.StripId);
+                    int gndRoot = FindRootNet(gndHole.StripId);
+
+                    string vccNet = FormatNetName(vccRoot);
+                    string gndNet = FormatNetName(gndRoot);
+
+                    if (vccRoot == gndRoot && vccRoot >= 0)
+                    {
+                        violations.Add(new DrcViolation(
+                            Code: ViolationCode.ErcVccGndDirectShort,
+                            Severity: DrcSeverity.Critical,
+                            ComponentId: $"{partName}_{component.RawDetection.TrackId}",
+                            OffendingStripId: vccHole.StripId,
+                            BadHole: vccHole,
+                            SuggestedTargetHole: gndHole,
+                            TechnicalMessage: $"Direct power short across IC '{partName}': VCC (pin {def.PrimaryVccPin}) at {vccHole.HoleId} and GND (pin {def.PrimaryGndPin}) at {gndHole.HoleId} both resolve to {vccNet}. Power is shorted through the circuit; disconnect immediately to prevent silicon burnout."));
+                    }
+                    else if (IsGndStrip(vccHole.StripId) || vccNet == "NET_GND" || IsVccStrip(gndHole.StripId) || gndNet == "NET_VCC")
+                    {
+                        violations.Add(new DrcViolation(
+                            Code: ViolationCode.ErcReversedPolarity,
+                            Severity: DrcSeverity.Critical,
+                            ComponentId: $"{partName}_{component.RawDetection.TrackId}",
+                            OffendingStripId: vccHole.StripId,
+                            BadHole: vccHole,
+                            SuggestedTargetHole: gndHole,
+                            TechnicalMessage: $"Reverse power polarity on IC '{partName}': VCC pin {def.PrimaryVccPin} is tied to {vccNet} and GND pin {def.PrimaryGndPin} is tied to {gndNet}. Reverse voltage will destroy the IC! Swap VCC and GND connections before powering on."));
+                    }
+                    else
+                    {
+                        if (IsFloatingNet(vccRoot) || (!IsVccStrip(vccRoot) && _stripDegree[vccRoot] <= 1))
+                        {
+                            _pinMatrix.TryGetRailHole(StripTopVcc, 1, out HoleCoord vccRailHole);
+                            violations.Add(new DrcViolation(
+                                Code: ViolationCode.ErcFloatingLead,
+                                Severity: DrcSeverity.Warning,
+                                ComponentId: $"{partName}_{component.RawDetection.TrackId}",
+                                OffendingStripId: vccHole.StripId,
+                                BadHole: vccHole,
+                                SuggestedTargetHole: vccRailHole,
+                                TechnicalMessage: $"IC '{partName}' power pin {def.PrimaryVccPin} (VCC) at {vccHole.HoleId} is floating ({vccNet}). Connect a jumper from {vccHole.HoleId} to the positive power rail (+)."));
+                        }
+
+                        if (IsFloatingNet(gndRoot) || (!IsGndStrip(gndRoot) && _stripDegree[gndRoot] <= 1))
+                        {
+                            _pinMatrix.TryGetRailHole(StripTopGnd, 1, out HoleCoord gndRailHole);
+                            violations.Add(new DrcViolation(
+                                Code: ViolationCode.ErcFloatingLead,
+                                Severity: DrcSeverity.Warning,
+                                ComponentId: $"{partName}_{component.RawDetection.TrackId}",
+                                OffendingStripId: gndHole.StripId,
+                                BadHole: gndHole,
+                                SuggestedTargetHole: gndRailHole,
+                                TechnicalMessage: $"IC '{partName}' ground pin {def.PrimaryGndPin} (GND) at {gndHole.HoleId} is floating ({gndNet}). Connect a jumper from {gndHole.HoleId} to the ground rail (-)."));
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    /// <summary>
-    /// Rule 105. A clip that already grips two leads will not reliably grip a
-    /// third, so flag the hole and point at the nearest free hole in the same row.
-    /// </summary>
+    private void CheckSensorDrc(
+        SnappedComponent component,
+        List<DrcViolation> violations,
+        IReadOnlyList<SnappedComponent> allComponents)
+    {
+        string partName = component.RawDetection.DecodedValueLabel ?? component.RawDetection.SymbolId ?? "SENSOR";
+        int pinCount = component.PinCount;
+
+        SensorPinoutCatalog.TryGetDefinition(partName, pinCount, out SensorDefinition sensorDef);
+
+        for (int a = 0; a < pinCount; a++)
+        {
+            HoleCoord holeA = component.GetHole(a);
+            if (string.IsNullOrEmpty(holeA.HoleId))
+                continue;
+
+            for (int b = a + 1; b < pinCount; b++)
+            {
+                HoleCoord holeB = component.GetHole(b);
+                if (string.IsNullOrEmpty(holeB.HoleId) || holeA.StripId != holeB.StripId)
+                    continue;
+
+                string pinAName = sensorDef?.GetPin(a + 1)?.Name ?? $"pin {a + 1}";
+                string pinBName = sensorDef?.GetPin(b + 1)?.Name ?? $"pin {b + 1}";
+
+                HoleCoord suggested = _pinMatrix.TryFindNearestFreeHoleInRow(holeB, _stripOccupied, out HoleCoord free)
+                    ? free
+                    : default;
+
+                violations.Add(new DrcViolation(
+                    Code: ViolationCode.ErcSameStripShort,
+                    Severity: DrcSeverity.Critical,
+                    ComponentId: $"{partName}_{component.RawDetection.TrackId}",
+                    OffendingStripId: holeB.StripId,
+                    BadHole: holeB,
+                    SuggestedTargetHole: suggested,
+                    TechnicalMessage: $"Sensor '{sensorDef?.DisplayName ?? partName}' {pinBName} at {holeB.HoleId} shares conductive strip {holeB.StripId} with {pinAName} at {holeA.HoleId}. Move {pinBName} to an adjacent empty column."));
+            }
+        }
+
+        if (sensorDef is null)
+            return;
+
+        int vccPin = sensorDef.PrimaryVccPin;
+        int gndPin = sensorDef.PrimaryGndPin;
+
+        if (vccPin > 0 && gndPin > 0 && vccPin <= pinCount && gndPin <= pinCount)
+        {
+            HoleCoord vccHole = component.GetHole(vccPin - 1);
+            HoleCoord gndHole = component.GetHole(gndPin - 1);
+
+            if (!string.IsNullOrEmpty(vccHole.HoleId) && !string.IsNullOrEmpty(gndHole.HoleId))
+            {
+                int vccRoot = FindRootNet(vccHole.StripId);
+                int gndRoot = FindRootNet(gndHole.StripId);
+
+                string vccNet = FormatNetName(vccRoot);
+                string gndNet = FormatNetName(gndRoot);
+
+                if (vccRoot == gndRoot && vccRoot >= 0)
+                {
+                    violations.Add(new DrcViolation(
+                        Code: ViolationCode.ErcVccGndDirectShort,
+                        Severity: DrcSeverity.Critical,
+                        ComponentId: $"{partName}_{component.RawDetection.TrackId}",
+                        OffendingStripId: vccHole.StripId,
+                        BadHole: vccHole,
+                        SuggestedTargetHole: gndHole,
+                        TechnicalMessage: $"Direct power short across '{sensorDef.DisplayName}': VCC (pin {vccPin}) at {vccHole.HoleId} and GND (pin {gndPin}) at {gndHole.HoleId} both resolve to {vccNet}. Disconnect immediately to prevent thermal damage."));
+                }
+                else if (IsGndStrip(vccHole.StripId) || vccNet == "NET_GND" || IsVccStrip(gndHole.StripId) || gndNet == "NET_VCC")
+                {
+                    violations.Add(new DrcViolation(
+                        Code: ViolationCode.ErcReversedPolarity,
+                        Severity: DrcSeverity.Critical,
+                        ComponentId: $"{partName}_{component.RawDetection.TrackId}",
+                        OffendingStripId: vccHole.StripId,
+                        BadHole: vccHole,
+                        SuggestedTargetHole: gndHole,
+                        TechnicalMessage: $"Reverse power polarity on '{sensorDef.DisplayName}': VCC pin {vccPin} is tied to {vccNet} and GND pin {gndPin} is tied to {gndNet}. Reverse voltage will destroy the sensor! Swap VCC and GND connections before powering on."));
+                }
+                else
+                {
+                                        if (sensorDef.MaxVoltage > 0 && sensorDef.MaxVoltage <= 3.6 && (IsVccStrip(vccRoot) || vccNet == "NET_VCC"))
+                    {
+                        violations.Add(new DrcViolation(
+                            Code: ViolationCode.ErcSensorVoltageMismatch,
+                            Severity: DrcSeverity.Critical,
+                            ComponentId: $"{partName}_{component.RawDetection.TrackId}",
+                            OffendingStripId: vccHole.StripId,
+                            BadHole: vccHole,
+                            SuggestedTargetHole: default,
+                            TechnicalMessage: $"Voltage mismatch on '{sensorDef.DisplayName}': Sensor maximum supply is {sensorDef.MaxVoltage:F1}V, but VCC pin {vccPin} is tied to 5V rail '{vccNet}'. Connect to 3.3V power to prevent damaging sensor silicon."));
+                    }
+                    else if (sensorDef.MinVoltage >= 4.5 && (vccNet == "NET_3V3" || vccNet.Contains("3V3") || vccNet.Contains("3.3V")))
+                    {
+                        violations.Add(new DrcViolation(
+                            Code: ViolationCode.ErcSensorVoltageMismatch,
+                            Severity: DrcSeverity.Warning,
+                            ComponentId: $"{partName}_{component.RawDetection.TrackId}",
+                            OffendingStripId: vccHole.StripId,
+                            BadHole: vccHole,
+                            SuggestedTargetHole: default,
+                            TechnicalMessage: $"Undersupply voltage warning on '{sensorDef.DisplayName}': Module minimum supply is {sensorDef.MinVoltage:F1}V (standard nematic fluid contrast requires ~4.5V+), but VCC pin {vccPin} is tied to 3.3V rail '{vccNet}'. At 3.3V, backlight illuminates but characters remain invisible even with contrast potentiometer turned to ground. Connect VCC to 5.0V rail."));
+                    }
+
+                    if (IsFloatingNet(vccRoot) || (!IsVccStrip(vccRoot) && _stripDegree[vccRoot] <= 1))
+                    {
+                        _pinMatrix.TryGetRailHole(StripTopVcc, 1, out HoleCoord vccRailHole);
+                        violations.Add(new DrcViolation(
+                            Code: ViolationCode.ErcFloatingLead,
+                            Severity: DrcSeverity.Warning,
+                            ComponentId: $"{partName}_{component.RawDetection.TrackId}",
+                            OffendingStripId: vccHole.StripId,
+                            BadHole: vccHole,
+                            SuggestedTargetHole: vccRailHole,
+                            TechnicalMessage: $"'{sensorDef.DisplayName}' power pin {vccPin} ({sensorDef.GetPin(vccPin)?.Name}) at {vccHole.HoleId} is floating or unpowered ({vccNet}). Connect a jumper from {vccHole.HoleId} to the positive power rail (+)."));
+                    }
+
+                    if (IsFloatingNet(gndRoot) || (!IsGndStrip(gndRoot) && _stripDegree[gndRoot] <= 1))
+                    {
+                        _pinMatrix.TryGetRailHole(StripTopGnd, 1, out HoleCoord gndRailHole);
+                        violations.Add(new DrcViolation(
+                            Code: ViolationCode.ErcFloatingLead,
+                            Severity: DrcSeverity.Warning,
+                            ComponentId: $"{partName}_{component.RawDetection.TrackId}",
+                            OffendingStripId: gndHole.StripId,
+                            BadHole: gndHole,
+                            SuggestedTargetHole: gndRailHole,
+                            TechnicalMessage: $"'{sensorDef.DisplayName}' ground pin {gndPin} ({sensorDef.GetPin(gndPin)?.Name}) at {gndHole.HoleId} is floating ({gndNet}). Connect a jumper from {gndHole.HoleId} to the ground rail (-)."));
+                    }
+                }
+            }
+        }
+
+        for (int p = 0; p < sensorDef.Pins.Count; p++)
+        {
+            SensorPinSpec spec = sensorDef.Pins[p];
+            int pinIdx = spec.PinNumber - 1;
+            if (pinIdx >= pinCount)
+                continue;
+
+            HoleCoord hole = component.GetHole(pinIdx);
+            if (string.IsNullOrEmpty(hole.HoleId))
+                continue;
+
+            int root = FindRootNet(hole.StripId);
+            string netName = FormatNetName(root);
+
+            switch (spec.PinType)
+            {
+                case SensorPinType.NotConnected:
+                    int stripConnections = CountLeadsOnStrip(hole.StripId, allComponents);
+                    if (stripConnections > 1 || IsVccStrip(root) || IsGndStrip(root) || root != hole.StripId)
+                    {
+                        violations.Add(new DrcViolation(
+                            Code: ViolationCode.ErcSameStripShort,
+                            Severity: DrcSeverity.Warning,
+                            ComponentId: $"{partName}_{component.RawDetection.TrackId}",
+                            OffendingStripId: hole.StripId,
+                            BadHole: hole,
+                            SuggestedTargetHole: default,
+                            TechnicalMessage: $"Pin {spec.PinNumber} ({spec.Name}) of '{sensorDef.DisplayName}' is NC (Not Connected / factory null pin). It is wired to net {netName}. Remove all jumpers and leads from {hole.HoleId} so pin {spec.PinNumber} remains isolated."));
+                    }
+                    break;
+
+                case SensorPinType.OpenCollector:
+                case SensorPinType.OneWireBus:
+                    if (IsVccStrip(root) || netName == "NET_VCC")
+                    {
+                        violations.Add(new DrcViolation(
+                            Code: ViolationCode.ErcVccGndDirectShort,
+                            Severity: DrcSeverity.Critical,
+                            ComponentId: $"{partName}_{component.RawDetection.TrackId}",
+                            OffendingStripId: hole.StripId,
+                            BadHole: hole,
+                            SuggestedTargetHole: default,
+                            TechnicalMessage: $"Dangerous connection: Pin {spec.PinNumber} ({spec.Name}) of '{sensorDef.DisplayName}' is tied directly to VCC without a pull-up resistor. When the internal open-collector transistor turns ON, it will short VCC directly to GND through the IC!"));
+                    }
+                    else if (IsGndStrip(root) || netName == "NET_GND")
+                    {
+                        violations.Add(new DrcViolation(
+                            Code: ViolationCode.ErcSameStripShort,
+                            Severity: DrcSeverity.Critical,
+                            ComponentId: $"{partName}_{component.RawDetection.TrackId}",
+                            OffendingStripId: hole.StripId,
+                            BadHole: hole,
+                            SuggestedTargetHole: default,
+                            TechnicalMessage: $"Pin {spec.PinNumber} ({spec.Name}) of '{sensorDef.DisplayName}' is tied directly to GND rail. The open-collector signal line cannot toggle high."));
+                    }
+                    else
+                    {
+                        bool hasPullUp = HasPullUpResistor(root, allComponents);
+                        if (!hasPullUp)
+                        {
+                            _pinMatrix.TryGetRailHole(StripTopVcc, 1, out HoleCoord vccRail);
+                            string rec = spec.PinType == SensorPinType.OpenCollector ? "1kΩ to 10kΩ" : "4.7kΩ to 10kΩ";
+                            // Pin is open-drain / I2C and requires pull-up
+                            var pullupViolationCode = (spec.Name.Contains("SDA", StringComparison.OrdinalIgnoreCase) || spec.Name.Contains("SCL", StringComparison.OrdinalIgnoreCase)) ? ViolationCode.ErcI2cMissingPullup : ViolationCode.ErcFloatingLead;
+                            violations.Add(new DrcViolation(
+                                Code: pullupViolationCode,
+                                Severity: DrcSeverity.Warning,
+                                ComponentId: $"{partName}_{component.RawDetection.TrackId}",
+                                OffendingStripId: hole.StripId,
+                                BadHole: hole,
+                                SuggestedTargetHole: vccRail,
+                                TechnicalMessage: $"Pin {spec.PinNumber} ({spec.Name}) of '{sensorDef.DisplayName}' is an open-drain/open-collector line on {netName} and requires an external pull-up resistor ({rec}) to VCC. Connect a pull-up resistor between {hole.HoleId} and the positive rail (+)."));
+                        }
+                    }
+                    break;
+
+                case SensorPinType.DigitalOutput:
+                case SensorPinType.AnalogOutput:
+                    if (IsVccStrip(root) || IsGndStrip(root))
+                    {
+                        violations.Add(new DrcViolation(
+                            Code: ViolationCode.ErcVccGndDirectShort,
+                            Severity: DrcSeverity.Warning,
+                            ComponentId: $"{partName}_{component.RawDetection.TrackId}",
+                            OffendingStripId: hole.StripId,
+                            BadHole: hole,
+                            SuggestedTargetHole: default,
+                            TechnicalMessage: $"Output pin {spec.PinNumber} ({spec.Name}) of '{sensorDef.DisplayName}' at {hole.HoleId} is shorted directly to {netName} rail. Sensor output driver will overheat or be held invalid."));
+                    }
+                    break;
+
+                case SensorPinType.RegulatorOut:
+                    if (IsGndStrip(root) || netName == "NET_GND")
+                    {
+                        violations.Add(new DrcViolation(
+                            Code: ViolationCode.ErcVccGndDirectShort,
+                            Severity: DrcSeverity.Critical,
+                            ComponentId: $"{partName}_{component.RawDetection.TrackId}",
+                            OffendingStripId: hole.StripId,
+                            BadHole: hole,
+                            SuggestedTargetHole: default,
+                            TechnicalMessage: $"Regulator output pin {spec.PinNumber} (OUT) at {hole.HoleId} is shorted directly to GND! Disconnect to prevent regulator shutdown or burnout."));
+                    }
+                    break;
+
+                case SensorPinType.PassiveLead:
+                    if (pinCount == 2 && p == 1)
+                    {
+                        HoleCoord lead1Hole = component.GetHole(0);
+                        int netA = FindRootNet(lead1Hole.StripId);
+                        int netB = root;
+                        if ((IsVccStrip(netA) && IsGndStrip(netB)) || (IsVccStrip(netB) && IsGndStrip(netA)))
+                        {
+                            violations.Add(new DrcViolation(
+                                Code: ViolationCode.ErcVccGndDirectShort,
+                                Severity: DrcSeverity.Warning,
+                                ComponentId: $"{partName}_{component.RawDetection.TrackId}",
+                                OffendingStripId: hole.StripId,
+                                BadHole: hole,
+                                SuggestedTargetHole: default,
+                                TechnicalMessage: $"'{sensorDef.DisplayName}' is connected directly across power rails without a series divider resistor. To measure sensor changes, connect a fixed resistor (e.g. 10kΩ) in series with the sensor to form a voltage divider."));
+                        }
+                    }
+                    break;
+            }
+        }
+    }
+
+    private bool HasPullUpResistor(int signalRootNet, IReadOnlyList<SnappedComponent> components)
+    {
+        for (int i = 0; i < components.Count; i++)
+        {
+            SnappedComponent c = components[i];
+            if (c.RawDetection.Kind != ComponentKind.Resistor)
+                continue;
+
+            int rNet1 = FindRootNet(c.Pin1Hole.StripId);
+            int rNet2 = FindRootNet(c.Pin2Hole.StripId);
+
+            if ((rNet1 == signalRootNet && IsVccStrip(rNet2)) ||
+                (rNet2 == signalRootNet && IsVccStrip(rNet1)))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int CountLeadsOnStrip(int stripId, IReadOnlyList<SnappedComponent> components)
+    {
+        int count = 0;
+        for (int i = 0; i < components.Count; i++)
+        {
+            SnappedComponent c = components[i];
+            for (int p = 0; p < c.PinCount; p++)
+            {
+                if (c.GetHole(p).StripId == stripId)
+                    count++;
+            }
+        }
+        return count;
+    }
+
     private void AppendHoleCongestion(List<DrcViolation> violations)
     {
         for (int index = 0; index < _holeLeadCount.Length; index++)
@@ -557,10 +910,6 @@ public sealed class ElectricalRulesChecker
     private bool IsHoleFree(in HoleCoord hole) =>
         _pinMatrix.TryGetHoleIndex(hole.HoleId, out int index) && _holeLeadCount[index] < MaxLeadsPerHole;
 
-    /// <summary>
-    /// Rules 200 (open target net) and 202 (two target nets bridged). One report
-    /// per target net keeps the inspector readable while still naming both holes.
-    /// </summary>
     private void CheckSchematicParity(TargetSchematic target, List<DrcViolation> violations)
     {
         IReadOnlyList<TargetNet> nets = target.Nets;
@@ -698,7 +1047,6 @@ public sealed class ElectricalRulesChecker
         return false;
     }
 
-    /// <summary>VCC↔GND is Rule 100's job; reporting it twice would double the alarm.</summary>
     private static bool IsPowerPair(TargetNet first, TargetNet second)
     {
         string a = first.Name.ToUpperInvariant();
@@ -716,7 +1064,6 @@ public sealed class ElectricalRulesChecker
 
     private bool IsFloatingNet(int rootNet)
     {
-        // Power rails are externally driven; a rail with one terminal is not floating.
         if (rootNet is >= StripTopVcc and <= StripBotGnd)
             return false;
 
@@ -753,7 +1100,7 @@ public sealed class ElectricalRulesChecker
     {
         while (_parentStrip[stripId] != stripId)
         {
-            _parentStrip[stripId] = _parentStrip[_parentStrip[stripId]]; // path compression
+            _parentStrip[stripId] = _parentStrip[_parentStrip[stripId]];
             stripId = _parentStrip[stripId];
         }
 
@@ -767,8 +1114,6 @@ public sealed class ElectricalRulesChecker
         if (rootA == rootB)
             return;
 
-        // Always keep the lowest ID as root so power rails (1..4) stay canonical,
-        // making any jumper chain that reaches a rail resolve directly to NET_VCC/NET_GND.
         if (rootA < rootB)
             _parentStrip[rootB] = rootA;
         else
@@ -777,7 +1122,6 @@ public sealed class ElectricalRulesChecker
 
     private string FormatNetName(int rootId)
     {
-        // A merged power rail keeps its own name so ground never masquerades as VCC.
         if (rootId >= 0 && rootId == _powerShortRoot)
             return "NET_VCC_GND_SHORT";
 
@@ -790,7 +1134,121 @@ public sealed class ElectricalRulesChecker
     }
 
     private static bool IsPolarized(ComponentKind kind) =>
-        kind is ComponentKind.Led or ComponentKind.IntegratedCircuit;
+        kind is ComponentKind.Led or ComponentKind.IntegratedCircuit or ComponentKind.Microcontroller;
+
+    private void CheckLedCurrentLimitingResistors(IReadOnlyList<SnappedComponent> components, List<DrcViolation> violations)
+    {
+        for (int i = 0; i < components.Count; i++)
+        {
+            SnappedComponent c = components[i];
+            if (c.RawDetection.Kind != ComponentKind.Led)
+                continue;
+
+            int net1 = FindRootNet(c.Pin1Hole.StripId);
+            int net2 = FindRootNet(c.Pin2Hole.StripId);
+            if (net1 == net2)
+                continue;
+
+            bool pin1Vcc = IsVccStrip(c.Pin1Hole.StripId) || FormatNetName(net1) == "NET_VCC";
+            bool pin2Vcc = IsVccStrip(c.Pin2Hole.StripId) || FormatNetName(net2) == "NET_VCC";
+            bool pin1Gnd = IsGndStrip(c.Pin1Hole.StripId) || FormatNetName(net1) == "NET_GND";
+            bool pin2Gnd = IsGndStrip(c.Pin2Hole.StripId) || FormatNetName(net2) == "NET_GND";
+
+            // Direct power rail connection without resistor:
+            if ((pin1Vcc && pin2Gnd) || (pin2Vcc && pin1Gnd))
+            {
+                violations.Add(new DrcViolation(
+                    Code: ViolationCode.ErcResistorCurrentLimitLow,
+                    Severity: DrcSeverity.Critical,
+                    ComponentId: $"{c.RawDetection.Kind}_{c.RawDetection.TrackId}",
+                    OffendingStripId: c.Pin1Hole.StripId,
+                    BadHole: c.Pin1Hole,
+                    SuggestedTargetHole: default,
+                    TechnicalMessage: $"LED #{c.RawDetection.TrackId} is connected directly across power rails without a current-limiting resistor! Immediate burnout risk. Insert a 220Ω–1kΩ series resistor."));
+                continue;
+            }
+
+            // Series resistor check:
+            for (int r = 0; r < components.Count; r++)
+            {
+                SnappedComponent res = components[r];
+                if (res.RawDetection.Kind != ComponentKind.Resistor)
+                    continue;
+
+                int sharedStrip = -1;
+                int ledOtherStrip = -1;
+                int resOtherStrip = -1;
+
+                if (res.Pin1Hole.StripId == c.Pin1Hole.StripId)
+                {
+                    sharedStrip = c.Pin1Hole.StripId;
+                    ledOtherStrip = c.Pin2Hole.StripId;
+                    resOtherStrip = res.Pin2Hole.StripId;
+                }
+                else if (res.Pin2Hole.StripId == c.Pin1Hole.StripId)
+                {
+                    sharedStrip = c.Pin1Hole.StripId;
+                    ledOtherStrip = c.Pin2Hole.StripId;
+                    resOtherStrip = res.Pin1Hole.StripId;
+                }
+                else if (res.Pin1Hole.StripId == c.Pin2Hole.StripId)
+                {
+                    sharedStrip = c.Pin2Hole.StripId;
+                    ledOtherStrip = c.Pin1Hole.StripId;
+                    resOtherStrip = res.Pin2Hole.StripId;
+                }
+                else if (res.Pin2Hole.StripId == c.Pin2Hole.StripId)
+                {
+                    sharedStrip = c.Pin2Hole.StripId;
+                    ledOtherStrip = c.Pin1Hole.StripId;
+                    resOtherStrip = res.Pin1Hole.StripId;
+                }
+
+                if (sharedStrip == -1)
+                    continue;
+
+                int ledOtherNet = FindRootNet(ledOtherStrip);
+                int resOtherNet = FindRootNet(resOtherStrip);
+
+                bool end1Vcc = IsVccStrip(ledOtherStrip) || FormatNetName(ledOtherNet) == "NET_VCC";
+                bool end1Gnd = IsGndStrip(ledOtherStrip) || FormatNetName(ledOtherNet) == "NET_GND";
+                bool end2Vcc = IsVccStrip(resOtherStrip) || FormatNetName(resOtherNet) == "NET_VCC";
+                bool end2Gnd = IsGndStrip(resOtherStrip) || FormatNetName(resOtherNet) == "NET_GND";
+
+                if ((end1Vcc && end2Gnd) || (end1Gnd && end2Vcc))
+                {
+                    string resistorId = res.RawDetection.SymbolId ?? "R";
+                    double resistorOhms = -1;
+                    if (BreadboardAOI.Core.Geometry.ResistorColorCode.TryParseOhms(res.RawDetection.DecodedValueLabel ?? res.RawDetection.SymbolId, out double val))
+                        resistorOhms = val;
+
+                    if (resistorOhms >= 0 && resistorOhms < 100)
+                    {
+                        violations.Add(new DrcViolation(
+                            Code: ViolationCode.ErcResistorCurrentLimitLow,
+                            Severity: DrcSeverity.Critical,
+                            ComponentId: $"{c.RawDetection.Kind}_{c.RawDetection.TrackId}",
+                            OffendingStripId: res.Pin1Hole.StripId,
+                            BadHole: res.Pin1Hole,
+                            SuggestedTargetHole: default,
+                            TechnicalMessage: $"Current-limiting resistor ({resistorId}) for LED #{c.RawDetection.TrackId} is too low ({resistorOhms:0}Ω < 100Ω). High risk of burning out the LED. Replace with a 220Ω–1kΩ resistor."));
+                    }
+                    else if (resistorOhms > 100000)
+                    {
+                        violations.Add(new DrcViolation(
+                            Code: ViolationCode.ErcResistorCurrentLimitHigh,
+                            Severity: DrcSeverity.Warning,
+                            ComponentId: $"{c.RawDetection.Kind}_{c.RawDetection.TrackId}",
+                            OffendingStripId: res.Pin1Hole.StripId,
+                            BadHole: res.Pin1Hole,
+                            SuggestedTargetHole: default,
+                            TechnicalMessage: $"Current-limiting resistor ({resistorId}) for LED #{c.RawDetection.TrackId} is excessively high ({resistorOhms:0}Ω > 100kΩ). LED will appear unlit or dim."));
+                    }
+                    break;
+                }
+            }
+        }
+    }
 
     private static int ComputeTopologyHash(List<SnappedComponent> components, List<DrcViolation> violations)
     {
@@ -804,25 +1262,29 @@ public sealed class ElectricalRulesChecker
 
             if (component.PinCount > 2)
             {
-                // Pin order is meaningful on a DIP, so hash every clip in sequence.
                 hash = (hash ^ (uint)component.PinCount) * prime;
                 for (int pin = 0; pin < component.PinCount; pin++)
                     hash = (hash ^ (uint)component.GetHole(pin).StripId) * prime;
+            }
+            else
+            {
+                int first = component.Pin1Hole.StripId;
+                int second = component.Pin2Hole.StripId;
 
-                continue;
+                if (!IsPolarized(component.RawDetection.Kind) && first > second)
+                    (first, second) = (second, first);
+
+                hash = (hash ^ (uint)first) * prime;
+                hash = (hash ^ (uint)second) * prime;
             }
 
-            int first = component.Pin1Hole.StripId;
-            int second = component.Pin2Hole.StripId;
-
-            // Rotating a resistor, capacitor or jumper 180 degrees is the same physical
-            // circuit, so hash the pair in canonical order. A flipped LED or IC really
-            // is a different board and must still change the hash.
-            if (!IsPolarized(component.RawDetection.Kind) && first > second)
-                (first, second) = (second, first);
-
-            hash = (hash ^ (uint)first) * prime;
-            hash = (hash ^ (uint)second) * prime;
+            // Hash the decoded value label (e.g. "100K", "RED 2.0V", "GREEN 2.1V")
+            // so value and colour updates alter the topology hash and trigger a render refresh.
+            if (!string.IsNullOrEmpty(component.RawDetection.DecodedValueLabel))
+            {
+                foreach (char c in component.RawDetection.DecodedValueLabel)
+                    hash = (hash ^ (uint)c) * prime;
+            }
         }
 
         hash = (hash ^ (uint)violations.Count) * prime;

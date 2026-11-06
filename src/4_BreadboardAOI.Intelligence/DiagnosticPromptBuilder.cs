@@ -1,105 +1,82 @@
 // ============================================================================
 // FILE: src/4_BreadboardAOI.Intelligence/DiagnosticPromptBuilder.cs
-// PURPOSE: Turns a DrcStatePacket into a compact, vision-model-friendly prompt
-//          (structured JSON + 256x256 crop hint) that asks for one action-first
-//          fix sentence and two short spoken explanations.
+// PURPOSE: Clean vision prompt for Qwen. The image is the source of truth:
+//          no OpenCV or YOLO integration, no dumb prompts. When the packet carries
+//          no image at all, the known fault is appended as plain sentences so
+//          headless/unit tests can still verify text-only evaluation.
 // ============================================================================
 
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
-using System.Text.Json;
 using BreadboardAOI.Core.Contracts;
 
 namespace BreadboardAOI.Intelligence;
 
 public static class DiagnosticPromptBuilder
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-
     /// <summary>
-    /// Prompt sent to Qwen3-VL together with <see cref="DrcStatePacket.MicroCropPngBytes"/>.
+    /// Clean vision prompt for Qwen: detects the error in a humanized way,
+    /// explains what is wrong, and provides repair instructions in no more than 5 sentences.
+    /// Pure vision directly on the image with no OpenCV or YOLO integration.
     /// </summary>
-    public static string Build(DrcStatePacket state) => Build(state, maxComponents: 8);
+    public const string TutorInstruction =
+        "Look at this breadboard image. First, identify whether the circuit is correct or wrong: start your response with 'CIRCUIT VERDICT: CORRECT' or 'CIRCUIT VERDICT: WRONG'. " +
+        "Then, in no more than 5 sentences, explain why: name the error first, then say exactly what to move, change or replace.";
 
-    public static string Build(DrcStatePacket state, int maxComponents)
+    /// <summary>Prompt sent to Qwen with the board image. The image alone is the input.</summary>
+    public static string Build(DrcStatePacket state) => Build(state, maxFaults: 4);
+
+    public static string Build(DrcStatePacket state, int maxFaults)
     {
         ArgumentNullException.ThrowIfNull(state);
-        if (maxComponents < 0)
-            throw new ArgumentOutOfRangeException(nameof(maxComponents));
+        if (maxFaults < 0)
+            throw new ArgumentOutOfRangeException(nameof(maxFaults));
 
-        var builder = new StringBuilder(1024);
-        builder.AppendLine("You are the workstation's electronics tutor, speaking to a beginner across the bench.");
-        builder.AppendLine("Sound like a calm, experienced person: use contractions, short sentences and ordinary workshop words. Never be theatrical, babyish, sarcastic or robotic.");
-        builder.AppendLine("The attached image is a 256x256 crop of the faulty area; the JSON below is deterministic DRC output.");
-        builder.AppendLine("Answer with exactly three short spoken sentences, in this order:");
-        builder.AppendLine("1. FIX: start with Move, Remove, Add, Refit or Recheck. When a lead must move, write it as: Move <lead or part> from <hole> to <hole>, as it <reason>. Name the exact hole labels from the JSON.");
-        builder.AppendLine("2. WHY: say what the fault does to the circuit in plain words (dead short, bypassed part, no return path, open net).");
-        builder.AppendLine("3. CHECK: one short verification step the beginner can see or measure.");
-        builder.AppendLine("Do not use markdown, bullet points, numbering, code blocks, headings, emoji or sound effects. Keep every sentence under 24 words.");
-        builder.AppendLine("Speak the action first; never open with 'I see' or 'The problem is'.");
+        if (HasImage(state))
+            return TutorInstruction;
+
+        var builder = new StringBuilder(TutorInstruction, TutorInstruction.Length + 256);
         builder.AppendLine();
-        builder.AppendLine("DRC_JSON:");
-        builder.AppendLine(BuildCompactJson(state, maxComponents));
+        builder.AppendLine();
+        builder.AppendLine("The detector reports:");
+
+        int emitted = 0;
+        foreach (DrcViolation violation in state.Violations)
+        {
+            if (emitted++ >= maxFaults)
+                break;
+
+            builder.Append("- ");
+            builder.Append(violation.ComponentId);
+            builder.Append(" (");
+            builder.Append(violation.Code);
+            builder.Append("): ");
+            builder.Append(violation.TechnicalMessage);
+
+            string target = HoleLabel(violation.SuggestedTargetHole, 0);
+            if (!string.Equals(target, "n/a", StringComparison.Ordinal))
+            {
+                builder.Append(" Move to ");
+                builder.Append(target);
+                builder.Append('.');
+            }
+
+            builder.AppendLine();
+        }
+
         return builder.ToString().TrimEnd();
     }
 
-    /// <summary>Compact machine-readable snapshot used by both the prompt and the transcript diagnostics pane.</summary>
-    public static string BuildCompactJson(DrcStatePacket state, int maxComponents = 8)
-    {
-        ArgumentNullException.ThrowIfNull(state);
-        if (maxComponents < 0)
-            throw new ArgumentOutOfRangeException(nameof(maxComponents));
+    /// <summary>Uploaded-photo path. The photo is the only input.</summary>
+    public static string BuildPhotoInspection() => TutorInstruction;
 
-        var violations = new List<object>(state.Violations.Count);
-        foreach (DrcViolation violation in state.Violations)
-        {
-            violations.Add(new
-            {
-                code = violation.Code.ToString(),
-                severity = violation.Severity.ToString(),
-                component = violation.ComponentId,
-                strip = violation.OffendingStripId,
-                badHole = HoleLabel(violation.BadHole, violation.OffendingStripId),
-                targetHole = HoleLabel(violation.SuggestedTargetHole, 0),
-                message = violation.TechnicalMessage
-            });
-        }
+    /// <summary>Live-camera path. The direct camera frame is the only input.</summary>
+    public static string BuildLiveVisionInspection() => TutorInstruction;
 
-        var components = new List<object>(Math.Min(maxComponents, state.Components.Count));
-        int emitted = 0;
-        foreach (SnappedComponent component in state.Components)
-        {
-            if (emitted++ >= maxComponents)
-                break;
-
-            components.Add(new
-            {
-                trackId = component.RawDetection.TrackId,
-                kind = component.RawDetection.Kind.ToString(),
-                confidence = Math.Round(component.RawDetection.Confidence, 2),
-                pin1 = component.Pin1Hole.HoleId,
-                pin2 = component.Pin2Hole.HoleId,
-                net1 = component.Net1Name,
-                net2 = component.Net2Name
-            });
-        }
-
-        var report = new
-        {
-            frame = state.FrameNumber,
-            stateHash = state.StateHash,
-            yoloMs = Math.Round(state.YoloInferenceMs, 2),
-            drcMs = Math.Round(state.DrcComputeMs, 3),
-            critical = state.HasCriticalShort,
-            cropAttached = state.MicroCropPngBytes is { Length: > 0 },
-            violations,
-            components
-        };
-
-        return JsonSerializer.Serialize(report, JsonOptions);
-    }
+    private static bool HasImage(DrcStatePacket state) =>
+        state.FullBoardPngBytes is { Length: > 0 } || state.MicroCropPngBytes is { Length: > 0 };
 
     /// <summary>Human-readable DRC summary for the inspector dock (no JSON brackets).</summary>
     public static string BuildInspectorSummary(DrcStatePacket state)

@@ -1,0 +1,9 @@
+{
+  "skills": {
+    "paths": [
+      "~/.antigravity/skills/mattpocock-skills",
+      "~/.antigravity/powers/superpowers-antigravity"
+    ]
+  }
+}
+

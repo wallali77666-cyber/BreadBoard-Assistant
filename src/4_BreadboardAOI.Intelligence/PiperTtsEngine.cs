@@ -18,6 +18,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using BreadboardAOI.Hardware;
 using NAudio.Wave;
 
 namespace BreadboardAOI.Intelligence;
@@ -255,19 +256,7 @@ public sealed class PiperTtsEngine
 
     private static void TryPinToPCore(Process process)
     {
-        if (!OperatingSystem.IsWindows() || Environment.ProcessorCount < 12)
-            return;
-
-        try
-        {
-            process.ProcessorAffinity = (IntPtr)0x00FFF;
-        }
-        catch (Exception ex) when (ex is InvalidOperationException
-                                   or NotSupportedException
-                                   or System.ComponentModel.Win32Exception)
-        {
-            // Pinning is an optimisation; Piper works on any core.
-        }
+        CpuAffinityManager.TryPinProcess(process, AffinityRole.Ai, out _);
     }
 
     private static void TryKill(Process process)

@@ -159,6 +159,12 @@ public sealed class KicadSymbolLibrary : IDisposable
         ComponentKind.Led => "Device/LED",
         ComponentKind.IntegratedCircuit => "Timer/NE555P",
         ComponentKind.PushButton => "Switch/SW_Push",
+        ComponentKind.Diode => "Device/D",
+        ComponentKind.Transistor => "Transistor_BJT/2N3904",
+        ComponentKind.Potentiometer => "Device/R_Potentiometer_Trim",
+        ComponentKind.VoltageRegulator => "Regulator_Linear/L7805",
+        ComponentKind.Buzzer => "Device/Buzzer",
+        ComponentKind.Sensor => "Sensor_Optical/LDR_GL5528",
         _ => "Device/R"
     };
 

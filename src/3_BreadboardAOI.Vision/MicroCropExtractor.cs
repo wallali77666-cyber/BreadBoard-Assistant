@@ -1,7 +1,7 @@
-// ============================================================================
+﻿// ============================================================================
 // FILE: src/3_BreadboardAOI.Vision/MicroCropExtractor.cs
-// PURPOSE: Slices a 256 x 256 PNG around any faulty/new component so Qwen3-VL
-//          only has to prefill a tiny image instead of the full 1080p frame.
+// PURPOSE: Slices a 256 x 256 PNG or WebP around any faulty/new component so
+//          Qwen3-VL only has to prefill a tiny image instead of the full frame.
 // ============================================================================
 
 using System;
@@ -16,6 +16,7 @@ public sealed class MicroCropExtractor : IDisposable
     public const int CropSize = 256;
 
     private readonly Mat _canvas;
+    private readonly Mat _converted = new();
     private bool _disposed;
 
     public MicroCropExtractor()
@@ -33,6 +34,31 @@ public sealed class MicroCropExtractor : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         pngBytes = Array.Empty<byte>();
 
+        if (!TryRenderCropToCanvas(warpedFrame, component))
+            return false;
+
+        return Cv2.ImEncode(".png", _canvas, out pngBytes);
+    }
+
+    /// <summary>
+    /// Crops around <paramref name="component"/>'s bounding-box centre and encodes a
+    /// compact WebP buffer for low-latency VLM prefill.
+    /// </summary>
+    public bool TryExtractWebp(Mat warpedFrame, DetectedComponent component, out byte[] webpBytes, int quality = 75)
+    {
+        ArgumentNullException.ThrowIfNull(warpedFrame);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        webpBytes = Array.Empty<byte>();
+
+        if (!TryRenderCropToCanvas(warpedFrame, component))
+            return false;
+
+        Cv2.ImEncode(".webp", _canvas, out webpBytes, new ImageEncodingParam(ImwriteFlags.WebPQuality, quality));
+        return webpBytes.Length > 0;
+    }
+
+    private bool TryRenderCropToCanvas(Mat warpedFrame, DetectedComponent component)
+    {
         if (warpedFrame.Empty())
             return false;
 
@@ -57,10 +83,8 @@ public sealed class MicroCropExtractor : IDisposable
             ConvertChannels(sourceRoi, destinationRoi);
         }
 
-        return Cv2.ImEncode(".png", _canvas, out pngBytes);
+        return true;
     }
-
-    private readonly Mat _converted = new();
 
     private void ConvertChannels(Mat source, Mat destination)
     {

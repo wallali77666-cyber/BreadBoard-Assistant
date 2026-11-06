@@ -117,10 +117,12 @@ public static class LocalAiProviders
         return ParseModelIds(json);
     }
 
-    /// <summary>Prefers the operator's model name, otherwise the first loaded model.</summary>
+    /// <summary>Prefers the operator's model name, otherwise prioritizes Qwen 30B / Qwen-VL / loaded models.</summary>
     public static string? ChooseModel(IReadOnlyList<string> models, string? preferred)
     {
         ArgumentNullException.ThrowIfNull(models);
+        if (models.Count == 0)
+            return null;
 
         if (!string.IsNullOrWhiteSpace(preferred))
         {
@@ -136,8 +138,25 @@ public static class LocalAiProviders
                 if (model.StartsWith(wanted, StringComparison.OrdinalIgnoreCase))
                     return model;
             }
+
+            return models[0];
         }
 
-        return models.Count > 0 ? models[0] : null;
+        // When preferred is null, prioritize Qwen 30B / Qwen3
+        foreach (string id in models)
+        {
+            if (id.Contains("30b", StringComparison.OrdinalIgnoreCase) || id.Contains("qwen3", StringComparison.OrdinalIgnoreCase))
+                return id;
+        }
+
+        // Next prioritize any Qwen or VL model
+        foreach (string id in models)
+        {
+            if (id.Contains("qwen", StringComparison.OrdinalIgnoreCase) || id.Contains("vl", StringComparison.OrdinalIgnoreCase))
+                return id;
+        }
+
+        // Return whatever model is currently loaded in the provider
+        return models[0];
     }
 }

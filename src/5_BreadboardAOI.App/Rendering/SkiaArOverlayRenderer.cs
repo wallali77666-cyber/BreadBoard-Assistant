@@ -38,6 +38,9 @@ public sealed class OverlayLayerSettings
 
     public bool ShowComponentLabels { get; set; } = true;
 
+    /// <summary>Draws high-contrast micro pill pin labels (VCC, GND, TRIG, ECHO, A+, K-, etc.) on sensor and component pins.</summary>
+    public bool ShowSensorPinLabels { get; set; } = true;
+
     public bool ShowHoverInspector { get; set; } = true;
 
     public bool ShowTelemetry { get; set; } = true;
@@ -51,6 +54,15 @@ public sealed class OverlayLayerSettings
 
     /// <summary>Draws all 126 conductive clips faintly so the board reads as an X-ray.</summary>
     public bool ShowAllStrips { get; set; }
+
+    /// <summary>Renders dynamic 16x2 I2C LCD character display simulation (blue backlight + dot matrix text) when enabled.</summary>
+    public bool ShowLcdSimulation { get; set; } = true;
+
+    /// <summary>Live simulated text for 16x2 LCD Row 0.</summary>
+    public string LcdSimulatedRow0 { get; set; } = "Breadboard AOI";
+
+    /// <summary>Live simulated text for 16x2 LCD Row 1.</summary>
+    public string LcdSimulatedRow1 { get; set; } = "LCD 1602 Active";
 }
 
 /// <summary>Result of snapping the mouse cursor through the pin matrix.</summary>
@@ -86,6 +98,76 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
     private float _boardPixelWidth = BoardWidth;
     private float _boardPixelHeight = BoardHeight;
     private bool _hasTransform;
+
+    // ---- selected part for visual highlighting -----------------------------
+    public int? SelectedTrackId { get; set; }
+
+    // ---- user zoom & pan ---------------------------------------------------
+    public float UserZoomFactor { get; set; } = 1.0f;
+    public float PanOffsetX { get; set; } = 0f;
+    public float PanOffsetY { get; set; } = 0f;
+
+    private int _lastViewportWidth = 1000;
+    private int _lastViewportHeight = 600;
+    private float _baseFitScale = 1f;
+
+    public void ResetZoom()
+    {
+        UserZoomFactor = 1.0f;
+        PanOffsetX = 0f;
+        PanOffsetY = 0f;
+    }
+
+    public void PanBy(float deltaX, float deltaY)
+    {
+        PanOffsetX += deltaX;
+        PanOffsetY += deltaY;
+    }
+
+    public void ZoomAtCenter(float factor)
+    {
+        float cx = _lastViewportWidth * 0.5f;
+        float cy = _lastViewportHeight * 0.5f;
+        ZoomAt(factor, cx, cy);
+    }
+
+    public void ZoomAt(float factor, float focusScreenX, float focusScreenY)
+    {
+        float oldZoom = UserZoomFactor;
+        float newZoom = Math.Clamp(oldZoom * factor, 0.4f, 5.0f);
+        if (MathF.Abs(newZoom - oldZoom) < 0.001f)
+            return;
+
+        if (!_hasTransform || _scale <= 0.001f || _baseFitScale <= 0.001f)
+        {
+            UserZoomFactor = newZoom;
+            return;
+        }
+
+        // Exact point in board coordinates under the focus screen pixel
+        float boardX = (focusScreenX - _boardLeft) / _scale;
+        float boardY = (focusScreenY - _boardTop) / _scale;
+
+        // Apply new zoom factor
+        UserZoomFactor = newZoom;
+
+        // Calculate new scale and unpanned base position
+        float newScale = _baseFitScale * newZoom;
+        float rulerTop = Layers.ShowRulers ? RulerTopHeight : 0f;
+        float rulerLeft = Layers.ShowRulers ? RulerLeftWidth : 0f;
+        float availableWidth = MathF.Max(1f, _lastViewportWidth - rulerLeft - CanvasMargin * 2f);
+        float availableHeight = MathF.Max(1f, _lastViewportHeight - rulerTop - CanvasMargin * 2f);
+        (float dockWidth, float dockHeight) = ComputeDockReserve(_baseFitScale);
+
+        float newBoardPixelWidth = BoardWidth * newScale;
+        float newBoardPixelHeight = BoardHeight * newScale;
+        float newBaseLeft = rulerLeft + CanvasMargin + ((availableWidth - newBoardPixelWidth - (dockWidth * newScale)) * 0.5f);
+        float newBaseTop = rulerTop + CanvasMargin + ((availableHeight - newBoardPixelHeight - (dockHeight * newScale)) * 0.5f);
+
+        // Update pan offset so (boardX, boardY) remains exactly at (focusScreenX, focusScreenY)
+        PanOffsetX = focusScreenX - (boardX * newScale) - newBaseLeft;
+        PanOffsetY = focusScreenY - (boardY * newScale) - newBaseTop;
+    }
 
     // ---- hover state -------------------------------------------------------
     private HoleCoord _hoverHole;
@@ -133,6 +215,12 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
     private readonly SKPaint _xrayCriticalStrokePaint;
     private readonly SKPaint _xrayWarningFillPaint;
     private readonly SKPaint _xrayWarningStrokePaint;
+    private readonly SKPaint _xrayOverloadFillPaint;
+    private readonly SKPaint _xrayOverloadStrokePaint;
+    private readonly SKPaint _xrayInputOnlyFillPaint;
+    private readonly SKPaint _xrayInputOnlyStrokePaint;
+    private readonly SKPaint _xrayCrossoverFillPaint;
+    private readonly SKPaint _xrayCrossoverStrokePaint;
     private readonly SKPaint _componentBoxPaint;
     private readonly SKPaint _componentBoxFlaggedPaint;
     private readonly SKPaint _jumperBoxPaint;
@@ -197,6 +285,12 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
         _xrayCriticalStrokePaint = Stroke(0xD7, 0x37, 0x3F, 1.2f);
         _xrayWarningFillPaint = Fill(0xE6, 0x86, 0x19, 66);
         _xrayWarningStrokePaint = Stroke(0xE6, 0x86, 0x19, 1.2f);
+        _xrayOverloadFillPaint = Fill(0xE0, 0x40, 0xFB, 80);
+        _xrayOverloadStrokePaint = Stroke(0xE0, 0x40, 0xFB, 1.4f);
+        _xrayInputOnlyFillPaint = Fill(0xFF, 0x6D, 0x00, 75);
+        _xrayInputOnlyStrokePaint = Stroke(0xFF, 0x6D, 0x00, 1.3f);
+        _xrayCrossoverFillPaint = Fill(0x00, 0xE5, 0xFF, 75);
+        _xrayCrossoverStrokePaint = Stroke(0x00, 0xE5, 0xFF, 1.3f);
         _componentBoxPaint = Stroke(0x3A, 0x7D, 0xB8, 1f);
         _componentBoxFlaggedPaint = Stroke(0xD7, 0x37, 0x3F, 1.4f);
         _jumperBoxPaint = Stroke(0x84, 0x84, 0x80, 0.8f);
@@ -215,6 +309,15 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
         _boardSmallLabelPaint = Text(0x4A, 0x4A, 0x48, 8.5f, _monoTypeface);
         _boardTinyLabelPaint = Text(0x6E, 0x6E, 0x6A, 7.5f, _monoTypeface);
         _partPinNumberPaint = Text(0xA8, 0xA6, 0x9E, 7f, _monoTypeface);
+        _partIcLabelPaint = Text(0xD8, 0xD6, 0xCE, 7.5f, _monoTypeface);
+        _partCapCeramicTextPaint = Text(0x40, 0x22, 0x08, 6.5f, _monoTypeface);
+        _partSensorLabelDarkPaint = Text(0x18, 0x18, 0x1C, 7.5f, _monoTypeface);
+        _partSensorBadgeTextPaint = Text(0xFA, 0xFA, 0xFA, 6.5f, _monoTypeface);
+        _pinVccTextPaint = Text(0xFF, 0x55, 0x55, 6.5f, _monoTypeface);
+        _pinGndTextPaint = Text(0x50, 0xFA, 0x7B, 6.5f, _monoTypeface);
+        _pinSignalTextPaint = Text(0xFF, 0xB8, 0x6C, 6.5f, _monoTypeface);
+        _pinGeneralTextPaint = Text(0xEC, 0xEF, 0xF4, 6.5f, _monoTypeface);
+        _pinI2cTextPaint = Text(0xBD, 0x93, 0xF9, 6.5f, _monoTypeface);
         _labelChipPaint = Fill(0xED, 0xEB, 0xE4, 214);
         _telemetryPanelPaint = Fill(0x1E, 0x1E, 0x1E);
         _telemetryBorderPaint = Stroke(0x33, 0x33, 0x37, 1f);
@@ -256,7 +359,7 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
 
     /// <summary>
     /// Snaps the mouse cursor (already in control-local pixels) to the nearest tie
-    /// point. Returns false (and clears the highlight) when the cursor is off-board.
+    /// point or docked off-board microcontroller pin socket.
     /// </summary>
     public bool UpdateHover(float viewportX, float viewportY)
     {
@@ -264,8 +367,23 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
         _hoverScreenY = viewportY;
 
         if (!_hasTransform)
+        {
+            ClearDevBoardHover();
             return ApplyHover(false, default);
+        }
 
+        // 1. Hit-test off-board microcontroller pin sockets first if docked
+        if (TryHitTestDevBoardPin(viewportX, viewportY, out DevBoardPinHit? devBoardHit) && devBoardHit is not null)
+        {
+            ApplyHover(false, default);
+            _hoverValid = false;
+            _hoverText = $"[{devBoardHit.BoardProfile.DisplayName}] {devBoardHit.Pin.DisplayLabel} ({devBoardHit.Pin.Role}, {devBoardHit.Pin.NominalVoltage:F1}V) - Click to wire";
+            return true;
+        }
+
+        ClearDevBoardHover();
+
+        // 2. Snap to the 830-tie-point breadboard matrix
         SKPoint board = Transform.ToBoard(viewportX, viewportY);
         bool inBounds = board.X >= -12f && board.X <= BoardWidth + 12f
                         && board.Y >= -12f && board.Y <= BoardHeight + 12f;
@@ -277,10 +395,35 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
 
     public void ClearHover()
     {
+        ClearDevBoardHover();
         if (!_hoverValid && _hoverText.Length == 0)
             return;
 
         ApplyHover(false, default);
+    }
+
+    /// <summary>
+    /// Renders an off-screen snapshot of the entire breadboard (1000x500 CAD sheet)
+    /// and encodes it as a high-resolution PNG byte array for Qwen multimodal reasoning.
+    /// </summary>
+    public byte[] CaptureFullBoardPng(
+        DrcStatePacket? drcState,
+        IReadOnlyList<RatsnestVector>? ratsnest = null,
+        int width = 1000,
+        int height = 500)
+    {
+        var info = new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
+        using var surface = SKSurface.Create(info);
+        if (surface is null)
+            return Array.Empty<byte>();
+
+        SKCanvas canvas = surface.Canvas;
+        RenderBoardViewport(canvas, width, height, warpedBoardFrame: null, drcState, ratsnest);
+        canvas.Flush();
+
+        using SKImage image = surface.Snapshot();
+        using SKData data = image.Encode(SKEncodedImageFormat.Png, 95);
+        return data.ToArray();
     }
 
     /// <summary>
@@ -356,6 +499,44 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
         DrawBoardContent(canvas, drcState, ratsnest);
         canvas.Restore();
 
+        // Render any docked off-board microcontrollers outside the breadboard.
+        // Wires are painted before the PCB so they disappear under the board and
+        // its labels, exactly like a cable plugged into a socket at the edge.
+        if (ActiveMicrocontrollers.Count > 0)
+        {
+            float pixelsPerMm = _boardPixelWidth / BreadboardWidthMm;
+            var mcuLayouts = new List<RenderedMicrocontrollerLayout>(ActiveMicrocontrollers.Count);
+            foreach (var mcu in ActiveMicrocontrollers)
+                mcuLayouts.Add(McuRenderer.ComputeBoardLayout(mcu, boardRect, pixelsPerMm));
+            _activeMcuLayouts = mcuLayouts;
+
+            // 1. Paint microcontroller boards first so the PCB, hardware ICs, and headers form the foundation
+            foreach (var mcu in ActiveMicrocontrollers)
+                McuRenderer.RenderMicrocontroller(canvas, mcu, boardRect, pixelsPerMm);
+
+            // 2. Paint 3D jumper wires on top so they arch gracefully into the headers
+            if (ActiveDevBoardWires.Count > 0)
+                DrawDevBoardJumperWires(canvas, mcuLayouts, boardRect, pixelsPerMm);
+
+            if (ActiveDevBoardWires.Count > 0)
+                DrawDevBoardWirePlugs(canvas, mcuLayouts, ActiveDevBoardWires, pixelsPerMm);
+
+            // 3. Paint DRC violation callouts on top of all physical elements
+            if (ActiveDevBoardViolations.Count > 0)
+                DrawDrcViolationHud(canvas, boardRect, ActiveDevBoardViolations, pixelsPerMm);
+        }
+
+        // Live interactive 2.5D/3D jumper wire dragging (from breadboard hole or MCU pin to cursor)
+        DrawActiveWireDrag(canvas, boardRect, _boardPixelWidth / BreadboardWidthMm);
+
+        // Telemetry/title/legend are screen HUDs, not copper. Repaint them above
+        // the jumpers so a wire never obscures a label or a readout.
+        canvas.Save();
+        canvas.Translate(_boardLeft, _boardTop);
+        canvas.Scale(_scale);
+        DrawBoardOverlays(canvas, drcState);
+        canvas.Restore();
+
         if (Layers.ShowRulers)
             DrawRulers(canvas);
 
@@ -374,6 +555,9 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
         _pinHoverRingPaint.StrokeWidth = 1.2f * inverse;
         _xrayCriticalStrokePaint.StrokeWidth = 1.2f * inverse;
         _xrayWarningStrokePaint.StrokeWidth = 1.2f * inverse;
+        _xrayOverloadStrokePaint.StrokeWidth = 1.4f * inverse;
+        _xrayInputOnlyStrokePaint.StrokeWidth = 1.3f * inverse;
+        _xrayCrossoverStrokePaint.StrokeWidth = 1.3f * inverse;
         _componentBoxPaint.StrokeWidth = 1f * inverse;
         _componentBoxFlaggedPaint.StrokeWidth = 1.4f * inverse;
         _jumperBoxPaint.StrokeWidth = 0.8f * inverse;
@@ -388,8 +572,12 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
         _telemetryStatusPaint.TextSize = 13f * inverse;
         _telemetryLinePaint.TextSize = 9f * inverse;
         _telemetryFooterPaint.TextSize = 8.5f * inverse;
-        _titleBlockTextPaint.TextSize = 8f * inverse;
-        _titleBlockStrongTextPaint.TextSize = 10f * inverse;
+        // The title block is a fixed-size board-space panel. At small viewport
+        // scales the constant 8 px text no longer fits its 312-unit width, so
+        // ease the HUD font down with the board instead of clipping the labels.
+        float titleBlockTextScale = Math.Clamp(_scale / 0.85f, 0.72f, 1f);
+        _titleBlockTextPaint.TextSize = 8f * inverse * titleBlockTextScale;
+        _titleBlockStrongTextPaint.TextSize = 10f * inverse * titleBlockTextScale;
         _legendTextPaint.TextSize = 8f * inverse;
     }
 
@@ -431,6 +619,16 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
         if (Layers.ShowRatsnestArrows)
             DrawTargetRatsnest(canvas, ratsnest);
 
+        DrawAvometerProbes(canvas);
+    }
+
+    /// <summary>
+    /// HUD panels that must stay above physical jumper wires. Kept separate
+    /// from <see cref="DrawBoardContent"/> so the viewport can paint wires and
+    /// docked MCUs in between the breadboard and these screen overlays.
+    /// </summary>
+    private void DrawBoardOverlays(SKCanvas canvas, DrcStatePacket? state)
+    {
         if (Layers.ShowTelemetry)
             DrawTelemetryPanel(canvas, state);
 
@@ -464,16 +662,8 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
             if (component.RawDetection.Kind != ComponentKind.JumperWire)
                 continue;
 
-            if (Layers.ShowRealisticParts)
-            {
-                DrawJumperWire(canvas, component);
-                continue;
-            }
-
-            _jumperLinePath.Reset();
-            _jumperLinePath.MoveTo(component.Pin1Hole.Px, component.Pin1Hole.Py);
-            _jumperLinePath.LineTo(component.Pin2Hole.Px, component.Pin2Hole.Py);
-            canvas.DrawPath(_jumperLinePath, _jumperLinePaint);
+            bool isFlagged = IsFlagged(state.Violations, component);
+            DrawJumperWire(canvas, component, isFlagged);
         }
     }
 
@@ -550,6 +740,13 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
             if (isFlagged && drawSymbols && !drawBoxes)
                 canvas.DrawRoundRect(box, 4f, 4f, _partFlagPaint);
 
+            if (SelectedTrackId == detection.TrackId && !isJumper)
+            {
+                var selBox = box;
+                selBox.Inflate(3.5f, 3.5f);
+                canvas.DrawRoundRect(selBox, 4f, 4f, _partSelectionPaint);
+            }
+
             if (!isJumper
                 && Layers.ShowComponentLabels
                 && _componentLabels.TryGetValue(detection.TrackId, out string? label))
@@ -598,11 +795,30 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
             DrcViolation violation = violations[i];
             bool critical = violation.Severity == DrcSeverity.Critical;
 
+            SKPaint fill;
+            SKPaint stroke;
+            switch (violation.Code)
+            {
+                case ViolationCode.ErcVoltageOverload:
+                    fill = _xrayOverloadFillPaint;
+                    stroke = _xrayOverloadStrokePaint;
+                    break;
+                case ViolationCode.ErcInputOnlyViolation:
+                    fill = _xrayInputOnlyFillPaint;
+                    stroke = _xrayInputOnlyStrokePaint;
+                    break;
+                case ViolationCode.ErcProtocolCrossoverError:
+                    fill = _xrayCrossoverFillPaint;
+                    stroke = _xrayCrossoverStrokePaint;
+                    break;
+                default:
+                    fill = critical ? _xrayCriticalFillPaint : _xrayWarningFillPaint;
+                    stroke = critical ? _xrayCriticalStrokePaint : _xrayWarningStrokePaint;
+                    break;
+            }
+
             if (Layers.ShowXRayStrips)
             {
-                SKPaint fill = critical ? _xrayCriticalFillPaint : _xrayWarningFillPaint;
-                SKPaint stroke = critical ? _xrayCriticalStrokePaint : _xrayWarningStrokePaint;
-
                 DrawStripCapsule(canvas, violation.OffendingStripId, fill, stroke);
 
                 // A VCC/GND bridge shorts both rails: highlight the partner rail too.
@@ -629,7 +845,7 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
                     canvas,
                     violation.BadHole.Px,
                     violation.BadHole.Py,
-                    critical ? _xrayCriticalStrokePaint : _xrayWarningStrokePaint);
+                    stroke);
             }
 
             if (Layers.ShowRatsnestArrows && !string.IsNullOrEmpty(violation.SuggestedTargetHole.HoleId))
@@ -642,7 +858,8 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
                     violation.SuggestedTargetHole.Py);
             }
 
-            DrawViolationBadge(canvas, violation, critical);
+            if (Layers.ShowComponentLabels)
+                DrawViolationBadge(canvas, violation, stroke);
         }
     }
 
@@ -728,7 +945,7 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
         canvas.DrawLine(x, y - 10f, x, y + 10f, paint);
     }
 
-    private void DrawViolationBadge(SKCanvas canvas, in DrcViolation violation, bool critical)
+    private void DrawViolationBadge(SKCanvas canvas, in DrcViolation violation, SKPaint strokePaint)
     {
         string label = ViolationLabel(violation.Code);
         float textWidth = _telemetryLinePaint.MeasureText(label);
@@ -744,7 +961,7 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
 
         var badge = new SKRect(x, y, x + width, y + height);
         canvas.DrawRoundRect(badge, 2f, 2f, _telemetryPanelPaint);
-        canvas.DrawRoundRect(badge, 2f, 2f, critical ? _xrayCriticalStrokePaint : _xrayWarningStrokePaint);
+        canvas.DrawRoundRect(badge, 2f, 2f, strokePaint);
         canvas.DrawText(label, x + 6f, y + height - 4.5f, _telemetryLinePaint);
     }
 
@@ -756,6 +973,9 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
         ViolationCode.ErcReversedPolarity => "ERC 103  REVERSED POLARITY",
         ViolationCode.ErcRedundantJumper => "ERC 104  REDUNDANT JUMPER",
         ViolationCode.ErcHoleCollision => "ERC 105  OVERFILLED HOLE",
+        ViolationCode.ErcVoltageOverload => "ERC 106  VOLTAGE OVERLOAD",
+        ViolationCode.ErcInputOnlyViolation => "ERC 107  INPUT-ONLY PIN",
+        ViolationCode.ErcProtocolCrossoverError => "ERC 108  PROTOCOL CROSSOVER",
         ViolationCode.DrcSchematicNetMismatch => "DRC 200  OPEN NET",
         ViolationCode.DrcUnexpectedNetLink => "DRC 202  UNEXPECTED BRIDGE",
         _ => "DRC VIOLATION"
@@ -763,36 +983,44 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
 
     private void UpdateHudCache(DrcStatePacket? state)
     {
+        int devBoardHash = 17;
+        int devBoardCritical = 0;
+        int devBoardWarnings = 0;
+        for (int i = 0; i < ActiveDevBoardViolations.Count; i++)
+        {
+            var v = ActiveDevBoardViolations[i];
+            devBoardHash = HashCode.Combine(devBoardHash, v.RuleCode.GetHashCode(), v.NetName.GetHashCode());
+            if (v.Severity is McuDrcSeverity.CriticalDamageRisk or McuDrcSeverity.Error)
+                devBoardCritical++;
+            else
+                devBoardWarnings++;
+        }
+
+        int currentHash = HashCode.Combine(state?.StateHash ?? int.MinValue, devBoardHash, ActiveDevBoardWires.Count);
         long bucket = (state?.FrameNumber ?? 0) / 15;
-        if (_hudInitialized && state?.StateHash == _hudHash && bucket == _hudFrameBucket)
+        if (_hudInitialized && currentHash == _hudHash && bucket == _hudFrameBucket)
             return;
 
         _hudInitialized = true;
-        _hudHash = state?.StateHash ?? int.MinValue;
+        _hudHash = currentHash;
         _hudFrameBucket = bucket;
 
-        if (state is null)
+        int critical = devBoardCritical;
+        int warnings = devBoardWarnings;
+        if (state is not null)
         {
-            _hudStatus = "AWAITING FRAME";
-            _hudStatusColor = new SKColor(0x9A, 0x9A, 0x9A);
-            _hudMetrics = "YOLO --.- MS   DRC --.--- MS";
-            _hudFooter = "830 TIE POINTS   NO PACKET";
-            return;
-        }
-
-        int critical = 0;
-        int warnings = 0;
-        for (int i = 0; i < state.Violations.Count; i++)
-        {
-            if (state.Violations[i].Severity == DrcSeverity.Critical)
-                critical++;
-            else
-                warnings++;
+            for (int i = 0; i < state.Violations.Count; i++)
+            {
+                if (state.Violations[i].Severity == DrcSeverity.Critical)
+                    critical++;
+                else
+                    warnings++;
+            }
         }
 
         if (critical > 0)
         {
-            _hudStatus = critical == 1 ? "1 CRITICAL SHORT" : $"{critical} CRITICAL SHORTS";
+            _hudStatus = critical == 1 ? "1 CRITICAL VIOLATION" : $"{critical} CRITICAL VIOLATIONS";
             _hudStatusColor = new SKColor(0xD7, 0x37, 0x3F);
         }
         else if (warnings > 0)
@@ -800,9 +1028,9 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
             _hudStatus = warnings == 1 ? "1 WARNING" : $"{warnings} WARNINGS";
             _hudStatusColor = new SKColor(0xE6, 0x86, 0x19);
         }
-        else if (state.Components.Count == 0)
+        else if (state is null || (state.Components.Count == 0 && ActiveDevBoardWires.Count == 0))
         {
-            _hudStatus = "NO DETECTIONS";
+            _hudStatus = state is null ? "AWAITING FRAME" : "NO DETECTIONS";
             _hudStatusColor = new SKColor(0x9A, 0x9A, 0x9A);
         }
         else
@@ -811,13 +1039,24 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
             _hudStatusColor = new SKColor(0x2D, 0x9D, 0x78);
         }
 
-        _hudMetrics = string.Create(
-            CultureInfo.InvariantCulture,
-            $"YOLO {state.YoloInferenceMs:0.0} MS   DRC {state.DrcComputeMs:0.000} MS");
+        if (state is not null)
+        {
+            _hudMetrics = string.Create(
+                CultureInfo.InvariantCulture,
+                $"YOLO {state.YoloInferenceMs:0.0} MS   DRC {state.DrcComputeMs:0.000} MS");
 
-        _hudFooter = string.Create(
-            CultureInfo.InvariantCulture,
-            $"FRAME {state.FrameNumber}   PINS 830   PARTS {state.Components.Count}");
+            string partsText = $"PARTS {state.Components.Count}";
+            string wiresText = ActiveDevBoardWires.Count > 0 ? $"   WIRES {ActiveDevBoardWires.Count}" : "";
+            _hudFooter = string.Create(
+                CultureInfo.InvariantCulture,
+                $"FRAME {state.FrameNumber}   PINS 830   {partsText}{wiresText}");
+        }
+        else
+        {
+            _hudMetrics = "YOLO --.- MS   DRC --.--- MS";
+            string wiresText = ActiveDevBoardWires.Count > 0 ? $"   WIRES {ActiveDevBoardWires.Count}" : "";
+            _hudFooter = $"830 TIE POINTS   CAD DOCKED{wiresText}";
+        }
     }
 
     private void DrawTelemetryPanel(SKCanvas canvas, DrcStatePacket? state)
@@ -862,6 +1101,8 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
 
         DrawLegendEntry(canvas, ref x, baseline, _xrayCriticalFillPaint, "CRITICAL");
         DrawLegendEntry(canvas, ref x, baseline, _xrayWarningFillPaint, "WARNING");
+        DrawLegendEntry(canvas, ref x, baseline, _xrayOverloadFillPaint, "OVERLOAD");
+        DrawLegendEntry(canvas, ref x, baseline, _xrayCrossoverFillPaint, "CROSSOVER");
         DrawLegendEntry(canvas, ref x, baseline, _ratsnestHeadPaint, "RATSNEST");
         DrawLegendEntry(canvas, ref x, baseline, _pinDotPaint, "TIE POINT");
     }
@@ -984,19 +1225,98 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
 
     private void ComputeLayout(int viewportWidth, int viewportHeight)
     {
+        _lastViewportWidth = Math.Max(100, viewportWidth);
+        _lastViewportHeight = Math.Max(100, viewportHeight);
+
         float rulerTop = Layers.ShowRulers ? RulerTopHeight : 0f;
         float rulerLeft = Layers.ShowRulers ? RulerLeftWidth : 0f;
 
         float availableWidth = MathF.Max(1f, viewportWidth - rulerLeft - CanvasMargin * 2f);
         float availableHeight = MathF.Max(1f, viewportHeight - rulerTop - CanvasMargin * 2f);
 
-        float scale = MathF.Min(availableWidth / BoardWidth, availableHeight / BoardHeight);
-        _scale = MathF.Max(0.05f, scale);
+        float scale = MathF.Max(
+            0.05f,
+            MathF.Min(availableWidth / BoardWidth, availableHeight / BoardHeight));
+
+        // The label and title clearance is measured in screen pixels, so it has
+        // to be converted back into board units after each fit. Two passes are
+        // enough for the dock margin to converge without oscillating.
+        for (int pass = 0; pass < 2; pass++)
+        {
+            (float extraWidth, float extraHeight) = ComputeDockReserve(scale);
+            scale = MathF.Max(
+                0.05f,
+                MathF.Min(
+                    availableWidth / (BoardWidth + extraWidth),
+                    availableHeight / (BoardHeight + extraHeight)));
+        }
+
+        (float dockWidth, float dockHeight) = ComputeDockReserve(scale);
+
+        _baseFitScale = scale;
+        float effectiveScale = Math.Clamp(scale * UserZoomFactor, 0.02f, 25f);
+
+        _scale = effectiveScale;
         _boardPixelWidth = BoardWidth * _scale;
         _boardPixelHeight = BoardHeight * _scale;
-        _boardLeft = rulerLeft + CanvasMargin + (availableWidth - _boardPixelWidth) * 0.5f;
-        _boardTop = rulerTop + CanvasMargin + (availableHeight - _boardPixelHeight) * 0.5f;
+        _boardLeft = rulerLeft + CanvasMargin + ((availableWidth - _boardPixelWidth - (dockWidth * _scale)) * 0.5f) + PanOffsetX;
+        _boardTop = rulerTop + CanvasMargin + ((availableHeight - _boardPixelHeight - (dockHeight * _scale)) * 0.5f) + PanOffsetY;
         _hasTransform = true;
+    }
+
+    /// <summary>
+    /// Board-space margin needed to keep every docked MCU, its rotated pin
+    /// labels and its title caption inside the viewport.
+    /// </summary>
+    private (float ExtraWidth, float ExtraHeight) ComputeDockReserve(float scale)
+    {
+        if (ActiveMicrocontrollers.Count == 0)
+            return (0f, 0f);
+
+        const float unitsPerMm = BoardWidth / BreadboardWidthMm;
+        float safeScale = MathF.Max(scale, 0.05f);
+        float pixelsPerMm = (BoardWidth * safeScale) / BreadboardWidthMm;
+        float gapUnits = OffBoardMicrocontrollerRenderer.DockGapMm * unitsPerMm;
+        float titleUnits = OffBoardMicrocontrollerRenderer.TitleClearanceMm * unitsPerMm;
+        float slotGapUnits = 14.0f * unitsPerMm;
+        float extraWidth = 0f;
+        float extraHeight = 0f;
+
+        foreach (OffBoardMicrocontrollerVisualState mcu in ActiveMicrocontrollers)
+        {
+            MicrocontrollerBoardProfile profile = McuRuleEngine.GetBoardProfile(mcu.BoardType);
+            McuLabelExtents labels = McuRenderer.MeasureLabelExtents(profile, pixelsPerMm);
+            float boardWidthUnits = profile.WidthMm * unitsPerMm;
+            float boardHeightUnits = profile.HeightMm * unitsPerMm;
+
+            if (mcu.DockPlacement == OffBoardDockPlacement.BottomMargin)
+            {
+                float slotOffset = mcu.DockSlotIndex * (boardWidthUnits + slotGapUnits);
+                extraHeight = MathF.Max(
+                    extraHeight,
+                    gapUnits + boardHeightUnits + (labels.BottomPx / safeScale) + titleUnits);
+                extraWidth = MathF.Max(
+                    extraWidth,
+                    MathF.Max(0f, slotOffset + boardWidthUnits - BoardWidth));
+            }
+            else
+            {
+                float slotOffset = mcu.DockSlotIndex * (boardHeightUnits + slotGapUnits);
+                extraWidth = MathF.Max(
+                    extraWidth,
+                    gapUnits + boardWidthUnits + (labels.RightPx / safeScale));
+                extraHeight = MathF.Max(
+                    extraHeight,
+                    MathF.Max(
+                        0f,
+                        slotOffset + boardHeightUnits
+                        + ((labels.TopPx + labels.BottomPx) / safeScale)
+                        + titleUnits
+                        - BoardHeight));
+            }
+        }
+
+        return (extraWidth, extraHeight);
     }
 
     private bool ApplyHover(bool found, HoleCoord hole)
@@ -1077,9 +1397,13 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
                 ? string.Empty
                 : "  " + detection.DecodedValueLabel;
 
+            string spanStr = component.PinCount > 2
+                ? $"{component.Pin1Hole.HoleId}..{component.GetHole(component.PinCount - 1).HoleId}"
+                : $"{component.Pin1Hole.HoleId}>{component.Pin2Hole.HoleId}";
+
             _componentLabels[detection.TrackId] = string.Create(
                 CultureInfo.InvariantCulture,
-                $"{KindLabel(detection.Kind)} #{detection.TrackId}{value}  {component.Pin1Hole.HoleId}>{component.Pin2Hole.HoleId}");
+                $"{KindLabel(detection.Kind)} #{detection.TrackId}{value}  {spanStr}");
         }
     }
 
@@ -1091,6 +1415,13 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
         ComponentKind.Capacitor => "CAPACITOR",
         ComponentKind.IntegratedCircuit => "IC",
         ComponentKind.PushButton => "BUTTON",
+        ComponentKind.Diode => "DIODE",
+        ComponentKind.Transistor => "TRANSISTOR",
+        ComponentKind.Potentiometer => "POT",
+        ComponentKind.VoltageRegulator => "REGULATOR",
+        ComponentKind.Buzzer => "BUZZER",
+        ComponentKind.Sensor => "SENSOR",
+        ComponentKind.Battery => "BATTERY",
         _ => "PART"
     };
 
@@ -1138,28 +1469,107 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
         return path;
     }
 
+    private DevBoardPinHit? _pendingDevBoardPin;
+    private string _pendingWireColor = "#00E5FF";
+
     /// <summary>Marks the first lead of a part being placed in the X-ray builder.</summary>
-    public void SetPendingLead(HoleCoord hole)
+    public void SetPendingLead(HoleCoord hole, string? wireColor = null)
     {
         _pendingHole = hole;
         _pendingValid = true;
+        _pendingDevBoardPin = null;
+        if (!string.IsNullOrWhiteSpace(wireColor))
+            _pendingWireColor = wireColor;
     }
 
-    public void ClearPendingLead() => _pendingValid = false;
+    /// <summary>Marks an off-board MCU pin as the first lead of an interactive jumper wire.</summary>
+    public void SetPendingDevBoardPin(DevBoardPinHit mcuPinHit, string? wireColor = null)
+    {
+        _pendingDevBoardPin = mcuPinHit;
+        _pendingValid = false;
+        if (!string.IsNullOrWhiteSpace(wireColor))
+            _pendingWireColor = wireColor;
+    }
 
-    public bool HasPendingLead => _pendingValid;
+    public void ClearPendingLead()
+    {
+        _pendingValid = false;
+        _pendingDevBoardPin = null;
+    }
 
-    /// <summary>Anchor-on-hover rubber band so the second click is unambiguous.</summary>
+    public bool HasPendingLead => _pendingValid || _pendingDevBoardPin is not null;
+
+    /// <summary>Anchor-on-hover indicator so the first lead location is clear on the breadboard.</summary>
     private void DrawPendingLead(SKCanvas canvas)
     {
         canvas.DrawCircle(_pendingHole.Px, _pendingHole.Py, 5.5f, _builderPendingFillPaint);
         canvas.DrawCircle(_pendingHole.Px, _pendingHole.Py, 10f, _builderPendingStrokePaint);
+    }
 
-        if (!_hoverValid || string.Equals(_hoverHole.HoleId, _pendingHole.HoleId, StringComparison.OrdinalIgnoreCase))
+    /// <summary>
+    /// Renders the active interactive 2.5D/3D jumper wire dragging between a breadboard hole
+    /// or MCU socket and the mouse cursor / hovered target pin at 60 FPS.
+    /// </summary>
+    private void DrawActiveWireDrag(SKCanvas canvas, SKRect boardRect, float pixelsPerMm)
+    {
+        SKPoint? startPt = null;
+        if (_pendingDevBoardPin is not null)
+        {
+            startPt = _pendingDevBoardPin.CanvasCenter;
+        }
+        else if (_pendingValid)
+        {
+            startPt = new SKPoint(
+                boardRect.Left + ((_pendingHole.Px / BoardWidth) * boardRect.Width),
+                boardRect.Top + ((_pendingHole.Py / BoardHeight) * boardRect.Height));
+        }
+
+        if (startPt is not { } start)
             return;
 
-        canvas.DrawLine(_pendingHole.Px, _pendingHole.Py, _hoverHole.Px, _hoverHole.Py, _builderLinkPaint);
-        canvas.DrawCircle(_hoverHole.Px, _hoverHole.Py, 4f, _builderPendingFillPaint);
+        SKPoint end;
+        bool isSnapped = false;
+
+        if (HoveredDevBoardPin is { } hoveredMcu)
+        {
+            end = hoveredMcu.CanvasCenter;
+            isSnapped = true;
+        }
+        else if (_hoverValid)
+        {
+            end = new SKPoint(
+                boardRect.Left + ((_hoverHole.Px / BoardWidth) * boardRect.Width),
+                boardRect.Top + ((_hoverHole.Py / BoardHeight) * boardRect.Height));
+            isSnapped = true;
+        }
+        else if (_hoverScreenX > 0 && _hoverScreenY > 0)
+        {
+            end = new SKPoint(_hoverScreenX, _hoverScreenY);
+        }
+        else
+        {
+            return;
+        }
+
+        float dx = end.X - start.X;
+        float dy = end.Y - start.Y;
+        if (((dx * dx) + (dy * dy)) < 16f)
+            return;
+
+        Draw3DJumperWire(canvas, start, end, _pendingWireColor, hasViolation: false, pxPerMm: pixelsPerMm);
+
+        if (isSnapped)
+        {
+            SKColor ringColor = SKColor.TryParse(_pendingWireColor, out SKColor parsed) ? parsed : SKColor.Parse("#00E5FF");
+            using var snapGlow = new SKPaint
+            {
+                Color = ringColor.WithAlpha(210),
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = MathF.Max(2.0f, 0.55f * pixelsPerMm),
+                IsAntialias = true
+            };
+            canvas.DrawCircle(end.X, end.Y, MathF.Max(4.5f, 1.8f * pixelsPerMm), snapGlow);
+        }
     }
 
     private static SKPaint Fill(byte red, byte green, byte blue, byte alpha = 255) =>
@@ -1230,6 +1640,12 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
             _xrayCriticalStrokePaint,
             _xrayWarningFillPaint,
             _xrayWarningStrokePaint,
+            _xrayOverloadFillPaint,
+            _xrayOverloadStrokePaint,
+            _xrayInputOnlyFillPaint,
+            _xrayInputOnlyStrokePaint,
+            _xrayCrossoverFillPaint,
+            _xrayCrossoverStrokePaint,
             _componentBoxPaint,
             _componentBoxFlaggedPaint,
             _jumperBoxPaint,
@@ -1283,7 +1699,94 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
             _partButtonEdgePaint,
             _partJumperPaint,
             _partJumperPlugPaint,
-            _partFlagPaint);
+            _partFlagPaint,
+            _partSelectionPaint,
+            _partPinNumberPaint,
+            _partIcLabelPaint,
+            _partCapCeramicTextPaint,
+            _partSensorLabelDarkPaint,
+            _partSensorBadgeTextPaint,
+            _pinPillBgPaint,
+            _pinPillBorderPaint,
+            _pinVccTextPaint,
+            _pinGndTextPaint,
+            _pinSignalTextPaint,
+            _pinGeneralTextPaint,
+            _pinI2cTextPaint,
+            _partHeaterGlowPaint,
+            _partTempBulbPaint,
+            _partEyeletPaint,
+            _partUltrasonicBezelPaint,
+            _partDiodeGlassBodyPaint,
+            _partDiodeRectifierBodyPaint,
+            _partDiodeCathodeSilverPaint,
+            _partDiodeCathodeBlackPaint,
+            _partDiodeEdgePaint,
+            _partBuzzerBodyPaint,
+            _partBuzzerHolePaint,
+            _partBuzzerEdgePaint,
+            _partBuzzerPlusPaint,
+            _partSensorLdrBodyPaint,
+            _partSensorLdrTrackPaint,
+            _partSensorThermistorPaint,
+            _partSensorMetalPaint,
+            _partTiltGoldPaint,
+            _partTiltCollarPaint,
+            _partPhotodiodeDiePaint,
+            _partBondWirePaint,
+            _partGlassFramePaint,
+            _partIrFilterDomePaint,
+            _partIrRayPaint,
+            _partMicMetalRimPaint,
+            _partMicFeltPortPaint,
+            _partMicRingPaint,
+            _partPirDomePaint,
+            _partPirFacetPaint,
+            _partPirTrimpotPaint,
+            _partUltrasonicMeshPaint,
+            _partCrystalCanPaint,
+            _partDht11BodyPaint,
+            _partDht11SlotPaint,
+            _partDht22BodyPaint,
+            _partDht22MeshPaint,
+            _partGasMeshPaint,
+            _partGasBezelPaint,
+            _partGasGauzeBasePaint,
+            _partSoundPcbPaint,
+            _partBlueTrimpotPaint,
+            _partGoldScrewPaint,
+            _partHallBodyPaint,
+            _partFluxPaint,
+            _partPotBodyPaint,
+            _partPotDialPaint,
+            _partPotSlotPaint,
+            _partRegTabPaint,
+            _partRegTabHolePaint,
+            _partModulePcbPaint,
+            _partModuleBluePcbPaint,
+            _partUltrasonicCanPaint,
+            _partDhtGrillPaint,
+            _partShadowPaint,
+            _partBatteryBodyPaint,
+            _partBatteryGoldPaint,
+            _partBatteryTerminalPaint,
+            _partBatteryPlusLeadPaint,
+            _partBatteryMinusLeadPaint,
+            _dmmRedProbePaint,
+            _dmmBlackProbePaint,
+            _dmmNeedlePaint,
+            _dmmWireRedPaint,
+            _dmmWireBlackPaint,
+            _lcdPcbPaint,
+            _lcdBezelPaint,
+            _lcdBezelBorderPaint,
+            _lcdUnlitScreenPaint,
+            _lcdBacklightBluePaint,
+            _lcdGlassGlintPaint,
+            _lcdCellGridPaint,
+            _lcdCharTextPaint,
+            _lcdPinHeaderPaint,
+            _lcdSilkscreenPaint);
 
         for (int i = 0; i < _bandPaints.Length; i++)
             _bandPaints[i].Dispose();

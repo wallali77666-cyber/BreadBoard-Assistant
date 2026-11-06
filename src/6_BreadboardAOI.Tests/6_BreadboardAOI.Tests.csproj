@@ -15,6 +15,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="FluentAssertions" Version="6.12.1" />
+    <PackageReference Include="SkiaSharp" Version="2.88.8" />
   </ItemGroup>
 
   <ItemGroup>
@@ -22,6 +23,7 @@
     <ProjectReference Include="..\2_BreadboardAOI.Core\2_BreadboardAOI.Core.csproj" />
     <ProjectReference Include="..\3_BreadboardAOI.Vision\3_BreadboardAOI.Vision.csproj" />
     <ProjectReference Include="..\4_BreadboardAOI.Intelligence\4_BreadboardAOI.Intelligence.csproj" />
+    <ProjectReference Include="..\5_BreadboardAOI.App\5_BreadboardAOI.App.csproj" />
   </ItemGroup>
 
 </Project>

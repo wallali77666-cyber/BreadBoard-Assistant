@@ -24,8 +24,8 @@ public sealed class PiperTtsTests
     [InlineData("piper", VoiceEnginePreference.Piper)]
     [InlineData("BMO", VoiceEnginePreference.Piper)]
     [InlineData("bmo-piper", VoiceEnginePreference.Piper)]
-    [InlineData("kokoro", VoiceEnginePreference.Kokoro)]
-    [InlineData("sherpa-onnx", VoiceEnginePreference.Kokoro)]
+    [InlineData("kokoro", VoiceEnginePreference.ElevenLabs)]
+    [InlineData("sherpa-onnx", VoiceEnginePreference.ElevenLabs)]
     [InlineData("sapi", VoiceEnginePreference.Sapi)]
     [InlineData("windows", VoiceEnginePreference.Sapi)]
     public void Preference_parsing_accepts_the_ui_and_cli_names(
@@ -41,7 +41,7 @@ public sealed class PiperTtsTests
     [Theory]
     [InlineData(null)]
     [InlineData("")]
-    [InlineData("elevenlabs")]
+    [InlineData("unknown_backend")]
     public void Preference_parsing_rejects_unknown_names(string? value)
     {
         VoiceEnginePreferences.TryParse(value, out VoiceEnginePreference preference)
@@ -56,7 +56,7 @@ public sealed class PiperTtsTests
     [Theory]
     [InlineData(VoiceEnginePreference.Auto)]
     [InlineData(VoiceEnginePreference.Piper)]
-    [InlineData(VoiceEnginePreference.Kokoro)]
+    [InlineData(VoiceEnginePreference.ElevenLabs)]
     [InlineData(VoiceEnginePreference.Sapi)]
     public void Preference_keys_round_trip(VoiceEnginePreference preference)
     {

@@ -25,6 +25,7 @@ using BreadboardAOI.Core.Contracts;
 using BreadboardAOI.Core.Design;
 using BreadboardAOI.Core.DrcEngine;
 using BreadboardAOI.Core.Geometry;
+using BreadboardAOI.Core.KiCad;
 using BreadboardAOI.Hardware;
 using BreadboardAOI.Intelligence;
 using BreadboardAOI.Intelligence.Remote;
@@ -52,6 +53,15 @@ public sealed class InspectionPipelineOptions
     /// <summary>Requested speech engine; the engine falls back if its files are absent.</summary>
     public VoiceEnginePreference VoicePreference { get; init; } = VoiceEnginePreference.Auto;
 
+    /// <summary>ElevenLabs key; when set (or supplied later in AI VOICE) it is the primary voice.</summary>
+    public string? ElevenLabsApiKey { get; init; }
+
+    public string? ElevenLabsVoiceId { get; init; }
+
+    public string? ElevenLabsVoiceName { get; init; }
+
+    public string? ElevenLabsModelId { get; init; }
+
     public bool EnableAffinity { get; init; } = true;
 
     public bool EnableCameraPreviewBitmap { get; init; } = true;
@@ -74,6 +84,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     private readonly InspectionPipelineOptions _options;
     private readonly PinMatrixLookup _pinMatrix;
     private readonly ElectricalRulesChecker _drc;
+    private readonly FastImageToKicadEngine _kicadEngine;
     private readonly CancellationTokenSource _cts = new();
     private readonly object _cameraSync = new();
     private readonly object _bitmapSync = new();
@@ -83,7 +94,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         {
             FullMode = BoundedChannelFullMode.DropOldest,
             SingleReader = true,
-            SingleWriter = true
+            SingleWriter = false
         });
 
     private readonly HomographyCalibrator _calibrator = new();
@@ -127,6 +138,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     private string _yoloNote = string.Empty;
     private string _voiceNote = string.Empty;
     private DrcStatePacket? _latestPacket;
+    private KicadSchematicResult? _latestSchematicResult;
     private IReadOnlyList<RatsnestVector> _latestRatsnest = Array.Empty<RatsnestVector>();
     private double _lastDrcMs;
     private double _lastYoloMs;
@@ -139,6 +151,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         _options = options ?? new InspectionPipelineOptions();
         _pinMatrix = PinMatrixLookup.Shared;
         _drc = new ElectricalRulesChecker(_pinMatrix);
+        _kicadEngine = new FastImageToKicadEngine(_pinMatrix);
 
         _demoEnabled = _options.DemoModeEnabled ? 1 : 0;
         _scenario = (int)_options.InitialDemoScenario;
@@ -196,6 +209,16 @@ public sealed class InspectionPipelineCoordinator : IDisposable
                 if (voiceOptions.PreferredBackend == VoiceEnginePreference.Auto)
                     voiceOptions = voiceOptions.WithPreferredBackend(_options.VoicePreference);
 
+                if (!string.IsNullOrWhiteSpace(_options.ElevenLabsVoiceId)
+                    || !string.IsNullOrWhiteSpace(_options.ElevenLabsApiKey))
+                {
+                    voiceOptions = voiceOptions.WithElevenLabs(
+                        _options.ElevenLabsApiKey ?? voiceOptions.ElevenLabsApiKey,
+                        _options.ElevenLabsVoiceId ?? voiceOptions.ElevenLabsVoiceId,
+                        _options.ElevenLabsModelId ?? voiceOptions.ElevenLabsModelId,
+                        _options.ElevenLabsVoiceName ?? voiceOptions.ElevenLabsVoiceName);
+                }
+
                 _voice = new VoiceSynthesisEngine(voiceOptions);
                 _voiceNote = _voice.LastError ?? string.Empty;
             }
@@ -240,7 +263,6 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     private int _drcEnabled = 1;
     private int _alarmEnabled = 1;
     private int _cognitiveTutorToggled = 1;
-    private int _speakRuleBasedAdvice = 1;
 
     public bool IsOpenCvEnabled
     {
@@ -252,6 +274,15 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     {
         get => Volatile.Read(ref _yoloEnabled) != 0;
         set => Volatile.Write(ref _yoloEnabled, value ? 1 : 0);
+    }
+
+    private int _aiVisionModeActive;
+
+    /// <summary>When true (e.g. in AI Live Studio), YOLO and OpenCV homography/warp are completely bypassed.</summary>
+    public bool IsAiVisionModeActive
+    {
+        get => Volatile.Read(ref _aiVisionModeActive) != 0;
+        set => Volatile.Write(ref _aiVisionModeActive, value ? 1 : 0);
     }
 
     public bool IsHandGateEnabled
@@ -288,22 +319,93 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         }
     }
 
-    public bool SpeakRuleBasedAdvice
-    {
-        get => Volatile.Read(ref _speakRuleBasedAdvice) != 0;
-        set => Volatile.Write(ref _speakRuleBasedAdvice, value ? 1 : 0);
-    }
-
     public InspectionPipelineOptions Options => _options;
 
     public PinMatrixLookup PinMatrix => _pinMatrix;
+    public ElectricalRulesChecker DrcEngine => _drc;
+    public int GetRootNet(int stripId) => _drc.GetRootNet(stripId);
 
     public DrcStatePacket? LatestPacket => Volatile.Read(ref _latestPacket);
 
     public IReadOnlyList<RatsnestVector> LatestRatsnest => Volatile.Read(ref _latestRatsnest);
 
+    public KicadSchematicResult? LatestSchematicResult => Volatile.Read(ref _latestSchematicResult);
+
+    public event Action<KicadSchematicResult>? SchematicCompiled;
+
+    public FastImageToKicadEngine KicadEngine => _kicadEngine;
+
+    /// <summary>Exports the cached or compiled schematic to a standalone .kicad_sch file.</summary>
+    public bool ExportKicadSch(string filePath)
+    {
+        ArgumentNullException.ThrowIfNull(filePath);
+        var result = LatestSchematicResult;
+        if (result is null)
+        {
+            var packet = LatestPacket;
+            if (packet is not null)
+                result = _kicadEngine.CompileFromState(packet);
+        }
+
+        if (result is null || string.IsNullOrEmpty(result.KicadSchContent))
+            return false;
+
+        File.WriteAllText(filePath, result.KicadSchContent, Encoding.UTF8);
+        return true;
+    }
+
+    /// <summary>Exports the cached or compiled schematic to a 2D interactive SVG diagram.</summary>
+    public bool ExportSvg(string filePath)
+    {
+        ArgumentNullException.ThrowIfNull(filePath);
+        var result = LatestSchematicResult;
+        if (result is null)
+        {
+            var packet = LatestPacket;
+            if (packet is not null)
+                result = _kicadEngine.CompileFromState(packet);
+        }
+
+        if (result is null || string.IsNullOrEmpty(result.SvgContent))
+            return false;
+
+        File.WriteAllText(filePath, result.SvgContent, Encoding.UTF8);
+        return true;
+    }
+
+    /// <summary>Status of the Argon-2 WireInsertionTracker (null-safe placeholder).</summary>
+    public bool IsWireTrackerAvailable => false;
+
+    /// <summary>Status of the Argon-2 PaddleOCR engine (null-safe placeholder).</summary>
+    public bool IsOcrAvailable => false;
+
+    public string? LatestOcrResult => null;
+
+    public string? RunOcr(byte[]? imageCrop = null) => null;
+
     /// <summary>Camera frame in 1000 x 500 BGRA for the optional preview pane.</summary>
     public SKBitmap BoardBitmap => _boardBitmap;
+
+    /// <summary>
+    /// Copies the published 1000 x 500 BGRA frame into a caller-owned buffer while
+    /// holding the same lock the vision thread uses. The AI Live Studio uses this
+    /// instead of reading the SKBitmap directly, so a frame swap cannot tear.
+    /// </summary>
+    public bool CopyBoardBitmap(byte[] destination, out int stride)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+
+        lock (_bitmapSync)
+        {
+            stride = _boardBitmap.RowBytes;
+            int required = stride * _boardBitmap.Height;
+            if (destination.Length < required)
+                return false;
+
+            Marshal.Copy(_boardBitmap.GetPixels(), destination, 0, required);
+            return true;
+        }
+    }
 
     public bool DemoModeEnabled => Volatile.Read(ref _demoEnabled) != 0;
 
@@ -333,6 +435,48 @@ public sealed class InspectionPipelineCoordinator : IDisposable
 
     public CameraSource ActiveCameraSource => (CameraSource)Volatile.Read(ref _activeCameraSource);
 
+    /// <summary>
+    /// True once the ArUco homography has locked onto the four board markers.
+    /// A real camera frame that is not calibrated must never carry demo overlays.
+    /// </summary>
+    public bool IsBoardCalibrated => _calibrator.IsCalibrated;
+
+    /// <summary>
+    /// Overlays are only meaningful on the known synthetic board or on a real
+    /// camera frame whose perspective has been solved. A replayed still image is
+    /// arbitrary and never receives board geometry.
+    /// </summary>
+    public bool SupportsLiveOverlay
+    {
+        get
+        {
+            return ActiveCameraSource switch
+            {
+                CameraSource.Synthetic => true,
+                CameraSource.Camera0 or CameraSource.Camera1 or CameraSource.Camera2 or CameraSource.Camera3 or CameraSource.VideoFile => _calibrator.IsCalibrated,
+                _ => false
+            };
+        }
+    }
+
+    /// <summary>Short operator-facing explanation for the live overlay state.</summary>
+    public string LiveOverlayStatus
+    {
+        get
+        {
+            return ActiveCameraSource switch
+            {
+                CameraSource.Synthetic => "AR OVERLAYS ON · SYNTHETIC BOARD",
+                CameraSource.Camera0 or CameraSource.Camera1 or CameraSource.Camera2 or CameraSource.Camera3 or CameraSource.VideoFile when _calibrator.IsCalibrated
+                    => "AR OVERLAYS ON · BOARD LOCKED",
+                CameraSource.Camera0 or CameraSource.Camera1 or CameraSource.Camera2 or CameraSource.Camera3 or CameraSource.VideoFile
+                    => "AR OVERLAYS HELD · AIM AT ALL FOUR ARUCO MARKERS",
+                CameraSource.ImageFile => "AR OVERLAYS OFF · STILL IMAGE REPLAY",
+                _ => "AR OVERLAYS OFF · NO BOARD LOCK"
+            };
+        }
+    }
+
     public string CameraStatus
     {
         get
@@ -340,11 +484,16 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             string label = ActiveCameraSource switch
             {
                 CameraSource.Synthetic => "SYNTHETIC BOARD",
-                CameraSource.Camera0 => "CAMERA 0",
-                CameraSource.Camera1 => "CAMERA 1",
+                CameraSource.Camera0 => "CAMERA 0 (WEBCAM)",
+                CameraSource.Camera1 => "CAMERA 1 (SECONDARY)",
+                CameraSource.Camera2 => "CAMERA 2 (USB)",
+                CameraSource.Camera3 => "CAMERA 3 (USB)",
                 CameraSource.ImageFile => _cameraImagePath.Length == 0
                     ? "STILL IMAGE"
                     : $"IMAGE / {Path.GetFileName(_cameraImagePath).ToUpperInvariant()}",
+                CameraSource.VideoFile => _cameraImagePath.Length == 0
+                    ? "VIDEO REPLAY"
+                    : $"VIDEO / {Path.GetFileName(_cameraImagePath).ToUpperInvariant()}",
                 _ => "NO CAMERA"
             };
 
@@ -380,8 +529,8 @@ public sealed class InspectionPipelineCoordinator : IDisposable
                     : $"COLAB / {_remoteTarget?.DisplayHost ?? "REMOTE"}"
                 : "LOCAL";
 
-            return qwen.LastMode == QwenResponseMode.Server
-                ? $"QWEN3-VL / {route}"
+            return qwen.IsConnected || qwen.LastMode == QwenResponseMode.Server
+                ? $"AI TUTOR / {qwen.ActiveModelAlias} / {route}"
                 : $"RULE-BASED TUTOR / OFFLINE ({route})";
         }
     }
@@ -395,14 +544,14 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     /// service up on its next packet and the old one is retired, not disposed,
     /// so an in-flight stream can finish.
     /// </summary>
-    public void SetRemoteTutor(RemoteTutorTarget? target)
+    public void SetRemoteTutor(RemoteTutorTarget? target, bool force = false)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         bool changed;
         lock (_qwenSync)
         {
-            changed = !SameTarget(_remoteTarget, target);
+            changed = force || !SameTarget(_remoteTarget, target);
             if (!changed)
                 return;
 
@@ -431,7 +580,9 @@ public sealed class InspectionPipelineCoordinator : IDisposable
 
         RaiseStatus(target is null
             ? "Tutor backend: local llama-server / offline fallback."
-            : $"Tutor backend: Colab tunnel at {target.DisplayHost}.");
+            : target.IsLoopback
+                ? $"Tutor backend: local AI at {target.DisplayHost}."
+                : $"Tutor backend: Colab tunnel at {target.DisplayHost}.");
     }
 
     private static bool SameTarget(RemoteTutorTarget? left, RemoteTutorTarget? right)
@@ -456,7 +607,61 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             target.ModelAlias));
     }
 
+    public QwenMoEService? QwenService => _qwen;
+
+    public VoiceSynthesisEngine? VoiceEngine => _voice;
+
+    /// <summary>
+    /// Speaks the given text guidance using the active voice backend.
+    /// </summary>
+    public async Task<bool> SpeakTextAsync(string text, CancellationToken cancellationToken = default)
+    {
+        if (_voice is null || string.IsNullOrWhiteSpace(text))
+            return false;
+
+        CpuAffinityManager.ReportProcessor(AffinityRole.Ai);
+        return await _voice.SpeakParagraphAsync(new[] { text }, cancellationToken).ConfigureAwait(false);
+    }
+
     public string VoiceBackendDescription => _voice?.VoiceProfileName ?? "VOICE SILENT";
+
+    /// <summary>Last voice-catalog failure from ElevenLabs, for the settings dock.</summary>
+    public string? VoiceCatalogError => _voice?.VoiceCatalogError;
+
+    /// <summary>Lists the ElevenLabs voices available to the supplied key.</summary>
+    public Task<IReadOnlyList<ElevenLabsVoice>> ListElevenLabsVoicesAsync(
+        string apiKey,
+        CancellationToken cancellationToken = default) =>
+        _voice is null
+            ? Task.FromResult<IReadOnlyList<ElevenLabsVoice>>(Array.Empty<ElevenLabsVoice>())
+            : _voice.ListVoicesAsync(apiKey, cancellationToken);
+
+    /// <summary>
+    /// Applies the operator's ElevenLabs key, voice and model, then makes
+    /// ElevenLabs the active engine. Returns false when nothing can speak.
+    /// </summary>
+    public async Task<bool> ApplyElevenLabsVoiceAsync(
+        string apiKey,
+        string voiceId,
+        string modelId,
+        string voiceName,
+        CancellationToken cancellationToken = default)
+    {
+        VoiceSynthesisEngine? voice = _voice;
+        if (voice is null)
+            return false;
+
+        bool ok = await voice
+            .ApplyElevenLabsSettingsAsync(apiKey, voiceId, modelId, voiceName, cancellationToken)
+            .ConfigureAwait(false);
+
+        _voiceNote = voice.LastError ?? string.Empty;
+        RaiseStatus(ok
+            ? $"Voice: {voice.VoiceProfileName} active."
+            : $"Voice: ElevenLabs could not start. {voice.LastError}".TrimEnd());
+
+        return ok;
+    }
 
     /// <summary>The engine that actually loaded, after any fallback.</summary>
     public VoiceBackend ActiveVoiceBackend => _voice?.Backend ?? VoiceBackend.None;
@@ -505,6 +710,14 @@ public sealed class InspectionPipelineCoordinator : IDisposable
                 if (!snapshot.IsAvailable)
                     return "NO NVIDIA GPU";
 
+                if (_vramMonitor.IsSystemGpuDetected && snapshot.IsMocked)
+                {
+                    double sysGb = _vramMonitor.SystemVramBytes / 1024d / 1024d / 1024d;
+                    return sysGb > 0
+                        ? string.Create(CultureInfo.InvariantCulture, $"{sysGb:0.0} GB VRAM")
+                        : "DIRECTX / iGPU";
+                }
+
                 string suffix = snapshot.IsMocked ? " MOCK" : string.Empty;
                 return string.Create(
                     CultureInfo.InvariantCulture,
@@ -516,6 +729,13 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             }
         }
     }
+
+    public string GpuDeviceName => _vramMonitor.DeviceName;
+    public ulong SystemVramBytes => _vramMonitor.SystemVramBytes;
+    public string SystemGpuName => _vramMonitor.SystemGpuName;
+    public bool IsSystemGpuDetected => _vramMonitor.IsSystemGpuDetected;
+
+    public VramSnapshot GetVramSnapshot() => _vramMonitor.GetSnapshot();
 
     public string AffinityStatus => CpuAffinityManager.Plan.Description;
 
@@ -618,6 +838,17 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         else
             ResetTopology();
 
+        // Immediately clear stale packet so previous synthetic faults never remain visible
+        Volatile.Write(ref _latestPacket, new DrcStatePacket
+        {
+            FrameNumber = 0,
+            YoloInferenceMs = 0,
+            DrcComputeMs = 0,
+            StateHash = 0,
+            Components = Array.Empty<SnappedComponent>(),
+            Violations = Array.Empty<DrcViolation>()
+        });
+
         RaiseStatus(enabled
             ? $"Demo mode ON: {DemoScenarioCatalog.GetTitle(ActiveScenario)}"
             : "Demo mode OFF: live YOLO detection");
@@ -627,6 +858,17 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     {
         Volatile.Write(ref _scenario, (int)scenario);
         ResetTopology();
+
+        // Immediately clear stale packet so previous synthetic faults never remain visible
+        Volatile.Write(ref _latestPacket, new DrcStatePacket
+        {
+            FrameNumber = 0,
+            YoloInferenceMs = 0,
+            DrcComputeMs = 0,
+            StateHash = 0,
+            Components = Array.Empty<SnappedComponent>(),
+            Violations = Array.Empty<DrcViolation>()
+        });
         DemoScenarioChanged?.Invoke(scenario);
     }
 
@@ -640,6 +882,17 @@ public sealed class InspectionPipelineCoordinator : IDisposable
 
         Volatile.Write(ref _manualCircuit, enabled ? 1 : 0);
         ResetTopology();
+
+        // Immediately clear stale packet so previous synthetic faults never remain visible
+        Volatile.Write(ref _latestPacket, new DrcStatePacket
+        {
+            FrameNumber = 0,
+            YoloInferenceMs = 0,
+            DrcComputeMs = 0,
+            StateHash = 0,
+            Components = Array.Empty<SnappedComponent>(),
+            Violations = Array.Empty<DrcViolation>()
+        });
         if (enabled)
         {
             long frame = Interlocked.Increment(ref _frameCount);
@@ -676,6 +929,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     {
         _lastStateHash = int.MinValue;
         _motionGate.Reset();
+        Volatile.Write(ref _latestSchematicResult, null);
         Volatile.Write(ref _latestRatsnest, Array.Empty<RatsnestVector>());
     }
 
@@ -726,6 +980,48 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         SwapCamera(replacement, imagePath);
     }
 
+    /// <summary>Replays a recorded breadboard inspection video (loops continuously at 60 FPS).</summary>
+    public void SetVideoSource(string videoPath)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentException.ThrowIfNullOrWhiteSpace(videoPath);
+
+        CameraCaptureService replacement;
+        try
+        {
+            replacement = new CameraCaptureService(CameraSource.VideoFile, imagePath: videoPath);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            RaiseStatus($"Video load failed: {ex.Message}");
+            return;
+        }
+
+        SwapCamera(replacement, videoPath);
+    }
+
+    /// <summary>Encodes the current 60 FPS warped live camera frame into PNG bytes for Qwen video inspection.</summary>
+    public byte[]? CaptureLiveWarpedPng()
+    {
+        lock (_cameraSync)
+        {
+            if (_warpedFrame.Empty())
+                return null;
+            return OpenCvSharp.Cv2.ImEncode(".png", _warpedFrame, out byte[] png) ? png : null;
+        }
+    }
+
+    /// <summary>Encodes the current raw live camera frame directly into PNG bytes for AI vision inspection without OpenCV homography or YOLO.</summary>
+    public byte[]? CaptureLiveRawPng()
+    {
+        lock (_cameraSync)
+        {
+            if (_cameraFrame.Empty())
+                return null;
+            return OpenCvSharp.Cv2.ImEncode(".png", _cameraFrame, out byte[] png) ? png : null;
+        }
+    }
+
     private void SwapCamera(CameraCaptureService replacement, string? imagePath)
     {
         CameraCaptureService? previous;
@@ -739,11 +1035,28 @@ public sealed class InspectionPipelineCoordinator : IDisposable
 
         Volatile.Write(ref _activeCameraSource, (int)replacement.ActiveSource);
         _cameraNote = replacement.LastError ?? string.Empty;
-        _cameraImagePath = replacement.ActiveSource == CameraSource.ImageFile ? imagePath ?? string.Empty : string.Empty;
+        _cameraImagePath = (replacement.IsStillImage || replacement.IsVideo) ? imagePath ?? string.Empty : string.Empty;
+
+        // When switching to a real physical camera or media file, disable synthetic demo mode!
+        if (replacement.ActiveSource != CameraSource.Synthetic)
+        {
+            Volatile.Write(ref _demoEnabled, 0);
+        }
 
         _calibrator.ResetCalibration();
         _motionGate.Reset();
         ResetTopology();
+
+        // Immediately clear stale packet so previous synthetic faults never remain visible
+        Volatile.Write(ref _latestPacket, new DrcStatePacket
+        {
+            FrameNumber = 0,
+            YoloInferenceMs = 0,
+            DrcComputeMs = 0,
+            StateHash = 0,
+            Components = Array.Empty<SnappedComponent>(),
+            Violations = Array.Empty<DrcViolation>()
+        });
 
         RaiseStatus($"Camera source: {CameraStatus}");
     }
@@ -808,6 +1121,8 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         while (!cancellationToken.IsCancellationRequested)
         {
             long frameStart = System.Diagnostics.Stopwatch.GetTimestamp();
+            if ((frame & 15) == 0)
+                CpuAffinityManager.ReportProcessor(AffinityRole.Vision);
             frame++;
 
             try
@@ -918,7 +1233,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
 
     private void EvaluateFrame(long frame)
     {
-        bool demo = DemoModeEnabled;
+        bool demo = DemoModeEnabled && ActiveCameraSource == CameraSource.Synthetic;
         bool manual = ManualCircuitEnabled;
         DemoScenario scenario = ActiveScenario;
 
@@ -935,7 +1250,13 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             detections = DemoScenarioCatalog.GetDetections(scenario);
             yoloMs = 0d;
         }
-        else if (_yolo is not null && IsYoloEnabled)
+        else if (CameraCaptureService.IsPhysicalCamera(ActiveCameraSource) && !_calibrator.IsCalibrated)
+        {
+            _yoloDetections.Clear();
+            detections = CollectionsMarshal.AsSpan(_yoloDetections);
+            yoloMs = 0d;
+        }
+        else if (_yolo is not null && IsYoloEnabled && !IsAiVisionModeActive)
         {
             _yolo.Infer(_warpedFrame, _yoloDetections, 1);
             detections = CollectionsMarshal.AsSpan(_yoloDetections);
@@ -972,6 +1293,17 @@ public sealed class InspectionPipelineCoordinator : IDisposable
 
         _lastStateHash = packet.StateHash;
         DrcStatePacket published = AttachMicroCrop(packet);
+
+        try
+        {
+            var kicadResult = _kicadEngine.CompileFromState(published);
+            Volatile.Write(ref _latestSchematicResult, kicadResult);
+            SchematicCompiled?.Invoke(kicadResult);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // Optional schematic compilation; keeps pipeline running
+        }
 
         IReadOnlyList<RatsnestVector> ratsnest = Array.Empty<RatsnestVector>();
         if ((manual || demo && DemoScenarioCatalog.UsesTargetSchematic(scenario)) && _targetSchematic is not null)
@@ -1159,6 +1491,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             return;
 
         TutorTurnStarted?.Invoke();
+        CpuAffinityManager.ReportProcessor(AffinityRole.Ai);
 
         var splitter = new SentenceStreamSplitter();
         var transcript = new StringBuilder(320);
@@ -1190,11 +1523,14 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             TutorSentenceCompleted?.Invoke(tail);
         }
 
-        // Speak when Qwen answers from the server, or when the operator explicitly
-        // enables spoken rule-based advice fallback.
-        bool answeredByQwen = qwen.LastMode == QwenResponseMode.Server;
-        bool shouldSpeak = !VoiceMuted && _voice is not null && sentences.Count > 0 &&
-                           (answeredByQwen || (SpeakRuleBasedAdvice && qwen.AllowRuleBasedFallback));
+        // Only the model's own answer is ever spoken. Rule-based / DRC text is
+        // shown on screen but never synthesized, so the voice always belongs to
+        // Qwen and never to the deterministic checker.
+        bool shouldSpeak = QwenMoEService.ShouldSpeakAnswer(
+            qwen.LastMode,
+            VoiceMuted,
+            _voice is not null,
+            sentences.Count);
 
         if (shouldSpeak)
             await _voice!.SpeakParagraphAsync(sentences, cancellationToken).ConfigureAwait(false);
@@ -1249,7 +1585,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     }
 
     /// <summary>Explicitly queues the active DRC packet into Qwen cognitive loop on demand.</summary>
-    public bool RequestAiDiagnostic()
+    public bool RequestAiDiagnostic(byte[]? fullBoardPng = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -1259,6 +1595,9 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             RaiseStatus("AI Tutor unavailable: no DRC packet yet.");
             return false;
         }
+
+        if (fullBoardPng is { Length: > 0 })
+            packet.FullBoardPngBytes = fullBoardPng;
 
         if (_qwen is null || _cognitiveTask is null)
         {
@@ -1403,12 +1742,13 @@ public readonly record struct TutorTurnMetrics(
     double TotalMs,
     int Characters,
     string Backend,
-    bool RuleBased)
+    bool RuleBased,
+    int EstimatedTokens = 0)
 {
     public string Describe()
     {
         return string.Create(
             System.Globalization.CultureInfo.InvariantCulture,
-            $"TTFT {TimeToFirstTokenMs:0} MS  \u00b7  {TotalMs / 1000d:0.0} S  \u00b7  {Characters} CHARS");
+            $"{TotalMs / 1000d:0.0}s  \u00b7  {Math.Max(1, (int)Math.Ceiling(Characters / 4.0))} TOK  \u00b7  TTFT {TimeToFirstTokenMs:0} MS  \u00b7  {Characters} CHARS");
     }
 }

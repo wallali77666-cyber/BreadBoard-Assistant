@@ -1,0 +1,2134 @@
+{
+    "scan_timestamp_utc":  "2026-10-30T22:24:39.7841593Z",
+    "total_code_files":  150,
+    "newly_linked_files":  8,
+    "code_files":  [
+                       {
+                           "path":  "AGENTS.md",
+                           "size_kb":  34,
+                           "last_modified":  "2026-10-30 21:23:14",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "Directory.Build.props",
+                           "size_kb":  0.5,
+                           "last_modified":  "2026-10-27 05:59:38",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "BreadboardAOI.sln",
+                           "size_kb":  4.9,
+                           "last_modified":  "2026-10-29 22:58:40",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "README.md",
+                           "size_kb":  26.8,
+                           "last_modified":  "2026-10-29 15:36:14",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "Build-GoogleStyle-Installer.ps1",
+                           "size_kb":  7.2,
+                           "last_modified":  "2026-10-30 14:04:40",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "Build-SingleFile-FullSetupExe.ps1",
+                           "size_kb":  62.5,
+                           "last_modified":  "2026-10-30 13:46:24",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "Uninstall-BreadboardAOI.ps1",
+                           "size_kb":  1.6,
+                           "last_modified":  "2026-10-30 14:03:28",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "Initialize-Swarm-ZeroData.ps1",
+                           "size_kb":  27.8,
+                           "last_modified":  "2026-10-30 21:26:02",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "PROJECT_9GB_MANIFEST.json",
+                           "size_kb":  6.5,
+                           "last_modified":  "2026-10-30 19:56:20",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "opencode.jsonc",
+                           "size_kb":  0.4,
+                           "last_modified":  "2026-10-30 19:56:20",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "Sync-NewFiles-And-Replan.ps1",
+                           "size_kb":  7.4,
+                           "last_modified":  "2026-10-30 21:23:02",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "LIVE_WORKSPACE_MAP.json",
+                           "size_kb":  101.7,
+                           "last_modified":  "2026-10-30 21:23:14",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "Initialize-Swarm-ZeroData - Copy.ps1",
+                           "size_kb":  1.9,
+                           "last_modified":  "2026-10-30 21:30:00",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "Setup-ArgonWebBridge.ps1",
+                           "size_kb":  8.5,
+                           "last_modified":  "2026-10-30 22:11:58",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/2_BreadboardAOI.Core.csproj",
+                           "size_kb":  0.3,
+                           "last_modified":  "2026-10-27 05:59:38",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/Contracts/AoiDataContracts.cs",
+                           "size_kb":  6.3,
+                           "last_modified":  "2026-10-30 22:10:50",
+                           "symbols":  "ns:BreadboardAOI.Core.Contracts, type:ComponentKind, type:DrcSeverity, type:ViolationCode, type:DrcStatePacket"
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/Contracts/ComponentCatalog.cs",
+                           "size_kb":  11.1,
+                           "last_modified":  "2026-10-30 22:10:50",
+                           "symbols":  "ns:BreadboardAOI.Core.Contracts"
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/DrcEngine/ElectricalRulesChecker.cs",
+                           "size_kb":  52,
+                           "last_modified":  "2026-10-30 22:10:50",
+                           "symbols":  "ns:BreadboardAOI.Core.DrcEngine, type:ElectricalRulesChecker"
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/DrcEngine/TargetSchematicLoader.cs",
+                           "size_kb":  11.2,
+                           "last_modified":  "2026-10-28 06:20:58",
+                           "symbols":  "ns:BreadboardAOI.Core.DrcEngine, type:TargetNet, type:TargetComponent, type:TargetSchematic, type:SchematicDto, type:NetDto, type:ComponentDto"
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/DrcEngine/NetlistReport.cs",
+                           "size_kb":  4.1,
+                           "last_modified":  "2026-10-27 11:04:06",
+                           "symbols":  "ns:BreadboardAOI.Core.DrcEngine, type:NetGroup"
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/DrcEngine/IcPinoutCatalog.cs",
+                           "size_kb":  9,
+                           "last_modified":  "2026-10-29 18:56:10",
+                           "symbols":  "ns:BreadboardAOI.Core.DrcEngine, type:IcDefinition"
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/DrcEngine/SensorPinoutCatalog.cs",
+                           "size_kb":  21.6,
+                           "last_modified":  "2026-10-29 22:15:22",
+                           "symbols":  "ns:BreadboardAOI.Core.DrcEngine, type:SensorPinType, type:SensorPinSpec, type:SensorDefinition"
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/DrcEngine/DevBoardAndModuleRuleEngine.cs",
+                           "size_kb":  29.7,
+                           "last_modified":  "2026-10-30 22:10:50",
+                           "symbols":  "ns:BreadboardAOI.Core.DrcEngine, type:DevBoardPinFunction, type:DevBoardPinSpec, type:DevBoardDefinition"
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/Geometry/PinMatrixLookup.cs",
+                           "size_kb":  13.8,
+                           "last_modified":  "2026-10-30 22:10:50",
+                           "symbols":  "ns:BreadboardAOI.Core.Geometry, type:IHoleSnapper, type:PinMatrixLookup"
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/Geometry/BreadboardSpec.cs",
+                           "size_kb":  7.4,
+                           "last_modified":  "2026-10-27 06:04:06",
+                           "symbols":  "ns:BreadboardAOI.Core.Geometry"
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/Geometry/ResistorColorCode.cs",
+                           "size_kb":  5.3,
+                           "last_modified":  "2026-10-29 21:30:40",
+                           "symbols":  "ns:BreadboardAOI.Core.Geometry"
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/Design/CircuitDraft.cs",
+                           "size_kb":  17.8,
+                           "last_modified":  "2026-10-29 21:16:36",
+                           "symbols":  "ns:BreadboardAOI.Core.Design, type:CircuitDraft"
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/Design/DemoCircuitCatalog.cs",
+                           "size_kb":  6.5,
+                           "last_modified":  "2026-10-27 11:04:40",
+                           "symbols":  "ns:BreadboardAOI.Core.Design, type:DemoScenario"
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/Design/FootprintPlacer.cs",
+                           "size_kb":  5.8,
+                           "last_modified":  "2026-10-27 15:35:44",
+                           "symbols":  "ns:BreadboardAOI.Core.Design"
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/KiCad/KicadSymbol.cs",
+                           "size_kb":  5.7,
+                           "last_modified":  "2026-10-28 05:06:56",
+                           "symbols":  "ns:BreadboardAOI.Core.KiCad, type:KicadGraphicKind, type:KicadFillStyle, type:KicadGraphic, type:KicadSymbol"
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/KiCad/KicadSymbolParser.cs",
+                           "size_kb":  15.9,
+                           "last_modified":  "2026-10-28 05:09:58",
+                           "symbols":  "ns:BreadboardAOI.Core.KiCad, type:SExprNode"
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/KiCad/KicadSymbolLibrary.cs",
+                           "size_kb":  14.9,
+                           "last_modified":  "2026-10-29 19:08:50",
+                           "symbols":  "ns:BreadboardAOI.Core.KiCad, type:KicadSymbolLibrary"
+                       },
+                       {
+                           "path":  "src/2_BreadboardAOI.Core/KiCad/FastImageToKicadEngine.cs",
+                           "size_kb":  32.3,
+                           "last_modified":  "2026-10-30 22:10:50",
+                           "symbols":  "ns:BreadboardAOI.Core.KiCad, type:FastImageToKicadOptions, type:KicadSchematicResult, type:FastImageToKicadEngine, type:SchematicPlacement"
+                       },
+                       {
+                           "path":  "src/3_BreadboardAOI.Vision/3_BreadboardAOI.Vision.csproj",
+                           "size_kb":  0.7,
+                           "last_modified":  "2026-10-29 09:43:48",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "src/3_BreadboardAOI.Vision/CameraCaptureService.cs",
+                           "size_kb":  12.4,
+                           "last_modified":  "2026-10-27 07:21:20",
+                           "symbols":  "ns:BreadboardAOI.Vision, type:CameraSource, type:CameraCaptureService"
+                       },
+                       {
+                           "path":  "src/3_BreadboardAOI.Vision/HandMotionGate.cs",
+                           "size_kb":  5.4,
+                           "last_modified":  "2026-10-28 06:35:06",
+                           "symbols":  "ns:BreadboardAOI.Vision, type:HandMotionGate"
+                       },
+                       {
+                           "path":  "src/3_BreadboardAOI.Vision/YoloPoseInferenceEngine.cs",
+                           "size_kb":  18.1,
+                           "last_modified":  "2026-10-27 11:57:58",
+                           "symbols":  "ns:BreadboardAOI.Vision, type:YoloPoseOptions, type:YoloPoseInferenceEngine"
+                       },
+                       {
+                           "path":  "src/3_BreadboardAOI.Vision/MicroCropExtractor.cs",
+                           "size_kb":  3,
+                           "last_modified":  "2026-10-27 06:15:08",
+                           "symbols":  "ns:BreadboardAOI.Vision, type:MicroCropExtractor"
+                       },
+                       {
+                           "path":  "src/3_BreadboardAOI.Vision/HomographyCalibrator.cs",
+                           "size_kb":  17.6,
+                           "last_modified":  "2026-10-28 06:32:58",
+                           "symbols":  "ns:BreadboardAOI.Vision, type:HomographyCalibrator"
+                       },
+                       {
+                           "path":  "src/4_BreadboardAOI.Intelligence/4_BreadboardAOI.Intelligence.csproj",
+                           "size_kb":  0.6,
+                           "last_modified":  "2026-10-27 05:59:38",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "src/4_BreadboardAOI.Intelligence/DiagnosticPromptBuilder.cs",
+                           "size_kb":  8.3,
+                           "last_modified":  "2026-10-30 07:38:28",
+                           "symbols":  "ns:BreadboardAOI.Intelligence"
+                       },
+                       {
+                           "path":  "src/4_BreadboardAOI.Intelligence/SentenceStreamSplitter.cs",
+                           "size_kb":  5,
+                           "last_modified":  "2026-10-27 06:28:58",
+                           "symbols":  "ns:BreadboardAOI.Intelligence, type:SentenceStreamSplitter"
+                       },
+                       {
+                           "path":  "src/4_BreadboardAOI.Intelligence/QwenMoEService.cs",
+                           "size_kb":  56.8,
+                           "last_modified":  "2026-10-30 17:00:28",
+                           "symbols":  "ns:BreadboardAOI.Intelligence, type:QwenResponseMode, type:QwenStreamKind, type:QwenMoEOptions, type:QwenMoEService"
+                       },
+                       {
+                           "path":  "src/4_BreadboardAOI.Intelligence/VoiceSynthesisEngine.cs",
+                           "size_kb":  44,
+                           "last_modified":  "2026-10-30 09:04:18",
+                           "symbols":  "ns:BreadboardAOI.Intelligence, type:VoiceBackend, type:VoiceOptions, type:VoiceSynthesisEngine"
+                       },
+                       {
+                           "path":  "src/4_BreadboardAOI.Intelligence/SpeechTextNormalizer.cs",
+                           "size_kb":  11.9,
+                           "last_modified":  "2026-10-30 08:02:16",
+                           "symbols":  "ns:BreadboardAOI.Intelligence"
+                       },
+                       {
+                           "path":  "src/4_BreadboardAOI.Intelligence/BmoVoiceStyler.cs",
+                           "size_kb":  8.4,
+                           "last_modified":  "2026-10-29 16:11:30",
+                           "symbols":  "ns:BreadboardAOI.Intelligence"
+                       },
+                       {
+                           "path":  "src/4_BreadboardAOI.Intelligence/VoiceEnginePreferences.cs",
+                           "size_kb":  2.8,
+                           "last_modified":  "2026-10-29 16:12:30",
+                           "symbols":  "ns:BreadboardAOI.Intelligence, type:VoiceEnginePreference"
+                       },
+                       {
+                           "path":  "src/4_BreadboardAOI.Intelligence/PiperTtsEngine.cs",
+                           "size_kb":  10.6,
+                           "last_modified":  "2026-10-30 09:04:18",
+                           "symbols":  "ns:BreadboardAOI.Intelligence, type:PiperTtsEngine"
+                       },
+                       {
+                           "path":  "src/4_BreadboardAOI.Intelligence/Remote/ColabSession.cs",
+                           "size_kb":  12,
+                           "last_modified":  "2026-10-30 14:01:28",
+                           "symbols":  "ns:BreadboardAOI.Intelligence.Remote, type:ColabSession, type:RemoteTutorTarget, type:RemoteTutorRoute"
+                       },
+                       {
+                           "path":  "src/4_BreadboardAOI.Intelligence/Remote/GoogleOAuthClient.cs",
+                           "size_kb":  24.8,
+                           "last_modified":  "2026-10-27 07:14:42",
+                           "symbols":  "ns:BreadboardAOI.Intelligence.Remote, type:GoogleOAuthOptions, type:GoogleTokenSet, type:GoogleOAuthClient"
+                       },
+                       {
+                           "path":  "src/4_BreadboardAOI.Intelligence/Remote/GoogleTokenStore.cs",
+                           "size_kb":  7.6,
+                           "last_modified":  "2026-10-27 11:57:20",
+                           "symbols":  "ns:BreadboardAOI.Intelligence.Remote, type:GoogleTokenStore, type:GoogleClientConfig, type:GoogleClientConfigStore"
+                       },
+                       {
+                           "path":  "src/4_BreadboardAOI.Intelligence/Remote/ColabDriveBridge.cs",
+                           "size_kb":  13.1,
+                           "last_modified":  "2026-10-30 17:00:28",
+                           "symbols":  "ns:BreadboardAOI.Intelligence.Remote, type:ColabFileRef, type:ColabDriveBridge, type:RemoteProbeResult"
+                       },
+                       {
+                           "path":  "src/4_BreadboardAOI.Intelligence/Remote/ColabPairCode.cs",
+                           "size_kb":  5.4,
+                           "last_modified":  "2026-10-28 06:21:42",
+                           "symbols":  "ns:BreadboardAOI.Intelligence.Remote"
+                       },
+                       {
+                           "path":  "src/4_BreadboardAOI.Intelligence/Remote/ManualEndpointStore.cs",
+                           "size_kb":  3.9,
+                           "last_modified":  "2026-10-27 11:12:10",
+                           "symbols":  "ns:BreadboardAOI.Intelligence.Remote, type:ManualEndpointStore, type:ManualEndpointFile"
+                       },
+                       {
+                           "path":  "src/4_BreadboardAOI.Intelligence/Remote/LocalAiProviders.cs",
+                           "size_kb":  5.9,
+                           "last_modified":  "2026-10-30 17:00:28",
+                           "symbols":  "ns:BreadboardAOI.Intelligence.Remote, type:LocalAiPreset"
+                       },
+                       {
+                           "path":  "src/4_BreadboardAOI.Intelligence/Remote/DpapiProtector.cs",
+                           "size_kb":  5,
+                           "last_modified":  "2026-10-27 11:57:02",
+                           "symbols":  "ns:BreadboardAOI.Intelligence.Remote"
+                       },
+                       {
+                           "path":  "src/1_BreadboardAOI.Hardware/1_BreadboardAOI.Hardware.csproj",
+                           "size_kb":  0.3,
+                           "last_modified":  "2026-10-27 05:59:38",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "src/1_BreadboardAOI.Hardware/CpuAffinityManager.cs",
+                           "size_kb":  17,
+                           "last_modified":  "2026-10-30 09:04:18",
+                           "symbols":  "ns:BreadboardAOI.Hardware, type:AffinityRole"
+                       },
+                       {
+                           "path":  "src/1_BreadboardAOI.Hardware/PinnedFrameRingBuffer.cs",
+                           "size_kb":  12.3,
+                           "last_modified":  "2026-10-27 14:47:14",
+                           "symbols":  "ns:BreadboardAOI.Hardware, type:PinnedFrameRingBuffer"
+                       },
+                       {
+                           "path":  "src/1_BreadboardAOI.Hardware/VramBudgetMonitor.cs",
+                           "size_kb":  10,
+                           "last_modified":  "2026-10-27 06:18:08",
+                           "symbols":  "ns:BreadboardAOI.Hardware, type:VramBudgetMonitor"
+                       },
+                       {
+                           "path":  "src/5_BreadboardAOI.App/5_BreadboardAOI.App.csproj",
+                           "size_kb":  2.2,
+                           "last_modified":  "2026-10-30 13:56:36",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "src/5_BreadboardAOI.App/App.xaml",
+                           "size_kb":  0.5,
+                           "last_modified":  "2026-10-27 06:50:22",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "src/5_BreadboardAOI.App/App.xaml.cs",
+                           "size_kb":  3.7,
+                           "last_modified":  "2026-10-30 13:56:16",
+                           "symbols":  "ns:BreadboardAOI.App, type:App"
+                       },
+                       {
+                           "path":  "src/5_BreadboardAOI.App/Views/MainWindow.xaml.cs",
+                           "size_kb":  8.3,
+                           "last_modified":  "2026-10-29 16:56:38",
+                           "symbols":  "ns:BreadboardAOI.App.Views, type:MainWindow"
+                       },
+                       {
+                           "path":  "src/5_BreadboardAOI.App/Views/MainWindow.xaml",
+                           "size_kb":  151.9,
+                           "last_modified":  "2026-10-30 22:23:46",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "src/5_BreadboardAOI.App/Views/SymbolPickerDialog.xaml",
+                           "size_kb":  5.4,
+                           "last_modified":  "2026-10-29 09:47:48",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "src/5_BreadboardAOI.App/Views/SymbolPickerDialog.xaml.cs",
+                           "size_kb":  3.4,
+                           "last_modified":  "2026-10-28 05:16:44",
+                           "symbols":  "ns:BreadboardAOI.App.Views, type:SymbolPickerDialog"
+                       },
+                       {
+                           "path":  "src/5_BreadboardAOI.App/Views/AiVisionInspectionWindow.xaml",
+                           "size_kb":  46.5,
+                           "last_modified":  "2026-10-30 14:04:52",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "src/5_BreadboardAOI.App/Views/AiVisionInspectionWindow.xaml.cs",
+                           "size_kb":  55.4,
+                           "last_modified":  "2026-10-30 14:04:52",
+                           "symbols":  "ns:BreadboardAOI.App.Views, type:AiVisionInspectionWindow"
+                       },
+                       {
+                           "path":  "src/5_BreadboardAOI.App/Orchestration/InspectionPipelineCoordinator.cs",
+                           "size_kb":  53.8,
+                           "last_modified":  "2026-10-30 22:20:56",
+                           "symbols":  "ns:BreadboardAOI.App.Orchestration, type:InspectionPipelineOptions, type:InspectionPipelineCoordinator"
+                       },
+                       {
+                           "path":  "src/5_BreadboardAOI.App/Rendering/SkiaArOverlayRenderer.cs",
+                           "size_kb":  55.7,
+                           "last_modified":  "2026-10-30 22:22:50",
+                           "symbols":  "ns:BreadboardAOI.App.Rendering, type:OverlayLayerSettings, type:SkiaArOverlayRenderer"
+                       },
+                       {
+                           "path":  "src/5_BreadboardAOI.App/Rendering/SkiaArOverlayRenderer.Parts.cs",
+                           "size_kb":  84.1,
+                           "last_modified":  "2026-10-29 21:59:06",
+                           "symbols":  "ns:BreadboardAOI.App.Rendering, type:SkiaArOverlayRenderer"
+                       },
+                       {
+                           "path":  "src/5_BreadboardAOI.App/Themes/SpectrumDarkTheme.xaml",
+                           "size_kb":  46.1,
+                           "last_modified":  "2026-10-30 09:34:16",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "src/5_BreadboardAOI.App/ViewModels/MainWorkstationViewModel.cs",
+                           "size_kb":  140.4,
+                           "last_modified":  "2026-10-30 22:23:26",
+                           "symbols":  "ns:BreadboardAOI.App.ViewModels, type:DemoScenarioItem, type:AiRouteMethod, type:AiRouteOption, type:CameraOption, type:BuildPartOption, type:PinCountOption, type:PartValuePreset, type:DraftPartRow, type:ViolationRow, type:MainWorkstationViewModel"
+                       },
+                       {
+                           "path":  "src/5_BreadboardAOI.App/Workspace/WorkspaceLayoutStore.cs",
+                           "size_kb":  2.8,
+                           "last_modified":  "2026-10-28 10:18:02",
+                           "symbols":  "ns:BreadboardAOI.App.Workspace, type:WorkspaceLayoutState"
+                       },
+                       {
+                           "path":  "src/5_BreadboardAOI.App/Workspace/VoiceSettingsStore.cs",
+                           "size_kb":  3.3,
+                           "last_modified":  "2026-10-28 10:52:52",
+                           "symbols":  "ns:BreadboardAOI.App.Workspace, type:VoiceSettingsState"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/6_BreadboardAOI.Tests.csproj",
+                           "size_kb":  1.1,
+                           "last_modified":  "2026-10-29 09:43:48",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/PinMatrixLookupTests.cs",
+                           "size_kb":  4.4,
+                           "last_modified":  "2026-10-30 22:10:50",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:PinMatrixLookupTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/ElectricalRulesCheckerTests.cs",
+                           "size_kb":  14.9,
+                           "last_modified":  "2026-10-30 22:10:50",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:ElectricalRulesCheckerTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/VisionPipelineTests.cs",
+                           "size_kb":  8.1,
+                           "last_modified":  "2026-10-28 06:35:42",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:VisionPipelineTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/HardwarePortabilityTests.cs",
+                           "size_kb":  4.1,
+                           "last_modified":  "2026-10-30 09:02:48",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:HardwarePortabilityTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/IntelligencePipelineTests.cs",
+                           "size_kb":  19.9,
+                           "last_modified":  "2026-10-30 14:40:26",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:IntelligencePipelineTests, type:StubHttpHandler"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/RemoteColabTests.cs",
+                           "size_kb":  11,
+                           "last_modified":  "2026-10-27 07:13:08",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:RemoteColabTests, type:StubHandler"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/CameraCaptureServiceTests.cs",
+                           "size_kb":  4.5,
+                           "last_modified":  "2026-10-27 07:22:52",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:CameraCaptureServiceTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/RemotePairingTests.cs",
+                           "size_kb":  7.3,
+                           "last_modified":  "2026-10-28 06:22:08",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:RemotePairingTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/CircuitDraftTests.cs",
+                           "size_kb":  6.8,
+                           "last_modified":  "2026-10-29 21:42:34",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:CircuitDraftTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/DemoScenarioDrcTests.cs",
+                           "size_kb":  2.4,
+                           "last_modified":  "2026-10-27 11:06:38",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:DemoScenarioDrcTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/LocalAiProviderTests.cs",
+                           "size_kb":  6,
+                           "last_modified":  "2026-10-30 14:38:16",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:LocalAiProviderTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/ReviewRemediationTests.cs",
+                           "size_kb":  14.3,
+                           "last_modified":  "2026-10-28 06:21:06",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:ReviewRemediationTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/KicadSymbolLibraryTests.cs",
+                           "size_kb":  4.8,
+                           "last_modified":  "2026-10-28 05:09:02",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:KicadSymbolLibraryTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/MultiPinFootprintTests.cs",
+                           "size_kb":  9.2,
+                           "last_modified":  "2026-10-29 16:14:56",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:MultiPinFootprintTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/BmoVoiceTests.cs",
+                           "size_kb":  4.4,
+                           "last_modified":  "2026-10-30 08:02:06",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:BmoVoiceTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/PiperTtsTests.cs",
+                           "size_kb":  14.3,
+                           "last_modified":  "2026-10-28 10:54:52",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:PiperTtsTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/ComponentClassificationTests.cs",
+                           "size_kb":  7.3,
+                           "last_modified":  "2026-10-29 19:56:22",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:ComponentClassificationTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/IcDrcEngineTests.cs",
+                           "size_kb":  11.5,
+                           "last_modified":  "2026-10-29 18:58:22",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:IcDrcEngineTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/SensorDrcEngineTests.cs",
+                           "size_kb":  14,
+                           "last_modified":  "2026-10-29 22:27:30",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:SensorDrcEngineTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/AvometerPowerTests.cs",
+                           "size_kb":  2.6,
+                           "last_modified":  "2026-10-29 22:30:16",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:AvometerPowerTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/FastImageToKicadEngineTests.cs",
+                           "size_kb":  5.5,
+                           "last_modified":  "2026-10-30 22:10:50",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:FastImageToKicadEngineTests"
+                       },
+                       {
+                           "path":  "src/6_BreadboardAOI.Tests/DevBoardRuleEngineTests.cs",
+                           "size_kb":  11,
+                           "last_modified":  "2026-10-30 22:10:50",
+                           "symbols":  "ns:BreadboardAOI.Tests, type:DevBoardRuleEngineTests"
+                       },
+                       {
+                           "path":  "src/7_BreadboardAOI.Installer/7_BreadboardAOI.Installer.csproj",
+                           "size_kb":  1.4,
+                           "last_modified":  "2026-10-30 12:08:52",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "src/7_BreadboardAOI.Installer/App.xaml",
+                           "size_kb":  0.3,
+                           "last_modified":  "2026-10-29 22:55:48",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "src/7_BreadboardAOI.Installer/App.xaml.cs",
+                           "size_kb":  0.1,
+                           "last_modified":  "2026-10-29 22:55:52",
+                           "symbols":  "ns:BreadboardAOI.Installer, type:App"
+                       },
+                       {
+                           "path":  "src/7_BreadboardAOI.Installer/MainWindow.xaml",
+                           "size_kb":  18.8,
+                           "last_modified":  "2026-10-30 12:25:28",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "src/7_BreadboardAOI.Installer/MainWindow.xaml.cs",
+                           "size_kb":  36.1,
+                           "last_modified":  "2026-10-30 14:10:30",
+                           "symbols":  "ns:BreadboardAOI.Installer, type:MainWindow"
+                       },
+                       {
+                           "path":  "assets/models/README.md",
+                           "size_kb":  4.5,
+                           "last_modified":  "2026-10-28 11:11:00",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "assets/audio_reflex/README.md",
+                           "size_kb":  0.6,
+                           "last_modified":  "2026-10-27 07:24:46",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "assets/schematics/target_555_blinker_netlist.json",
+                           "size_kb":  1.3,
+                           "last_modified":  "2026-10-27 06:06:18",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "assets/colab/README.md",
+                           "size_kb":  8,
+                           "last_modified":  "2026-10-27 09:02:06",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "assets/kicad/NOTICE.md",
+                           "size_kb":  1.4,
+                           "last_modified":  "2026-10-29 09:52:52",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "assets/kicad/LICENSE-kicad.md",
+                           "size_kb":  2.1,
+                           "last_modified":  "2026-10-27 11:49:40",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "docs/OBJECTIVES.md",
+                           "size_kb":  7.9,
+                           "last_modified":  "2026-10-29 15:37:02",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "docs/COMMANDS.md",
+                           "size_kb":  8.5,
+                           "last_modified":  "2026-10-29 15:36:32",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "dist/test_app/BreadboardAOI.App.deps.json",
+                           "size_kb":  24.8,
+                           "last_modified":  "2026-10-30 13:49:50",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "dist/test_app/BreadboardAOI.App.runtimeconfig.json",
+                           "size_kb":  0.6,
+                           "last_modified":  "2026-10-30 13:49:50",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "dist/test_app/assets/kicad/NOTICE.md",
+                           "size_kb":  1.4,
+                           "last_modified":  "2026-10-29 09:52:52",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "dist/test_app/assets/kicad/LICENSE-kicad.md",
+                           "size_kb":  2.1,
+                           "last_modified":  "2026-10-27 11:49:40",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "dist/test_extract/BreadboardAOI.App.deps.json",
+                           "size_kb":  24.8,
+                           "last_modified":  "2026-10-30 14:03:04",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "dist/test_extract/BreadboardAOI.App.runtimeconfig.json",
+                           "size_kb":  0.6,
+                           "last_modified":  "2026-10-30 14:03:04",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "dist/test_extract/Uninstall-BreadboardAOI.ps1",
+                           "size_kb":  1.6,
+                           "last_modified":  "2026-10-30 13:45:08",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "dist/test_extract/assets/kicad/NOTICE.md",
+                           "size_kb":  1.4,
+                           "last_modified":  "2026-10-29 09:52:52",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "dist/test_extract/assets/kicad/LICENSE-kicad.md",
+                           "size_kb":  2.1,
+                           "last_modified":  "2026-10-27 11:49:40",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "dist/app_payload/BreadboardAOI.App.deps.json",
+                           "size_kb":  24.8,
+                           "last_modified":  "2026-10-30 16:59:14",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "dist/app_payload/BreadboardAOI.App.runtimeconfig.json",
+                           "size_kb":  0.6,
+                           "last_modified":  "2026-10-30 16:59:14",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "dist/app_payload/Uninstall-BreadboardAOI.ps1",
+                           "size_kb":  1.6,
+                           "last_modified":  "2026-10-30 14:03:28",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "dist/app_payload/assets/kicad/LICENSE-kicad.md",
+                           "size_kb":  2.1,
+                           "last_modified":  "2026-10-27 11:49:40",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "dist/app_payload/assets/kicad/NOTICE.md",
+                           "size_kb":  1.4,
+                           "last_modified":  "2026-10-29 09:52:52",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "BreadboardAOI_Complete_Build/BreadboardAOI.App.deps.json",
+                           "size_kb":  29.5,
+                           "last_modified":  "2026-10-29 18:06:58",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "BreadboardAOI_Complete_Build/BreadboardAOI.App.runtimeconfig.json",
+                           "size_kb":  0.6,
+                           "last_modified":  "2026-10-29 09:48:46",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "BreadboardAOI_Complete_Build/win-x64/BreadboardAOI.App.deps.json",
+                           "size_kb":  24.8,
+                           "last_modified":  "2026-10-27 08:45:10",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "BreadboardAOI_Complete_Build/win-x64/BreadboardAOI.App.runtimeconfig.json",
+                           "size_kb":  0.6,
+                           "last_modified":  "2026-10-27 08:45:10",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "BreadboardAOI_Complete_Build/assets/kicad/LICENSE-kicad.md",
+                           "size_kb":  2.1,
+                           "last_modified":  "2026-10-27 11:49:40",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "BreadboardAOI_Complete_Build/assets/kicad/NOTICE.md",
+                           "size_kb":  1.4,
+                           "last_modified":  "2026-10-29 09:52:52",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "New folder/Build-SingleFile-FullSetupExe.ps1",
+                           "size_kb":  6.9,
+                           "last_modified":  "2026-10-30 19:46:30",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "New folder/_SingleExeBuildTemp/PayloadWorkspace/Directory.Build.props",
+                           "size_kb":  0.3,
+                           "last_modified":  "2026-10-30 19:45:14",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "New folder/_SingleExeBuildTemp/PayloadWorkspace/Launch-BreadboardAOI.ps1",
+                           "size_kb":  0.8,
+                           "last_modified":  "2026-10-30 19:45:14",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "New folder/_SingleExeBuildTemp/PayloadWorkspace/0_Shared_Contracts/BreadboardAOI.Shared/BreadboardAOI.Shared.csproj",
+                           "size_kb":  0.2,
+                           "last_modified":  "2026-10-30 19:45:14",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "New folder/_SingleExeBuildTemp/PayloadWorkspace/0_Shared_Contracts/BreadboardAOI.Shared/NetworkContracts.cs",
+                           "size_kb":  1.8,
+                           "last_modified":  "2026-10-30 19:45:14",
+                           "symbols":  "ns:BreadboardAOI.Shared, type:FrameInspectionRequest, type:ArOverlayResponse"
+                       },
+                       {
+                           "path":  "New folder/_SingleExeBuildTemp/PayloadWorkspace/1_Laptop_Thin_Client/BreadboardAOI.LaptopApp/BreadboardAOI.LaptopApp.csproj",
+                           "size_kb":  0.9,
+                           "last_modified":  "2026-10-30 19:45:14",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "New folder/_SingleExeBuildTemp/PayloadWorkspace/1_Laptop_Thin_Client/BreadboardAOI.LaptopApp/appsettings.json",
+                           "size_kb":  0.2,
+                           "last_modified":  "2026-10-30 19:45:14",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "New folder/_SingleExeBuildTemp/PayloadWorkspace/2_Desktop_Heavy_Server/BreadboardAOI.DesktopServer/BreadboardAOI.DesktopServer.csproj",
+                           "size_kb":  1.2,
+                           "last_modified":  "2026-10-30 19:45:14",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "New folder/_SingleExeBuildTemp/PayloadWorkspace/2_Desktop_Heavy_Server/grammars/datasheet_netlist.gbnf",
+                           "size_kb":  0.5,
+                           "last_modified":  "2026-10-30 19:45:14",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "New folder/_SingleExeBuildTemp/PayloadWorkspace/2_Desktop_Heavy_Server/cache/dev_boards/esp32_devkit_v1.json",
+                           "size_kb":  0.6,
+                           "last_modified":  "2026-10-30 19:45:14",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "New folder/_SingleExeBuildTemp/InstallerSrc/BreadboardAOI.Installer.csproj",
+                           "size_kb":  1.1,
+                           "last_modified":  "2026-10-30 19:45:14",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "New folder/_SingleExeBuildTemp/InstallerSrc/App.xaml",
+                           "size_kb":  0.3,
+                           "last_modified":  "2026-10-30 19:45:14",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "New folder/_SingleExeBuildTemp/InstallerSrc/App.xaml.cs",
+                           "size_kb":  0.1,
+                           "last_modified":  "2026-10-30 19:45:14",
+                           "symbols":  "ns:BreadboardAOI.Installer, type:App"
+                       },
+                       {
+                           "path":  "New folder/_SingleExeBuildTemp/InstallerSrc/MainWindow.xaml",
+                           "size_kb":  17.6,
+                           "last_modified":  "2026-10-30 19:45:14",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "New folder/_SingleExeBuildTemp/InstallerSrc/MainWindow.xaml.cs",
+                           "size_kb":  25.1,
+                           "last_modified":  "2026-10-30 19:45:14",
+                           "symbols":  "ns:BreadboardAOI.Installer, type:MainWindow"
+                       },
+                       {
+                           "path":  "_SwarmBridge/Apply-ArgonOutputs.ps1",
+                           "size_kb":  2.4,
+                           "last_modified":  "2026-10-30 22:10:42",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "_SwarmBridge/ANTIGRAVITY_FLASH_PROMPT.md",
+                           "size_kb":  6.1,
+                           "last_modified":  "2026-10-30 21:51:20",
+                           "symbols":  ""
+                       },
+                       {
+                           "path":  "_SwarmBridge/ARGON_FIX_ROUND.md",
+                           "size_kb":  7.7,
+                           "last_modified":  "2026-10-30 22:20:54",
+                           "symbols":  ""
+                       }
+                   ],
+    "heavy_assets":  [
+                         {
+                             "path":  ".gitignore",
+                             "size_mb":  0,
+                             "ext":  ".gitignore"
+                         },
+                         {
+                             "path":  "session-4028ca9a-1bb2-416d-879e-699767c31b3a.md",
+                             "size_mb":  11.53,
+                             "ext":  ".md"
+                         },
+                         {
+                             "path":  "Icon.jpg",
+                             "size_mb":  1.56,
+                             "ext":  ".jpg"
+                         },
+                         {
+                             "path":  "stdout.txt",
+                             "size_mb":  0,
+                             "ext":  ".txt"
+                         },
+                         {
+                             "path":  "stderr.txt",
+                             "size_mb":  0,
+                             "ext":  ".txt"
+                         },
+                         {
+                             "path":  "launch.bat",
+                             "size_mb":  0,
+                             "ext":  ".bat"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Setup.exe",
+                             "size_mb":  251.97,
+                             "ext":  ".exe"
+                         },
+                         {
+                             "path":  "app.ico",
+                             "size_mb":  0.16,
+                             "ext":  ".ico"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build.zip",
+                             "size_mb":  251.29,
+                             "ext":  ".zip"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Full_Setup.exe",
+                             "size_mb":  185.69,
+                             "ext":  ".exe"
+                         },
+                         {
+                             "path":  "scratch_box.png",
+                             "size_mb":  0.03,
+                             "ext":  ".png"
+                         },
+                         {
+                             "path":  ".ignore",
+                             "size_mb":  0,
+                             "ext":  ".ignore"
+                         },
+                         {
+                             "path":  "src/5_BreadboardAOI.App/app.manifest",
+                             "size_mb":  0,
+                             "ext":  ".manifest"
+                         },
+                         {
+                             "path":  "src/5_BreadboardAOI.App/Resources/app.ico",
+                             "size_mb":  0.16,
+                             "ext":  ".ico"
+                         },
+                         {
+                             "path":  "src/5_BreadboardAOI.App/Resources/app_icon.png",
+                             "size_mb":  3.81,
+                             "ext":  ".png"
+                         },
+                         {
+                             "path":  "src/7_BreadboardAOI.Installer/app.ico",
+                             "size_mb":  0.16,
+                             "ext":  ".ico"
+                         },
+                         {
+                             "path":  "src/7_BreadboardAOI.Installer/Payload.zip",
+                             "size_mb":  251.29,
+                             "ext":  ".zip"
+                         },
+                         {
+                             "path":  "assets/app.ico",
+                             "size_mb":  0.16,
+                             "ext":  ".ico"
+                         },
+                         {
+                             "path":  "assets/app_icon.png",
+                             "size_mb":  3.81,
+                             "ext":  ".png"
+                         },
+                         {
+                             "path":  "assets/colab/BreadboardAOI_Qwen.ipynb",
+                             "size_mb":  0.03,
+                             "ext":  ".ipynb"
+                         },
+                         {
+                             "path":  "assets/kicad/kicad-symbols-master.zip",
+                             "size_mb":  28.13,
+                             "ext":  ".zip"
+                         },
+                         {
+                             "path":  ".github/workflows/publish-models.yml",
+                             "size_mb":  0,
+                             "ext":  ".yml"
+                         },
+                         {
+                             "path":  "dist/test_app.zip",
+                             "size_mb":  251.13,
+                             "ext":  ".zip"
+                         },
+                         {
+                             "path":  "dist/test_app/onnxruntime_providers_shared.dll",
+                             "size_mb":  0.02,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/onnxruntime.dll",
+                             "size_mb":  11.57,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/onnxruntime_providers_cuda.dll",
+                             "size_mb":  515.26,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/onnxruntime_providers_tensorrt.dll",
+                             "size_mb":  0.72,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/BreadboardAOI.App.dll",
+                             "size_mb":  4.49,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/BreadboardAOI.App.pdb",
+                             "size_mb":  0.16,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "dist/test_app/CommunityToolkit.Mvvm.dll",
+                             "size_mb":  0.12,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/Microsoft.ML.OnnxRuntime.dll",
+                             "size_mb":  0.2,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/NAudio.dll",
+                             "size_mb":  0.01,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/NAudio.Asio.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/NAudio.Core.dll",
+                             "size_mb":  0.18,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/NAudio.Wasapi.dll",
+                             "size_mb":  0.17,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/NAudio.WinForms.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/NAudio.Midi.dll",
+                             "size_mb":  0.04,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/NAudio.WinMM.dll",
+                             "size_mb":  0.05,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/OpenCvSharp.dll",
+                             "size_mb":  0.91,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/sherpa-onnx.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/SkiaSharp.dll",
+                             "size_mb":  0.42,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/SkiaSharp.Views.WPF.dll",
+                             "size_mb":  0.02,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/onnxruntime_providers_cuda.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "dist/test_app/SkiaSharp.Views.Desktop.Common.dll",
+                             "size_mb":  0.02,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/onnxruntime.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "dist/test_app/OpenCvSharpExtern.dll",
+                             "size_mb":  58.88,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/onnxruntime_providers_tensorrt.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "dist/test_app/onnxruntime_providers_shared.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "dist/test_app/opencv_videoio_ffmpeg4100_64.dll",
+                             "size_mb":  25.17,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/sherpa-onnx-c-api.dll",
+                             "size_mb":  3.1,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/libSkiaSharp.dll",
+                             "size_mb":  8.98,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/BreadboardAOI.Core.dll",
+                             "size_mb":  0.15,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/BreadboardAOI.Hardware.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/BreadboardAOI.Intelligence.dll",
+                             "size_mb":  0.19,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/BreadboardAOI.Vision.dll",
+                             "size_mb":  0.04,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_app/BreadboardAOI.Hardware.pdb",
+                             "size_mb":  0.02,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "dist/test_app/BreadboardAOI.Core.pdb",
+                             "size_mb":  0.04,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "dist/test_app/BreadboardAOI.Vision.pdb",
+                             "size_mb":  0.02,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "dist/test_app/BreadboardAOI.Intelligence.pdb",
+                             "size_mb":  0.05,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "dist/test_app/BreadboardAOI.App.exe",
+                             "size_mb":  0.31,
+                             "ext":  ".exe"
+                         },
+                         {
+                             "path":  "dist/test_app/assets/kicad/kicad-symbols-master.zip",
+                             "size_mb":  28.13,
+                             "ext":  ".zip"
+                         },
+                         {
+                             "path":  "dist/test_extract/onnxruntime_providers_shared.dll",
+                             "size_mb":  0.02,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/onnxruntime.dll",
+                             "size_mb":  11.57,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/onnxruntime_providers_tensorrt.dll",
+                             "size_mb":  0.72,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/onnxruntime_providers_cuda.dll",
+                             "size_mb":  515.26,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/BreadboardAOI.App.dll",
+                             "size_mb":  4.49,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/BreadboardAOI.App.pdb",
+                             "size_mb":  0.16,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "dist/test_extract/CommunityToolkit.Mvvm.dll",
+                             "size_mb":  0.12,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/Microsoft.ML.OnnxRuntime.dll",
+                             "size_mb":  0.2,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/NAudio.Asio.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/NAudio.dll",
+                             "size_mb":  0.01,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/NAudio.Core.dll",
+                             "size_mb":  0.18,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/NAudio.Midi.dll",
+                             "size_mb":  0.04,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/NAudio.Wasapi.dll",
+                             "size_mb":  0.17,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/NAudio.WinForms.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/NAudio.WinMM.dll",
+                             "size_mb":  0.05,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/OpenCvSharp.dll",
+                             "size_mb":  0.91,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/SkiaSharp.dll",
+                             "size_mb":  0.42,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/sherpa-onnx.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/SkiaSharp.Views.Desktop.Common.dll",
+                             "size_mb":  0.02,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/SkiaSharp.Views.WPF.dll",
+                             "size_mb":  0.02,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/onnxruntime.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "dist/test_extract/onnxruntime_providers_cuda.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "dist/test_extract/onnxruntime_providers_shared.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "dist/test_extract/onnxruntime_providers_tensorrt.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "dist/test_extract/OpenCvSharpExtern.dll",
+                             "size_mb":  58.88,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/sherpa-onnx-c-api.dll",
+                             "size_mb":  3.1,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/opencv_videoio_ffmpeg4100_64.dll",
+                             "size_mb":  25.17,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/libSkiaSharp.dll",
+                             "size_mb":  8.98,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/BreadboardAOI.Core.dll",
+                             "size_mb":  0.15,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/BreadboardAOI.Hardware.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/BreadboardAOI.Intelligence.dll",
+                             "size_mb":  0.19,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/BreadboardAOI.Vision.dll",
+                             "size_mb":  0.04,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/test_extract/BreadboardAOI.Hardware.pdb",
+                             "size_mb":  0.02,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "dist/test_extract/BreadboardAOI.Core.pdb",
+                             "size_mb":  0.04,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "dist/test_extract/BreadboardAOI.Vision.pdb",
+                             "size_mb":  0.02,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "dist/test_extract/BreadboardAOI.Intelligence.pdb",
+                             "size_mb":  0.05,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "dist/test_extract/BreadboardAOI.App.exe",
+                             "size_mb":  0.31,
+                             "ext":  ".exe"
+                         },
+                         {
+                             "path":  "dist/test_extract/app.ico",
+                             "size_mb":  0.16,
+                             "ext":  ".ico"
+                         },
+                         {
+                             "path":  "dist/test_extract/assets/kicad/kicad-symbols-master.zip",
+                             "size_mb":  28.13,
+                             "ext":  ".zip"
+                         },
+                         {
+                             "path":  "dist/app_payload/onnxruntime.dll",
+                             "size_mb":  11.57,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/onnxruntime_providers_shared.dll",
+                             "size_mb":  0.02,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/onnxruntime_providers_cuda.dll",
+                             "size_mb":  515.26,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/onnxruntime_providers_tensorrt.dll",
+                             "size_mb":  0.72,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/BreadboardAOI.App.dll",
+                             "size_mb":  4.49,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/BreadboardAOI.App.pdb",
+                             "size_mb":  0.16,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "dist/app_payload/CommunityToolkit.Mvvm.dll",
+                             "size_mb":  0.12,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/Microsoft.ML.OnnxRuntime.dll",
+                             "size_mb":  0.2,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/NAudio.dll",
+                             "size_mb":  0.01,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/NAudio.Asio.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/NAudio.Core.dll",
+                             "size_mb":  0.18,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/NAudio.Midi.dll",
+                             "size_mb":  0.04,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/NAudio.Wasapi.dll",
+                             "size_mb":  0.17,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/NAudio.WinForms.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/NAudio.WinMM.dll",
+                             "size_mb":  0.05,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/OpenCvSharp.dll",
+                             "size_mb":  0.91,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/sherpa-onnx.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/SkiaSharp.dll",
+                             "size_mb":  0.42,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/SkiaSharp.Views.Desktop.Common.dll",
+                             "size_mb":  0.02,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/SkiaSharp.Views.WPF.dll",
+                             "size_mb":  0.02,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/onnxruntime.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "dist/app_payload/onnxruntime_providers_cuda.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "dist/app_payload/onnxruntime_providers_shared.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "dist/app_payload/onnxruntime_providers_tensorrt.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "dist/app_payload/OpenCvSharpExtern.dll",
+                             "size_mb":  58.88,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/opencv_videoio_ffmpeg4100_64.dll",
+                             "size_mb":  25.17,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/libSkiaSharp.dll",
+                             "size_mb":  8.98,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/sherpa-onnx-c-api.dll",
+                             "size_mb":  3.1,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/BreadboardAOI.Core.dll",
+                             "size_mb":  0.15,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/BreadboardAOI.Hardware.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/BreadboardAOI.Intelligence.dll",
+                             "size_mb":  0.19,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/BreadboardAOI.Vision.dll",
+                             "size_mb":  0.04,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "dist/app_payload/BreadboardAOI.Hardware.pdb",
+                             "size_mb":  0.02,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "dist/app_payload/BreadboardAOI.Core.pdb",
+                             "size_mb":  0.04,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "dist/app_payload/BreadboardAOI.Vision.pdb",
+                             "size_mb":  0.02,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "dist/app_payload/BreadboardAOI.Intelligence.pdb",
+                             "size_mb":  0.05,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "dist/app_payload/BreadboardAOI.App.exe",
+                             "size_mb":  0.31,
+                             "ext":  ".exe"
+                         },
+                         {
+                             "path":  "dist/app_payload/app.ico",
+                             "size_mb":  0.16,
+                             "ext":  ".ico"
+                         },
+                         {
+                             "path":  "dist/app_payload/assets/kicad/kicad-symbols-master.zip",
+                             "size_mb":  28.13,
+                             "ext":  ".zip"
+                         },
+                         {
+                             "path":  "dist/installer/BreadboardAOI_Setup.exe",
+                             "size_mb":  251.97,
+                             "ext":  ".exe"
+                         },
+                         {
+                             "path":  "dist/installer/BreadboardAOI_Setup.pdb",
+                             "size_mb":  0.03,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/CommunityToolkit.Mvvm.dll",
+                             "size_mb":  0.12,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/NAudio.dll",
+                             "size_mb":  0.01,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/NAudio.Midi.dll",
+                             "size_mb":  0.04,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/Microsoft.ML.OnnxRuntime.dll",
+                             "size_mb":  0.2,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/NAudio.Asio.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/NAudio.Core.dll",
+                             "size_mb":  0.18,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/NAudio.WinForms.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/NAudio.Wasapi.dll",
+                             "size_mb":  0.17,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/NAudio.WinMM.dll",
+                             "size_mb":  0.05,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/OpenCvSharp.dll",
+                             "size_mb":  0.91,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/sherpa-onnx.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/SkiaSharp.dll",
+                             "size_mb":  0.42,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/SkiaSharp.Views.Desktop.Common.dll",
+                             "size_mb":  0.02,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/SkiaSharp.Views.WPF.dll",
+                             "size_mb":  0.02,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/onnxruntime.dll",
+                             "size_mb":  11.57,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/onnxruntime_providers_cuda.dll",
+                             "size_mb":  515.26,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/onnxruntime_providers_tensorrt.dll",
+                             "size_mb":  0.72,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/onnxruntime_providers_shared.dll",
+                             "size_mb":  0.02,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/BreadboardAOI.Hardware.dll",
+                             "size_mb":  0.02,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/BreadboardAOI.Intelligence.dll",
+                             "size_mb":  0.17,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/BreadboardAOI.Vision.dll",
+                             "size_mb":  0.04,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/BreadboardAOI.Core.dll",
+                             "size_mb":  0.15,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/BreadboardAOI.App.exe",
+                             "size_mb":  0.31,
+                             "ext":  ".exe"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/BreadboardAOI.App.dll",
+                             "size_mb":  4.43,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/app.ico",
+                             "size_mb":  0.16,
+                             "ext":  ".ico"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/linux-x64/native/libonnxruntime_providers_tensorrt.so",
+                             "size_mb":  0.74,
+                             "ext":  ".so"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/linux-x64/native/libonnxruntime_providers_shared.so",
+                             "size_mb":  0.01,
+                             "ext":  ".so"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/linux-x64/native/libonnxruntime_providers_cuda.so",
+                             "size_mb":  509.26,
+                             "ext":  ".so"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/linux-x64/native/libonnxruntime.so",
+                             "size_mb":  18.47,
+                             "ext":  ".so"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/linux-x64/native/libsherpa-onnx-c-api.so",
+                             "size_mb":  3.19,
+                             "ext":  ".so"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-x64/native/onnxruntime.dll",
+                             "size_mb":  11.57,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-x64/native/onnxruntime.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-x64/native/onnxruntime_providers_cuda.dll",
+                             "size_mb":  515.26,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-x64/native/onnxruntime_providers_cuda.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-x64/native/onnxruntime_providers_shared.dll",
+                             "size_mb":  0.02,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-x64/native/onnxruntime_providers_shared.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-x64/native/onnxruntime_providers_tensorrt.dll",
+                             "size_mb":  0.72,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-x64/native/onnxruntime_providers_tensorrt.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-x64/native/opencv_videoio_ffmpeg4100_64.dll",
+                             "size_mb":  25.17,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-x64/native/OpenCvSharpExtern.dll",
+                             "size_mb":  58.88,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-x64/native/sherpa-onnx-c-api.dll",
+                             "size_mb":  3.1,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-x64/native/libSkiaSharp.dll",
+                             "size_mb":  8.98,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-x86/native/OpenCvSharpExtern.dll",
+                             "size_mb":  40.15,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-x86/native/opencv_videoio_ffmpeg4100.dll",
+                             "size_mb":  22.34,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-x86/native/onnxruntime.dll",
+                             "size_mb":  8.98,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-x86/native/sherpa-onnx-c-api.dll",
+                             "size_mb":  2.72,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-x86/native/libSkiaSharp.dll",
+                             "size_mb":  7.61,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/linux-arm64/native/libonnxruntime.so",
+                             "size_mb":  12.45,
+                             "ext":  ".so"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/linux-arm64/native/libsherpa-onnx-c-api.so",
+                             "size_mb":  2.94,
+                             "ext":  ".so"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/osx-arm64/native/libonnxruntime.1.17.1.dylib",
+                             "size_mb":  22.81,
+                             "ext":  ".dylib"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/osx-arm64/native/libsherpa-onnx-c-api.dylib",
+                             "size_mb":  2.63,
+                             "ext":  ".dylib"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/osx-x64/native/libonnxruntime.1.17.1.dylib",
+                             "size_mb":  25.23,
+                             "ext":  ".dylib"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/osx-x64/native/libsherpa-onnx-c-api.dylib",
+                             "size_mb":  2.95,
+                             "ext":  ".dylib"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-arm64/native/onnxruntime.dll",
+                             "size_mb":  10.29,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-arm64/native/sherpa-onnx-c-api.dll",
+                             "size_mb":  3.35,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/win-arm64/native/libSkiaSharp.dll",
+                             "size_mb":  7.58,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/runtimes/osx/native/libSkiaSharp.dylib",
+                             "size_mb":  14.39,
+                             "ext":  ".dylib"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/NAudio.dll",
+                             "size_mb":  0.01,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/NAudio.Midi.dll",
+                             "size_mb":  0.04,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/Microsoft.ML.OnnxRuntime.dll",
+                             "size_mb":  0.2,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/NAudio.Core.dll",
+                             "size_mb":  0.18,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/CommunityToolkit.Mvvm.dll",
+                             "size_mb":  0.12,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/NAudio.Asio.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/NAudio.Wasapi.dll",
+                             "size_mb":  0.17,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/NAudio.WinForms.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/NAudio.WinMM.dll",
+                             "size_mb":  0.05,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/OpenCvSharp.dll",
+                             "size_mb":  0.91,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/sherpa-onnx.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/SkiaSharp.dll",
+                             "size_mb":  0.42,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/SkiaSharp.Views.Desktop.Common.dll",
+                             "size_mb":  0.02,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/SkiaSharp.Views.WPF.dll",
+                             "size_mb":  0.02,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/onnxruntime.dll",
+                             "size_mb":  11.57,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/onnxruntime.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/onnxruntime_providers_cuda.dll",
+                             "size_mb":  515.26,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/onnxruntime_providers_cuda.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/onnxruntime_providers_shared.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/onnxruntime_providers_shared.dll",
+                             "size_mb":  0.02,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/onnxruntime_providers_tensorrt.dll",
+                             "size_mb":  0.72,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/OpenCvSharpExtern.dll",
+                             "size_mb":  58.88,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/onnxruntime_providers_tensorrt.lib",
+                             "size_mb":  0,
+                             "ext":  ".lib"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/opencv_videoio_ffmpeg4100_64.dll",
+                             "size_mb":  25.17,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/sherpa-onnx-c-api.dll",
+                             "size_mb":  3.1,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/libSkiaSharp.dll",
+                             "size_mb":  8.98,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/BreadboardAOI.Intelligence.dll",
+                             "size_mb":  0.13,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/BreadboardAOI.Core.dll",
+                             "size_mb":  0.04,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/BreadboardAOI.Hardware.dll",
+                             "size_mb":  0.02,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/BreadboardAOI.Hardware.pdb",
+                             "size_mb":  0.02,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/BreadboardAOI.Vision.dll",
+                             "size_mb":  0.03,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/BreadboardAOI.Core.pdb",
+                             "size_mb":  0.02,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/BreadboardAOI.Vision.pdb",
+                             "size_mb":  0.02,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/BreadboardAOI.Intelligence.pdb",
+                             "size_mb":  0.04,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/BreadboardAOI.App.exe",
+                             "size_mb":  0.15,
+                             "ext":  ".exe"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/BreadboardAOI.App.dll",
+                             "size_mb":  0.13,
+                             "ext":  ".dll"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/win-x64/BreadboardAOI.App.pdb",
+                             "size_mb":  0.06,
+                             "ext":  ".pdb"
+                         },
+                         {
+                             "path":  "BreadboardAOI_Complete_Build/assets/kicad/kicad-symbols-master.zip",
+                             "size_mb":  28.13,
+                             "ext":  ".zip"
+                         },
+                         {
+                             "path":  "New folder/_SingleExeBuildTemp/InstallerSrc/Payload.zip",
+                             "size_mb":  0,
+                             "ext":  ".zip"
+                         },
+                         {
+                             "path":  "_SwarmBridge/ARGON_1_INPUT.txt",
+                             "size_mb":  0.38,
+                             "ext":  ".txt"
+                         },
+                         {
+                             "path":  "_SwarmBridge/ARGON_1_OUTPUT.txt",
+                             "size_mb":  0.18,
+                             "ext":  ".txt"
+                         },
+                         {
+                             "path":  "_SwarmBridge/ARGON_2_INPUT.txt",
+                             "size_mb":  0.06,
+                             "ext":  ".txt"
+                         },
+                         {
+                             "path":  "_SwarmBridge/ARGON_2_OUTPUT.txt",
+                             "size_mb":  0.11,
+                             "ext":  ".txt"
+                         },
+                         {
+                             "path":  "_SwarmBridge/ARGON_3_INPUT.txt",
+                             "size_mb":  0.22,
+                             "ext":  ".txt"
+                         },
+                         {
+                             "path":  "_SwarmBridge/ARGON_3_OUTPUT.txt",
+                             "size_mb":  0.16,
+                             "ext":  ".txt"
+                         },
+                         {
+                             "path":  "_SwarmBridge/ARGON_4_INPUT.txt",
+                             "size_mb":  0.1,
+                             "ext":  ".txt"
+                         },
+                         {
+                             "path":  "_SwarmBridge/ARGON_4_OUTPUT.txt",
+                             "size_mb":  0.11,
+                             "ext":  ".txt"
+                         }
+                     ]
+}
