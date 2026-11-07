@@ -388,6 +388,50 @@ public static class BoxCodeGenerator
                     sb.AppendLine($"    }}");
                     break;
 
+                case BoxBlockKind.IfElseCondition:
+                    string ieOp = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
+                    string ieVar = string.IsNullOrWhiteSpace(b.VariableName)
+                        ? (hasDht ? "currentTemperature" : (blocks.Any(x => x.Kind == BoxBlockKind.ReadUltrasonic) ? "measuredDistanceCm" : "sensorVal"))
+                        : b.VariableName;
+                    double ieThresh = b.ConditionThreshold;
+                    sb.AppendLine($"    // If-Else Conditional Branch ({ieVar} {ieOp} {ieThresh:0.0})");
+                    sb.AppendLine($"    if ({ieVar} {ieOp} {ieThresh:0.0}) {{");
+                    sb.AppendLine($"        Serial.print(F(\"==> Condition Met on \")); Serial.println(F(\"{ieVar}\"));");
+                    if (blocks.Any(x => x.Kind == BoxBlockKind.SetLed))
+                        sb.AppendLine("        digitalWrite(PIN_LED, HIGH);");
+                    sb.AppendLine("    } else {");
+                    sb.AppendLine($"        Serial.println(F(\"==> Condition False (Else Branch)\"));");
+                    if (blocks.Any(x => x.Kind == BoxBlockKind.SetLed))
+                        sb.AppendLine("        digitalWrite(PIN_LED, LOW);");
+                    sb.AppendLine("    }");
+                    break;
+
+                case BoxBlockKind.LogicalAnd:
+                    string andVar1 = string.IsNullOrWhiteSpace(b.VariableName) ? "currentTemperature" : b.VariableName;
+                    string andOp1 = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
+                    double andTh1 = b.ConditionThreshold;
+                    string andVar2 = string.IsNullOrWhiteSpace(b.SecondaryVariableName) ? "currentHumidity" : b.SecondaryVariableName;
+                    string andOp2 = string.IsNullOrWhiteSpace(b.SecondaryConditionOperator) ? "<" : b.SecondaryConditionOperator;
+                    double andTh2 = b.SecondaryConditionThreshold;
+                    sb.AppendLine($"    // Compound Logic AND: ({andVar1} {andOp1} {andTh1:0.0}) && ({andVar2} {andOp2} {andTh2:0.0})");
+                    sb.AppendLine($"    if (({andVar1} {andOp1} {andTh1:0.0}) && ({andVar2} {andOp2} {andTh2:0.0})) {{");
+                    sb.AppendLine($"        Serial.println(F(\"==> Logical AND Condition MET\"));");
+                    sb.AppendLine("    }");
+                    break;
+
+                case BoxBlockKind.LogicalOr:
+                    string orVar1 = string.IsNullOrWhiteSpace(b.VariableName) ? "currentTemperature" : b.VariableName;
+                    string orOp1 = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
+                    double orTh1 = b.ConditionThreshold;
+                    string orVar2 = string.IsNullOrWhiteSpace(b.SecondaryVariableName) ? "currentHumidity" : b.SecondaryVariableName;
+                    string orOp2 = string.IsNullOrWhiteSpace(b.SecondaryConditionOperator) ? ">" : b.SecondaryConditionOperator;
+                    double orTh2 = b.SecondaryConditionThreshold;
+                    sb.AppendLine($"    // Compound Logic OR: ({orVar1} {orOp1} {orTh1:0.0}) || ({orVar2} {orOp2} {orTh2:0.0})");
+                    sb.AppendLine($"    if (({orVar1} {orOp1} {orTh1:0.0}) || ({orVar2} {orOp2} {orTh2:0.0})) {{");
+                    sb.AppendLine($"        Serial.println(F(\"==> Logical OR Condition MET\"));");
+                    sb.AppendLine("    }");
+                    break;
+
                 case BoxBlockKind.LcdInitI2c:
                     string addr = string.IsNullOrWhiteSpace(b.LcdI2cAddress) ? "0x27" : b.LcdI2cAddress;
                     sb.AppendLine($"    // Initialize LCD 1602 I2C Display (Addr: {addr})");
@@ -480,6 +524,37 @@ public static class BoxCodeGenerator
                     string varVal = string.IsNullOrWhiteSpace(b.Parameter1) ? "1" : b.Parameter1;
                     sb.AppendLine($"    // Set Variable");
                     sb.AppendLine($"    {varName} = {varVal};");
+                    break;
+
+                case BoxBlockKind.MathOperation:
+                    string targetVar = string.IsNullOrWhiteSpace(b.MathTargetVariable) ? "calcResult" : b.MathTargetVariable;
+                    string op1 = string.IsNullOrWhiteSpace(b.Operand1) ? "currentTemperature" : b.Operand1;
+                    string mathOp = string.IsNullOrWhiteSpace(b.MathOperator) ? "+" : b.MathOperator;
+                    string op2 = string.IsNullOrWhiteSpace(b.Operand2) ? "1.0" : b.Operand2;
+                    sb.AppendLine($"    // Math Calculation: {targetVar} = {op1} {mathOp} {op2}");
+                    sb.AppendLine($"    float {targetVar} = {op1} {mathOp} {op2};");
+                    sb.AppendLine($"    Serial.print(F(\"[MATH] {targetVar}: \")); Serial.println({targetVar});");
+                    break;
+
+                case BoxBlockKind.RepeatTimes:
+                    int rpt = b.RepeatCount > 0 ? b.RepeatCount : 5;
+                    sb.AppendLine($"    // Repeat Loop ({rpt} iterations)");
+                    sb.AppendLine($"    for (int loopIndex = 0; loopIndex < {rpt}; loopIndex++) {{");
+                    sb.AppendLine($"        Serial.print(F(\"==> Loop Index: \")); Serial.println(loopIndex);");
+                    sb.AppendLine("        delay(50);");
+                    sb.AppendLine("    }");
+                    break;
+
+                case BoxBlockKind.WhileLoop:
+                    string wVar = string.IsNullOrWhiteSpace(b.VariableName) ? "buttonPressed" : b.VariableName;
+                    string wOp = string.IsNullOrWhiteSpace(b.ConditionOperator) ? "==" : b.ConditionOperator;
+                    string wTarget = b.ConditionThreshold.ToString("0.0", CultureInfo.InvariantCulture);
+                    sb.AppendLine($"    // While Loop ({wVar} {wOp} {wTarget})");
+                    sb.AppendLine($"    while ({wVar} {wOp} {wTarget}) {{");
+                    sb.AppendLine("        Serial.println(F(\"==> Inside While Loop...\"));");
+                    sb.AppendLine("        delay(100);");
+                    sb.AppendLine("        break; // Guard against infinite blocking");
+                    sb.AppendLine("    }");
                     break;
 
                 case BoxBlockKind.Delay:
@@ -732,6 +807,39 @@ public static class BoxCodeGenerator
                     sb.AppendLine("        led.value(0)");
                     break;
 
+                case BoxBlockKind.IfElseCondition:
+                    string upyIeOp = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
+                    string upyIeVar = string.IsNullOrWhiteSpace(b.VariableName)
+                        ? (hasDht ? "temp" : (blocks.Any(x => x.Kind == BoxBlockKind.ReadUltrasonic) ? "distance_cm" : "sensor_val"))
+                        : b.VariableName;
+                    sb.AppendLine($"    if {upyIeVar} {upyIeOp} {b.ConditionThreshold:0.0}:");
+                    sb.AppendLine("        print(\"==> Condition Met!\")");
+                    if (blocks.Any(x => x.Kind == BoxBlockKind.SetLed))
+                        sb.AppendLine("        led.value(1)");
+                    sb.AppendLine("    else:");
+                    sb.AppendLine("        print(\"==> Else branch\")");
+                    if (blocks.Any(x => x.Kind == BoxBlockKind.SetLed))
+                        sb.AppendLine("        led.value(0)");
+                    break;
+
+                case BoxBlockKind.LogicalAnd:
+                    string pyAndVar1 = string.IsNullOrWhiteSpace(b.VariableName) ? "temp" : b.VariableName;
+                    string pyAndOp1 = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
+                    string pyAndVar2 = string.IsNullOrWhiteSpace(b.SecondaryVariableName) ? "hum" : b.SecondaryVariableName;
+                    string pyAndOp2 = string.IsNullOrWhiteSpace(b.SecondaryConditionOperator) ? "<" : b.SecondaryConditionOperator;
+                    sb.AppendLine($"    if ({pyAndVar1} {pyAndOp1} {b.ConditionThreshold:0.0}) and ({pyAndVar2} {pyAndOp2} {b.SecondaryConditionThreshold:0.0}):");
+                    sb.AppendLine("        print(\"==> Logical AND Condition MET\")");
+                    break;
+
+                case BoxBlockKind.LogicalOr:
+                    string pyOrVar1 = string.IsNullOrWhiteSpace(b.VariableName) ? "temp" : b.VariableName;
+                    string pyOrOp1 = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
+                    string pyOrVar2 = string.IsNullOrWhiteSpace(b.SecondaryVariableName) ? "hum" : b.SecondaryVariableName;
+                    string pyOrOp2 = string.IsNullOrWhiteSpace(b.SecondaryConditionOperator) ? ">" : b.SecondaryConditionOperator;
+                    sb.AppendLine($"    if ({pyOrVar1} {pyOrOp1} {b.ConditionThreshold:0.0}) or ({pyOrVar2} {pyOrOp2} {b.SecondaryConditionThreshold:0.0}):");
+                    sb.AppendLine("        print(\"==> Logical OR Condition MET\")");
+                    break;
+
                 case BoxBlockKind.LcdInitI2c:
                     sb.AppendLine("    if lcd:");
                     sb.AppendLine("        lcd.clear()");
@@ -784,6 +892,30 @@ public static class BoxCodeGenerator
                     string upyVarName = string.IsNullOrWhiteSpace(b.VariableName) ? "system_state" : b.VariableName;
                     string upyVarVal = string.IsNullOrWhiteSpace(b.Parameter1) ? "1" : b.Parameter1;
                     sb.AppendLine($"    {upyVarName} = {upyVarVal}");
+                    break;
+
+                case BoxBlockKind.MathOperation:
+                    string pyTarget = string.IsNullOrWhiteSpace(b.MathTargetVariable) ? "calc_result" : b.MathTargetVariable;
+                    string pyOp1 = string.IsNullOrWhiteSpace(b.Operand1) ? "temp" : b.Operand1;
+                    string pyMathOp = string.IsNullOrWhiteSpace(b.MathOperator) ? "+" : b.MathOperator;
+                    string pyOp2 = string.IsNullOrWhiteSpace(b.Operand2) ? "1.0" : b.Operand2;
+                    sb.AppendLine($"    {pyTarget} = {pyOp1} {pyMathOp} {pyOp2}");
+                    sb.AppendLine($"    print(f\"[MATH] {pyTarget}: {{{pyTarget}}}\")");
+                    break;
+
+                case BoxBlockKind.RepeatTimes:
+                    int pyRpt = b.RepeatCount > 0 ? b.RepeatCount : 5;
+                    sb.AppendLine($"    for loop_idx in range({pyRpt}):");
+                    sb.AppendLine("        print(f\"==> Loop index: {loop_idx}\")");
+                    sb.AppendLine("        time.sleep_ms(50)");
+                    break;
+
+                case BoxBlockKind.WhileLoop:
+                    string pyWVar = string.IsNullOrWhiteSpace(b.VariableName) ? "btn" : b.VariableName;
+                    string pyWOp = string.IsNullOrWhiteSpace(b.ConditionOperator) ? "==" : b.ConditionOperator;
+                    sb.AppendLine($"    while {pyWVar} {pyWOp} {b.ConditionThreshold:0.0}:");
+                    sb.AppendLine("        print(\"==> Inside while loop\")");
+                    sb.AppendLine("        break");
                     break;
 
                 case BoxBlockKind.Delay:
@@ -948,6 +1080,7 @@ public static class BoxCodeGenerator
                 Kind = BoxBlockKind.LcdInitI2c,
                 Category = BoxBlockCategory.Displays,
                 Title = "Init LCD 1602 I2C (0x27)",
+                ModelName = "LCD1602 I2C",
                 Icon = "🖥️",
                 AccentHexColor = "#06B6D4",
                 BackgroundHexColor = "#083344",
@@ -977,6 +1110,7 @@ public static class BoxCodeGenerator
                 Kind = BoxBlockKind.ReadDhtSensor,
                 Category = BoxBlockCategory.Sensors,
                 Title = "Read DHT11 Sensor",
+                ModelName = "DHT11",
                 Icon = "🌡️",
                 AccentHexColor = "#00ACC1",
                 BackgroundHexColor = "#006064",
@@ -993,6 +1127,7 @@ public static class BoxCodeGenerator
                 Kind = BoxBlockKind.ReadUltrasonic,
                 Category = BoxBlockCategory.Sensors,
                 Title = "Read HC-SR04 Ultrasonic",
+                ModelName = "HC-SR04",
                 Icon = "📡",
                 AccentHexColor = "#0288D1",
                 BackgroundHexColor = "#0D47A1",
@@ -1010,6 +1145,7 @@ public static class BoxCodeGenerator
                 Kind = BoxBlockKind.ReadMpu6050,
                 Category = BoxBlockCategory.Sensors,
                 Title = "Read MPU-6050 IMU",
+                ModelName = "MPU-6050",
                 Icon = "🔄",
                 AccentHexColor = "#3949AB",
                 BackgroundHexColor = "#1A237E",
@@ -1025,6 +1161,7 @@ public static class BoxCodeGenerator
                 Kind = BoxBlockKind.ReadGasSensor,
                 Category = BoxBlockCategory.Sensors,
                 Title = "Read MQ-2 Gas/Smoke",
+                ModelName = "MQ-2",
                 Icon = "💨",
                 AccentHexColor = "#FB8C00",
                 BackgroundHexColor = "#E65100",
@@ -1041,6 +1178,7 @@ public static class BoxCodeGenerator
                 Kind = BoxBlockKind.ReadPotentiometer,
                 Category = BoxBlockCategory.Sensors,
                 Title = "Read Potentiometer Dial",
+                ModelName = "POT-10K",
                 Icon = "🎛️",
                 AccentHexColor = "#00897B",
                 BackgroundHexColor = "#004D40",
@@ -1057,6 +1195,7 @@ public static class BoxCodeGenerator
                 Kind = BoxBlockKind.ReadButton,
                 Category = BoxBlockCategory.Sensors,
                 Title = "Read Push Button",
+                ModelName = "TACT-6MM",
                 Icon = "🔘",
                 AccentHexColor = "#5E35B1",
                 BackgroundHexColor = "#311B92",
@@ -1095,6 +1234,7 @@ public static class BoxCodeGenerator
                     Kind = BoxBlockKind.LcdPrintSensor,
                     Category = BoxBlockCategory.Displays,
                     Title = "Display Temp on LCD (Row 0)",
+                    ModelName = "LCD1602 I2C",
                     Icon = "🖥️",
                     AccentHexColor = "#06B6D4",
                     BackgroundHexColor = "#083344",
@@ -1110,6 +1250,7 @@ public static class BoxCodeGenerator
                     Kind = BoxBlockKind.LcdPrintSensor,
                     Category = BoxBlockCategory.Displays,
                     Title = "Display Humidity on LCD (Row 1)",
+                    ModelName = "LCD1602 I2C",
                     Icon = "🖥️",
                     AccentHexColor = "#06B6D4",
                     BackgroundHexColor = "#083344",
@@ -1127,6 +1268,7 @@ public static class BoxCodeGenerator
                     Kind = BoxBlockKind.LcdPrintSensor,
                     Category = BoxBlockCategory.Displays,
                     Title = "Display Distance on LCD (Row 0)",
+                    ModelName = "LCD1602 I2C",
                     Icon = "🖥️",
                     AccentHexColor = "#06B6D4",
                     BackgroundHexColor = "#083344",
@@ -1144,6 +1286,7 @@ public static class BoxCodeGenerator
                     Kind = BoxBlockKind.LcdPrintText,
                     Category = BoxBlockCategory.Displays,
                     Title = "Print Status on LCD",
+                    ModelName = "LCD1602 I2C",
                     Icon = "🖥️",
                     AccentHexColor = "#06B6D4",
                     BackgroundHexColor = "#083344",

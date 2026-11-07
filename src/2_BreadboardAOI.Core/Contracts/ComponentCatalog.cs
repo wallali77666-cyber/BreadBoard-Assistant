@@ -212,6 +212,13 @@ public static class ComponentCatalog
         new("MFRC522 13.56MHZ RFID SPI READER (8-PIN)", "RC522", "Module/RC522", 8)
     ];
 
+    public static readonly IReadOnlyList<PartPreset> StandardDisplays =
+    [
+        new("LCD1602 16x2 CHARACTER LCD I2C MODULE (4-PIN)", "LCD1602-I2C", "Display/LCD1602_I2C", 4),
+        new("0.96\" I2C 128x64 OLED DISPLAY MODULE (4-PIN)", "SSD1306-OLED", "Display_Graphic/SSD1306_I2C", 4),
+        new("LCD2004 20x4 CHARACTER LCD I2C MODULE (4-PIN)", "LCD2004-I2C", "Display/LCD2004_I2C", 4)
+    ];
+
     public static readonly IReadOnlyList<PartPreset> StandardBatteries =
     [
         new("9V ALKALINE BATTERY (6F22)", "9V", "Device/Battery", 2),

@@ -453,7 +453,7 @@
                                              ItemsSource="{Binding BuildPartOptions}"
                                              SelectedItem="{Binding SelectedPartOption, Mode=TwoWay}"
                                              Focusable="False"
-                                             MaxHeight="168">
+                                             MaxHeight="260">
                                         <ListBox.ItemTemplate>
                                             <DataTemplate>
                                                 <StackPanel>
@@ -721,6 +721,18 @@
                                                   ItemsSource="{Binding PartValuePresets}"
                                                   SelectedItem="{Binding SelectedPartValuePreset, Mode=TwoWay}"
                                                   DisplayMemberPath="Label" />
+                                    </StackPanel>
+                                    <!-- ========================================== -->
+                                    <!-- CONTEXTUAL PANEL 12b: LCD / DISPLAY        -->
+                                    <!-- ========================================== -->
+                                    <StackPanel Visibility="{Binding IsDisplaySelected, Converter={StaticResource BoolToVis}}" Margin="0,6,0,0">
+                                        <TextBlock Text="DISPLAY MODULE MODEL" Style="{StaticResource StatusTextStyle}" Margin="0,4,0,3" />
+                                        <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                                  ItemsSource="{Binding PartValuePresets}"
+                                                  SelectedItem="{Binding SelectedPartValuePreset, Mode=TwoWay}"
+                                                  DisplayMemberPath="Label" />
+                                        <TextBlock Text="* 4-Pin I2C Header: Pin 1=GND, Pin 2=VCC (+5V), Pin 3=SDA, Pin 4=SCL. Default Address 0x27."
+                                                   Style="{StaticResource MonoSecondaryTextStyle}" FontSize="8.5" Margin="0,3,0,0" Foreground="{StaticResource AccentCyanBrush}" TextWrapping="Wrap" />
                                     </StackPanel>
                                     <!-- ========================================== -->
                                     <!-- CONTEXTUAL PANEL 13: BATTERY               -->

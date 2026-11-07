@@ -8,8 +8,8 @@
         xmlns:drc="clr-namespace:BreadboardAOI.Core.DrcEngine;assembly=BreadboardAOI.Core"
         mc:Ignorable="d"
         Title="Breadboard AOI — Scratch-Style Box Coding Studio"
-        Height="820" Width="1400"
-        MinHeight="600" MinWidth="1020"
+        Height="840" Width="1420"
+        MinHeight="620" MinWidth="1020"
         WindowStartupLocation="CenterOwner"
         Background="#121318" Foreground="#F0F0F5">
 
@@ -153,11 +153,11 @@
         <Grid Grid.Row="1" Margin="10">
             <Grid.ColumnDefinitions>
                 <!-- Left: Palette Library -->
-                <ColumnDefinition Width="320" MinWidth="260" MaxWidth="400" />
+                <ColumnDefinition Width="330" MinWidth="270" MaxWidth="420" />
                 <!-- GridSplitter 1 -->
                 <ColumnDefinition Width="6" />
-                <!-- Center: Active Script Stack -->
-                <ColumnDefinition Width="480" MinWidth="370" />
+                <!-- Center: Active Script Stack & LCD Preview -->
+                <ColumnDefinition Width="520" MinWidth="380" />
                 <!-- GridSplitter 2 -->
                 <ColumnDefinition Width="6" />
                 <!-- Right: Generated Code Panel -->
@@ -194,8 +194,9 @@
                                         Style="{StaticResource BoxStudioButtonStyle}" Padding="6,2" FontSize="10" Margin="0,0,4,4" Background="#1E293B" Foreground="#94A3B8" />
                                 <Button Content="EVENTS" Command="{Binding SelectCategoryFilterCommand}" CommandParameter="Events"
                                         Style="{StaticResource BoxStudioButtonStyle}" Padding="6,2" FontSize="10" Margin="0,0,4,4" Background="#3E2723" Foreground="#F59E0B" />
-                                <Button Content="SENSORS" Command="{Binding SelectCategoryFilterCommand}" CommandParameter="Sensors"
-                                        Style="{StaticResource BoxStudioButtonStyle}" Padding="6,2" FontSize="10" Margin="0,0,4,4" Background="#0C4A6E" Foreground="#38BDF8" />
+                                <Button Content="SENSORS &amp; LCDs" Command="{Binding SelectCategoryFilterCommand}" CommandParameter="Sensors"
+                                        Style="{StaticResource BoxStudioButtonStyle}" Padding="6,2" FontSize="10" Margin="0,0,4,4" Background="#0C4A6E" Foreground="#38BDF8"
+                                        ToolTip="Sensors and LCD 1602 I2C Display Modules" />
                                 <Button Content="DISPLAYS" Command="{Binding SelectCategoryFilterCommand}" CommandParameter="Displays"
                                         Style="{StaticResource BoxStudioButtonStyle}" Padding="6,2" FontSize="10" Margin="0,0,4,4" Background="#083344" Foreground="#06B6D4" />
                                 <Button Content="ACTUATORS" Command="{Binding SelectCategoryFilterCommand}" CommandParameter="Actuators"
@@ -225,8 +226,24 @@
                                                 <StackPanel Orientation="Horizontal">
                                                     <TextBlock Text="{Binding Icon}" FontSize="14" Margin="0,0,6,0" VerticalAlignment="Center" />
                                                     <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="12" Foreground="#FFFFFF" VerticalAlignment="Center" />
+                                                    <!-- Model Badge -->
+                                                    <Border CornerRadius="3" Padding="4,1" Margin="6,0,0,0" Background="#0E7490" BorderBrush="#22D3EE" BorderThickness="1">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding ModelName}" Value="">
+                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding ModelName}" Value="{x:Null}">
+                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
+                                                        <TextBlock Text="{Binding ModelName}" FontSize="8" FontWeight="Bold" Foreground="#67E8F9" />
+                                                    </Border>
                                                     <!-- Circuit Matched Glow Tag -->
-                                                    <Border Background="#065F46" BorderBrush="#34D399" BorderThickness="1" CornerRadius="3" Margin="8,0,0,0" Padding="4,1"
+                                                    <Border Background="#065F46" BorderBrush="#34D399" BorderThickness="1" CornerRadius="3" Margin="6,0,0,0" Padding="4,1"
                                                             Visibility="{Binding IsCircuitMatched, Converter={StaticResource BoolToVis}}">
                                                         <TextBlock Text="CIRCUIT" FontSize="8" FontWeight="Bold" Foreground="#A7F3D0" />
                                                     </Border>
@@ -253,12 +270,13 @@
             <!-- SPLITTER 1 -->
             <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="Transparent" />
 
-            <!-- CENTER: ACTIVE SCRATCH SCRIPT STACK -->
+            <!-- CENTER: ACTIVE SCRATCH SCRIPT STACK & HARDWARE SIMULATION -->
             <Border Grid.Column="2" Background="#161822" BorderBrush="#2D303E" BorderThickness="1" CornerRadius="6">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
                     <Border Grid.Row="0" Background="#1C1F2E" Padding="12,8" CornerRadius="6,6,0,0">
@@ -268,20 +286,21 @@
                         </Grid>
                     </Border>
 
+                    <!-- Scrollable Blocks Stack -->
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="10">
                         <ItemsControl ItemsSource="{Binding Blocks}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <!-- JIGSAW SCRATCH CARD -->
-                                    <Border Margin="0,0,0,8" Background="#1E2232" BorderBrush="{Binding AccentHexColor}"
-                                            BorderThickness="4,1,1,1" CornerRadius="6" Padding="10,8">
+                                    <!-- JIGSAW SCRATCH CARD WITH VISUAL INDENTATION -->
+                                    <Border Background="#1E2232" BorderBrush="{Binding AccentHexColor}"
+                                            BorderThickness="5,1,1,1" CornerRadius="6" Padding="10,8" Margin="0,0,0,8">
                                         <Grid>
                                             <Grid.RowDefinitions>
                                                 <RowDefinition Height="Auto" />
                                                 <RowDefinition Height="Auto" />
                                             </Grid.RowDefinitions>
 
-                                            <!-- Card Header: Icon, Title, Up/Down/Delete Controls -->
+                                            <!-- Card Header: Icon, Title, Model, Reorder & Indent Controls -->
                                             <Grid Grid.Row="0">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*" />
@@ -291,12 +310,28 @@
                                                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                                                     <CheckBox IsChecked="{Binding IsEnabled, Mode=TwoWay}"
                                                               VerticalAlignment="Center" Margin="0,0,8,0"
-                                                              ToolTip="Enable or disable block" />
+                                                              ToolTip="Enable or disable block in compilation" />
                                                     <TextBlock Text="{Binding Icon}" FontSize="14" Margin="0,0,6,0" VerticalAlignment="Center" />
                                                     <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="12" Foreground="#FFFFFF" VerticalAlignment="Center" />
+                                                    <!-- Model Badge -->
+                                                    <Border CornerRadius="3" Padding="4,1" Margin="6,0,0,0" Background="#0E7490" BorderBrush="#22D3EE" BorderThickness="1">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding ModelName}" Value="">
+                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding ModelName}" Value="{x:Null}">
+                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
+                                                        <TextBlock Text="{Binding ModelName}" FontSize="8" FontWeight="Bold" Foreground="#67E8F9" />
+                                                    </Border>
                                                 </StackPanel>
 
-                                                <!-- Reorder / Delete Controls -->
+                                                <!-- Reorder / Indent / Delete Controls -->
                                                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                                                     <Button Content="▲" ToolTip="Move block up in execution sequence"
                                                             Command="{Binding DataContext.MoveBlockUpCommand, RelativeSource={RelativeSource AncestorType=Window}}"
@@ -305,6 +340,16 @@
                                                             Background="#2D303E" Foreground="#94A3B8" BorderThickness="0" />
                                                     <Button Content="▼" ToolTip="Move block down in execution sequence"
                                                             Command="{Binding DataContext.MoveBlockDownCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding}"
+                                                            Width="22" Height="22" Padding="0" Margin="2,0"
+                                                            Background="#2D303E" Foreground="#94A3B8" BorderThickness="0" />
+                                                    <Button Content="⇤" ToolTip="Outdent block (decrease indentation level)"
+                                                            Command="{Binding DataContext.OutdentBlockCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding}"
+                                                            Width="22" Height="22" Padding="0" Margin="2,0"
+                                                            Background="#2D303E" Foreground="#94A3B8" BorderThickness="0" />
+                                                    <Button Content="⇥" ToolTip="Indent block (increase indentation level)"
+                                                            Command="{Binding DataContext.IndentBlockCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                             CommandParameter="{Binding}"
                                                             Width="22" Height="22" Padding="0" Margin="2,0"
                                                             Background="#2D303E" Foreground="#94A3B8" BorderThickness="0" />
@@ -317,9 +362,9 @@
                                             </Grid>
 
                                             <!-- Inline Parameter Editors -->
-                                            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="24,8,0,0">
+                                            <WrapPanel Grid.Row="1" Margin="24,8,0,0" Orientation="Horizontal">
                                                 <!-- Primary Pin Input (Smart Suggestions ComboBox) -->
-                                                <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,10,4">
                                                     <TextBlock Text="PIN:" FontSize="10" Foreground="#94A3B8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0" />
                                                     <ComboBox ItemsSource="{Binding DataContext.BoardSuggestedDigitalPins, RelativeSource={RelativeSource AncestorType=Window}}"
                                                               Text="{Binding Pin1, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -328,7 +373,7 @@
                                                 </StackPanel>
 
                                                 <!-- Secondary Pin Input (if ultrasonic) -->
-                                                <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,10,4">
                                                     <TextBlock Text="ECHO:" FontSize="10" Foreground="#94A3B8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0" />
                                                     <ComboBox ItemsSource="{Binding DataContext.BoardSuggestedDigitalPins, RelativeSource={RelativeSource AncestorType=Window}}"
                                                               Text="{Binding Pin2, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -337,14 +382,14 @@
                                                 </StackPanel>
 
                                                 <!-- Param1 (State / Angle / Duration / Text) -->
-                                                <StackPanel Orientation="Horizontal" Margin="0,0,10,0">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,10,4">
                                                     <TextBlock Text="PARAM:" FontSize="10" Foreground="#94A3B8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0" />
                                                     <TextBox Text="{Binding Parameter1, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                              Width="80" Background="#12131A" Foreground="#FBBF24" BorderBrush="#334155" Padding="4,2" FontSize="11" />
                                                 </StackPanel>
 
                                                 <!-- LCD Row & Col (for Displays) -->
-                                                <StackPanel Orientation="Horizontal" Margin="0,0,10,0">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,10,4">
                                                     <TextBlock Text="ROW:" FontSize="10" Foreground="#06B6D4" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,3,0" />
                                                     <TextBox Text="{Binding LcdRow, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                              Width="24" Background="#12131A" Foreground="#67E8F9" BorderBrush="#334155" Padding="2,2" FontSize="11" HorizontalContentAlignment="Center" />
@@ -354,25 +399,173 @@
                                                 </StackPanel>
 
                                                 <!-- Variable Name (for Logic / Conditions) -->
-                                                <StackPanel Orientation="Horizontal" Margin="0,0,10,0">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,10,4">
                                                     <TextBlock Text="VAR:" FontSize="10" Foreground="#A78BFA" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,3,0" />
                                                     <TextBox Text="{Binding VariableName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                             Width="68" Background="#12131A" Foreground="#C4B5FD" BorderBrush="#334155" Padding="3,2" FontSize="11" />
+                                                             Width="72" Background="#12131A" Foreground="#C4B5FD" BorderBrush="#334155" Padding="3,2" FontSize="11" />
+                                                </StackPanel>
+
+                                                <!-- Condition Operator & Threshold -->
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,10,4">
+                                                    <TextBlock Text="OP:" FontSize="10" Foreground="#A78BFA" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,3,0" />
+                                                    <TextBox Text="{Binding ConditionOperator, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                             Width="32" Background="#12131A" Foreground="#E9D5FF" BorderBrush="#334155" Padding="3,2" FontSize="11" HorizontalContentAlignment="Center" />
+                                                    <TextBlock Text="TH:" FontSize="10" Foreground="#A78BFA" FontWeight="Bold" VerticalAlignment="Center" Margin="4,0,3,0" />
+                                                    <TextBox Text="{Binding ConditionThreshold, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                             Width="44" Background="#12131A" Foreground="#E9D5FF" BorderBrush="#334155" Padding="3,2" FontSize="11" HorizontalContentAlignment="Center" />
+                                                </StackPanel>
+
+                                                <!-- Secondary Condition (for Compound Logic) -->
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,10,4">
+                                                    <TextBlock Text="SEC VAR:" FontSize="10" Foreground="#C084FC" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,3,0" />
+                                                    <TextBox Text="{Binding SecondaryVariableName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                             Width="68" Background="#12131A" Foreground="#E9D5FF" BorderBrush="#334155" Padding="3,2" FontSize="11" />
+                                                    <TextBlock Text="OP:" FontSize="10" Foreground="#C084FC" FontWeight="Bold" VerticalAlignment="Center" Margin="4,0,3,0" />
+                                                    <TextBox Text="{Binding SecondaryConditionOperator, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                             Width="30" Background="#12131A" Foreground="#E9D5FF" BorderBrush="#334155" Padding="3,2" FontSize="11" HorizontalContentAlignment="Center" />
+                                                    <TextBlock Text="TH:" FontSize="10" Foreground="#C084FC" FontWeight="Bold" VerticalAlignment="Center" Margin="4,0,3,0" />
+                                                    <TextBox Text="{Binding SecondaryConditionThreshold, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                             Width="40" Background="#12131A" Foreground="#E9D5FF" BorderBrush="#334155" Padding="3,2" FontSize="11" HorizontalContentAlignment="Center" />
+                                                </StackPanel>
+
+                                                <!-- Math Calculation Fields -->
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,10,4">
+                                                    <TextBlock Text="TARGET:" FontSize="10" Foreground="#34D399" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,3,0" />
+                                                    <TextBox Text="{Binding MathTargetVariable, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                             Width="60" Background="#12131A" Foreground="#A7F3D0" BorderBrush="#334155" Padding="3,2" FontSize="11" />
+                                                    <TextBlock Text="=" FontSize="11" Foreground="#94A3B8" FontWeight="Bold" VerticalAlignment="Center" Margin="4,0,4,0" />
+                                                    <TextBox Text="{Binding Operand1, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                             Width="56" Background="#12131A" Foreground="#A7F3D0" BorderBrush="#334155" Padding="3,2" FontSize="11" />
+                                                    <TextBox Text="{Binding MathOperator, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                             Width="26" Background="#12131A" Foreground="#F59E0B" BorderBrush="#334155" Padding="3,2" FontSize="11" HorizontalContentAlignment="Center" Margin="4,0,4,0" />
+                                                    <TextBox Text="{Binding Operand2, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                             Width="44" Background="#12131A" Foreground="#A7F3D0" BorderBrush="#334155" Padding="3,2" FontSize="11" />
+                                                </StackPanel>
+
+                                                <!-- Repeat Count (for Repeat Loop) -->
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,10,4">
+                                                    <TextBlock Text="REPEAT:" FontSize="10" Foreground="#818CF8" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,3,0" />
+                                                    <TextBox Text="{Binding RepeatCount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                             Width="36" Background="#12131A" Foreground="#C7D2FE" BorderBrush="#334155" Padding="3,2" FontSize="11" HorizontalContentAlignment="Center" />
+                                                    <TextBlock Text="TIMES" FontSize="10" Foreground="#818CF8" FontWeight="Bold" VerticalAlignment="Center" Margin="3,0,0,0" />
                                                 </StackPanel>
 
                                                 <!-- Custom Message / Format -->
-                                                <StackPanel Orientation="Horizontal" Margin="0,0,10,0">
-                                                    <TextBlock Text="MSG:" FontSize="10" Foreground="#34D399" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,3,0" />
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,10,4">
+                                                    <TextBlock Text="MSG / FORMAT:" FontSize="10" Foreground="#34D399" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,3,0" />
                                                     <TextBox Text="{Binding CustomMessage, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                             Width="96" Background="#12131A" Foreground="#6EE7B7" BorderBrush="#334155" Padding="3,2" FontSize="11" />
+                                                             Width="120" Background="#12131A" Foreground="#6EE7B7" BorderBrush="#334155" Padding="3,2" FontSize="11"
+                                                             ToolTip="Text string or format template (e.g. Temp: \&quot;temp\&quot;C or Temp: {temp}C)" />
                                                 </StackPanel>
-                                            </StackPanel>
+                                            </WrapPanel>
                                         </Grid>
                                     </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </ScrollViewer>
+
+                    <!-- LCD 1602 LIVE HARDWARE SIMULATION PREVIEW -->
+                    <Border Grid.Row="2" Background="#0C0E14" BorderBrush="#1E293B" BorderThickness="0,1,0,0" Padding="12,8">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="🖥️" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                    <TextBlock Text="LCD1602 I2C HARDWARE SIMULATION" FontWeight="Bold" FontSize="11" Foreground="#38BDF8" VerticalAlignment="Center" />
+                                    <Border CornerRadius="3" Padding="4,1" Margin="8,0,0,0">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="#065F46" />
+                                                <Setter Property="BorderBrush" Value="#10B981" />
+                                                <Setter Property="BorderThickness" Value="1" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsLcdStimulated}" Value="False">
+                                                        <Setter Property="Background" Value="#374151" />
+                                                        <Setter Property="BorderBrush" Value="#6B7280" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock FontSize="8" FontWeight="Bold">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="STIMULATED (ON)" />
+                                                    <Setter Property="Foreground" Value="#6EE7B7" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsLcdStimulated}" Value="False">
+                                                            <Setter Property="Text" Value="TURNED OFF (UNPOWERED)" />
+                                                            <Setter Property="Foreground" Value="#9CA3AF" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Border>
+                                </StackPanel>
+                                <Button DockPanel.Dock="Right"
+                                        Content="TOGGLE ON/OFF"
+                                        Command="{Binding ToggleLcdStimulationCommand}"
+                                        Style="{StaticResource BoxStudioButtonStyle}"
+                                        FontSize="9" Padding="6,2" Height="20"
+                                        ToolTip="Test how LCD appears turned off vs stimulated with live coded telemetry" />
+                            </DockPanel>
+
+                            <!-- Physical 16x2 Bezel Display -->
+                            <Border Grid.Row="1" CornerRadius="4" Padding="10,6" BorderThickness="2">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <!-- Stimulated blue backlit matrix -->
+                                        <Setter Property="Background" Value="#0B408C" />
+                                        <Setter Property="BorderBrush" Value="#0369A1" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLcdStimulated}" Value="False">
+                                                <!-- Turned off dark liquid crystal -->
+                                                <Setter Property="Background" Value="#0D1117" />
+                                                <Setter Property="BorderBrush" Value="#1F2937" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding LcdSimulatedRow0}"
+                                               FontFamily="Consolas, Cascadia Mono, Courier New"
+                                               FontWeight="Bold" FontSize="13" Margin="2,1">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="#FFFFFF" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsLcdStimulated}" Value="False">
+                                                        <Setter Property="Foreground" Value="#334155" />
+                                                        <Setter Property="Text" Value="----------------" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding LcdSimulatedRow1}"
+                                               FontFamily="Consolas, Cascadia Mono, Courier New"
+                                               FontWeight="Bold" FontSize="13" Margin="2,1">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="#FFFFFF" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsLcdStimulated}" Value="False">
+                                                        <Setter Property="Foreground" Value="#334155" />
+                                                        <Setter Property="Text" Value="----------------" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </Border>
                 </Grid>
             </Border>
 

@@ -50,12 +50,20 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
     private string _selectedCategoryFilter = "ALL";
 
     [ObservableProperty]
+    private bool _isLcdStimulated;
+
+    [ObservableProperty]
+    private string _lcdModelLabel = "LCD1602 I2C (PCF8574 Backpack)";
+
+    [ObservableProperty]
     private string _lcdSimulatedRow0 = "Breadboard AOI";
 
     [ObservableProperty]
     private string _lcdSimulatedRow1 = "LCD 1602 Active";
 
     public event Action<string, string>? LcdSimulatedTextUpdated;
+
+    public event Action<bool, string, string>? LcdSimulatedStateUpdated;
 
     public ObservableCollection<BoxBlockItem> Blocks { get; } = new();
 
@@ -187,6 +195,7 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             Kind = BoxBlockKind.ReadUltrasonic,
             Category = BoxBlockCategory.Sensors,
             Title = "Read HC-SR04 Ultrasonic",
+            ModelName = "HC-SR04",
             Icon = "📡",
             AccentHexColor = "#0288D1",
             BackgroundHexColor = "#0D47A1",
@@ -200,6 +209,7 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             Kind = BoxBlockKind.ReadDhtSensor,
             Category = BoxBlockCategory.Sensors,
             Title = "Read DHT11/22 Sensor",
+            ModelName = "DHT11",
             Icon = "🌡️",
             AccentHexColor = "#00ACC1",
             BackgroundHexColor = "#006064",
@@ -212,6 +222,7 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             Kind = BoxBlockKind.ReadMpu6050,
             Category = BoxBlockCategory.Sensors,
             Title = "Read MPU-6050 IMU",
+            ModelName = "MPU-6050",
             Icon = "🔄",
             AccentHexColor = "#3949AB",
             BackgroundHexColor = "#1A237E",
@@ -223,6 +234,7 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             Kind = BoxBlockKind.ReadGasSensor,
             Category = BoxBlockCategory.Sensors,
             Title = "Read MQ-2 Gas/Smoke",
+            ModelName = "MQ-2",
             Icon = "💨",
             AccentHexColor = "#FB8C00",
             BackgroundHexColor = "#E65100",
@@ -235,6 +247,7 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             Kind = BoxBlockKind.ReadLdrLight,
             Category = BoxBlockCategory.Sensors,
             Title = "Read LDR Light Sensor",
+            ModelName = "GL5528 LDR",
             Icon = "☀️",
             AccentHexColor = "#FBC02D",
             BackgroundHexColor = "#F57F17",
@@ -246,6 +259,7 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             Kind = BoxBlockKind.ReadPotentiometer,
             Category = BoxBlockCategory.Sensors,
             Title = "Read Potentiometer Dial",
+            ModelName = "B10K POT",
             Icon = "🎛️",
             AccentHexColor = "#00897B",
             BackgroundHexColor = "#004D40",
@@ -258,6 +272,7 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             Kind = BoxBlockKind.ReadPirMotion,
             Category = BoxBlockCategory.Sensors,
             Title = "Read PIR Motion",
+            ModelName = "HC-SR501",
             Icon = "👁️",
             AccentHexColor = "#7CB342",
             BackgroundHexColor = "#33691E",
@@ -269,6 +284,7 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             Kind = BoxBlockKind.ReadButton,
             Category = BoxBlockCategory.Sensors,
             Title = "Read Push Button",
+            ModelName = "TACT-6MM",
             Icon = "🔘",
             AccentHexColor = "#5E35B1",
             BackgroundHexColor = "#311B92",
@@ -281,6 +297,7 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             Kind = BoxBlockKind.ReadAnalogTemperature,
             Category = BoxBlockCategory.Sensors,
             Title = "Read TMP36/LM35 Temp",
+            ModelName = "TMP36 / LM35",
             Icon = "🌡️",
             AccentHexColor = "#0288D1",
             BackgroundHexColor = "#01579B",
@@ -357,6 +374,7 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             Kind = BoxBlockKind.DisplayOledI2c,
             Category = BoxBlockCategory.Displays,
             Title = "Display Text on OLED",
+            ModelName = "SSD1306 OLED",
             Icon = "🖥️",
             AccentHexColor = "#00BCD4",
             BackgroundHexColor = "#006064",
@@ -368,18 +386,20 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             Kind = BoxBlockKind.LcdInitI2c,
             Category = BoxBlockCategory.Displays,
             Title = "Init LCD 1602 I2C (0x27)",
+            ModelName = "LCD1602 I2C",
             Icon = "🖥️",
             AccentHexColor = "#06B6D4",
             BackgroundHexColor = "#083344",
             LcdI2cAddress = "0x27",
             IsCircuitMatched = circuitHasLcd,
-            Description = "Initializes 16x2 HD44780 Character LCD via PCF8574 I2C Backpack."
+            Description = "Initializes 16x2 HD44780 Character LCD via PCF8574 I2C Backpack (Addr: 0x27 / 0x3F)."
         });
         PaletteBlocks.Add(new BoxBlockItem
         {
             Kind = BoxBlockKind.LcdPrintText,
             Category = BoxBlockCategory.Displays,
             Title = "Print Text to LCD 1602",
+            ModelName = "LCD1602 I2C",
             Icon = "📝",
             AccentHexColor = "#06B6D4",
             BackgroundHexColor = "#083344",
@@ -387,38 +407,41 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             LcdCol = 0,
             Parameter1 = "Hello World!",
             IsCircuitMatched = circuitHasLcd,
-            Description = "Prints custom alphanumeric text string to 16x2 LCD at row/col."
+            Description = "Prints alphanumeric text string to 16x2 LCD at row (0/1) and col (0..15)."
         });
         PaletteBlocks.Add(new BoxBlockItem
         {
             Kind = BoxBlockKind.LcdPrintSensor,
             Category = BoxBlockCategory.Displays,
             Title = "Display Sensor on LCD",
+            ModelName = "LCD1602 I2C",
             Icon = "📟",
             AccentHexColor = "#06B6D4",
             BackgroundHexColor = "#083344",
             LcdRow = 0,
             LcdCol = 0,
-            CustomMessage = "Temp: {temp}C",
+            CustomMessage = "Temp: \"temp\"C",
             IsCircuitMatched = circuitHasLcd,
-            Description = "Formats and writes live sensor telemetry (Temp, Hum, Dist) to LCD screen."
+            Description = "Formats and writes live sensor telemetry (Temp: \"temp\"C, Hum: {hum}%, Dist: {dist}cm) to LCD screen."
         });
         PaletteBlocks.Add(new BoxBlockItem
         {
             Kind = BoxBlockKind.LcdClear,
             Category = BoxBlockCategory.Displays,
             Title = "Clear LCD Screen",
+            ModelName = "LCD1602 I2C",
             Icon = "🧹",
             AccentHexColor = "#06B6D4",
             BackgroundHexColor = "#083344",
             IsCircuitMatched = circuitHasLcd,
-            Description = "Clears all characters and returns cursor to (0,0)."
+            Description = "Clears all characters on 16x2 screen and returns cursor to (0,0)."
         });
         PaletteBlocks.Add(new BoxBlockItem
         {
             Kind = BoxBlockKind.LcdBacklight,
             Category = BoxBlockCategory.Displays,
             Title = "Set LCD Backlight",
+            ModelName = "LCD1602 I2C",
             Icon = "💡",
             AccentHexColor = "#06B6D4",
             BackgroundHexColor = "#083344",
@@ -427,7 +450,7 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             Description = "Turns the blue LED backlight ON or OFF."
         });
 
-        // 4. Logic & Variables
+        // 4. Logic & Comparisons
         PaletteBlocks.Add(new BoxBlockItem
         {
             Kind = BoxBlockKind.CompareCondition,
@@ -443,6 +466,65 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
         });
         PaletteBlocks.Add(new BoxBlockItem
         {
+            Kind = BoxBlockKind.IfElseCondition,
+            Category = BoxBlockCategory.Logic,
+            Title = "If-Else Branch Condition",
+            Icon = "🔀",
+            AccentHexColor = "#8B5CF6",
+            BackgroundHexColor = "#3B0764",
+            ConditionOperator = ">",
+            ConditionThreshold = 30.0,
+            VariableName = "currentTemperature",
+            Description = "Executes True branch if condition holds, otherwise executes Else branch."
+        });
+        PaletteBlocks.Add(new BoxBlockItem
+        {
+            Kind = BoxBlockKind.LogicalAnd,
+            Category = BoxBlockCategory.Logic,
+            Title = "Logical AND (&&)",
+            Icon = "🔗",
+            AccentHexColor = "#8B5CF6",
+            BackgroundHexColor = "#3B0764",
+            VariableName = "currentTemperature",
+            ConditionOperator = ">",
+            ConditionThreshold = 25.0,
+            SecondaryVariableName = "currentHumidity",
+            SecondaryConditionOperator = "<",
+            SecondaryConditionThreshold = 70.0,
+            Description = "Evaluates whether two conditions are BOTH satisfied simultaneously."
+        });
+        PaletteBlocks.Add(new BoxBlockItem
+        {
+            Kind = BoxBlockKind.LogicalOr,
+            Category = BoxBlockCategory.Logic,
+            Title = "Logical OR (||)",
+            Icon = "🔀",
+            AccentHexColor = "#8B5CF6",
+            BackgroundHexColor = "#3B0764",
+            VariableName = "currentTemperature",
+            ConditionOperator = ">",
+            ConditionThreshold = 35.0,
+            SecondaryVariableName = "gasLevelAnalog",
+            SecondaryConditionOperator = ">",
+            SecondaryConditionThreshold = 300.0,
+            Description = "Evaluates whether EITHER condition is satisfied."
+        });
+        PaletteBlocks.Add(new BoxBlockItem
+        {
+            Kind = BoxBlockKind.MathOperation,
+            Category = BoxBlockCategory.Logic,
+            Title = "Math Calculation (+ - * /)",
+            Icon = "➗",
+            AccentHexColor = "#10B981",
+            BackgroundHexColor = "#064E3B",
+            MathTargetVariable = "calcResult",
+            Operand1 = "currentTemperature",
+            MathOperator = "*",
+            Operand2 = "1.8",
+            Description = "Computes an arithmetic calculation and stores the result into a variable."
+        });
+        PaletteBlocks.Add(new BoxBlockItem
+        {
             Kind = BoxBlockKind.SetVariable,
             Category = BoxBlockCategory.Logic,
             Title = "Set Variable Value",
@@ -454,18 +536,42 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             Description = "Stores a numeric value or flag into a program variable."
         });
 
-        // 4. Control & Logic
+        // 5. Control Flow
         PaletteBlocks.Add(new BoxBlockItem
         {
             Kind = BoxBlockKind.IfCondition,
             Category = BoxBlockCategory.Control,
             Title = "If Proximity Condition",
             Icon = "🔀",
-            AccentHexColor = "#8E24AA",
-            BackgroundHexColor = "#4A148C",
+            AccentHexColor = "#6366F1",
+            BackgroundHexColor = "#312E81",
             ConditionOperator = "<",
             ConditionThreshold = 20.0,
             Description = "Branches logic if condition evaluates to true."
+        });
+        PaletteBlocks.Add(new BoxBlockItem
+        {
+            Kind = BoxBlockKind.RepeatTimes,
+            Category = BoxBlockCategory.Control,
+            Title = "Repeat N Times Loop",
+            Icon = "🔁",
+            AccentHexColor = "#6366F1",
+            BackgroundHexColor = "#312E81",
+            RepeatCount = 5,
+            Description = "Executes a nested block sequence a set number of times."
+        });
+        PaletteBlocks.Add(new BoxBlockItem
+        {
+            Kind = BoxBlockKind.WhileLoop,
+            Category = BoxBlockCategory.Control,
+            Title = "While Loop Condition",
+            Icon = "🔄",
+            AccentHexColor = "#6366F1",
+            BackgroundHexColor = "#312E81",
+            VariableName = "buttonPressed",
+            ConditionOperator = "==",
+            ConditionThreshold = 1.0,
+            Description = "Repeats loop body while condition remains true."
         });
         PaletteBlocks.Add(new BoxBlockItem
         {
@@ -479,7 +585,7 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             Description = "Pauses loop execution for specified milliseconds."
         });
 
-        // 5. Output
+        // 6. Output
         PaletteBlocks.Add(new BoxBlockItem
         {
             Kind = BoxBlockKind.SerialPrint,
@@ -512,7 +618,20 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
 
         if (!string.Equals(SelectedCategoryFilter, "ALL", StringComparison.OrdinalIgnoreCase))
         {
-            if (Enum.TryParse<BoxBlockCategory>(SelectedCategoryFilter, true, out var cat))
+            if (string.Equals(SelectedCategoryFilter, "Sensors", StringComparison.OrdinalIgnoreCase))
+            {
+                // Under Sensors category: include sensors and LCD modules with their models
+                query = query.Where(b => b.Category == BoxBlockCategory.Sensors ||
+                                         b.Category == BoxBlockCategory.Displays ||
+                                         b.ModelName.Contains("LCD", StringComparison.OrdinalIgnoreCase));
+            }
+            else if (string.Equals(SelectedCategoryFilter, "Displays", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(SelectedCategoryFilter, "LCD", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(SelectedCategoryFilter, "LCDs", StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(b => b.Category == BoxBlockCategory.Displays || b.ModelName.Contains("LCD", StringComparison.OrdinalIgnoreCase));
+            }
+            else if (Enum.TryParse<BoxBlockCategory>(SelectedCategoryFilter, true, out var cat))
             {
                 query = query.Where(b => b.Category == cat);
             }
@@ -547,6 +666,15 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
         bool hasDht = Blocks.Any(b => b.IsEnabled && b.Kind == BoxBlockKind.ReadDhtSensor);
         bool hasUltra = Blocks.Any(b => b.IsEnabled && b.Kind == BoxBlockKind.ReadUltrasonic);
 
+        bool hasLcdCoded = Blocks.Any(b => b.IsEnabled && (
+            b.Kind == BoxBlockKind.LcdInitI2c ||
+            b.Kind == BoxBlockKind.LcdPrintText ||
+            b.Kind == BoxBlockKind.LcdPrintSensor ||
+            b.Kind == BoxBlockKind.LcdClear ||
+            b.Kind == BoxBlockKind.LcdBacklight));
+
+        IsLcdStimulated = hasLcdCoded;
+
         string row0 = "Breadboard AOI";
         string row1 = "System Online";
 
@@ -570,19 +698,21 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
                     }
                     else
                     {
-                        // Clean user-coded templating: handles "{temp}", "temp", "{hum}", "hum", "{dist}", "dist"
+                        // Clean user-coded templating: handles "{temp}", "\"temp\"", "<temp>", "{hum}", "\"hum\"", "{dist}", "\"dist\""
                         string formatted = rawMsg;
                         formatted = formatted.Replace("{temp}", "24.5", StringComparison.OrdinalIgnoreCase);
                         formatted = formatted.Replace("\"temp\"", "24.5", StringComparison.OrdinalIgnoreCase);
-                        formatted = formatted.Replace("temp", "24.5", StringComparison.OrdinalIgnoreCase);
+                        formatted = formatted.Replace("<temp>", "24.5", StringComparison.OrdinalIgnoreCase);
 
                         formatted = formatted.Replace("{hum}", "52", StringComparison.OrdinalIgnoreCase);
                         formatted = formatted.Replace("\"hum\"", "52", StringComparison.OrdinalIgnoreCase);
+                        formatted = formatted.Replace("<hum>", "52", StringComparison.OrdinalIgnoreCase);
 
                         formatted = formatted.Replace("{dist}", "18.5", StringComparison.OrdinalIgnoreCase);
                         formatted = formatted.Replace("\"dist\"", "18.5", StringComparison.OrdinalIgnoreCase);
+                        formatted = formatted.Replace("<dist>", "18.5", StringComparison.OrdinalIgnoreCase);
 
-                        // Clean any residual quotation marks around placeholders
+                        // Clean any residual double quotes around substituted numbers
                         formatted = formatted.Replace("\"24.5\"", "24.5").Replace("\"52\"", "52").Replace("\"18.5\"", "18.5");
                         text = formatted.Trim();
                     }
@@ -608,6 +738,35 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
         LcdSimulatedRow0 = row0;
         LcdSimulatedRow1 = row1;
         LcdSimulatedTextUpdated?.Invoke(row0, row1);
+        LcdSimulatedStateUpdated?.Invoke(IsLcdStimulated, row0, row1);
+    }
+
+    [RelayCommand]
+    public void ToggleLcdStimulation()
+    {
+        IsLcdStimulated = !IsLcdStimulated;
+        LcdSimulatedStateUpdated?.Invoke(IsLcdStimulated, LcdSimulatedRow0, LcdSimulatedRow1);
+        StatusMessage = $"LCD 1602 Simulation {(IsLcdStimulated ? "STIMULATED (Backlight ON)" : "TURNED OFF (Screen Dark)")}";
+    }
+
+    [RelayCommand]
+    public void IndentBlock(BoxBlockItem? block)
+    {
+        if (block != null)
+        {
+            block.IndentationLevel = Math.Min(block.IndentationLevel + 1, 6);
+            RegenerateCode();
+        }
+    }
+
+    [RelayCommand]
+    public void OutdentBlock(BoxBlockItem? block)
+    {
+        if (block != null)
+        {
+            block.IndentationLevel = Math.Max(block.IndentationLevel - 1, 0);
+            RegenerateCode();
+        }
     }
 
     [RelayCommand]

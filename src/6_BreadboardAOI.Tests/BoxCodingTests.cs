@@ -251,4 +251,139 @@ public sealed class BoxCodingTests
         settings.LcdSimulatedRow0.Should().NotBeNullOrWhiteSpace();
         settings.LcdSimulatedRow1.Should().NotBeNullOrWhiteSpace();
     }
+
+    [Fact]
+    public void BoxCoding_IfElseCondition_Generates_Valid_Code()
+    {
+        var blocks = new List<BoxBlockItem>
+        {
+            new() { Kind = BoxBlockKind.WhenStarted },
+            new()
+            {
+                Kind = BoxBlockKind.IfElseCondition,
+                VariableName = "currentTemperature",
+                ConditionOperator = ">",
+                ConditionThreshold = 30.0
+            }
+        };
+
+        string cpp = BoxCodeGenerator.GenerateCode(blocks, MicrocontrollerBoardType.ArduinoUnoR3R4, TargetProgrammingLanguage.ArduinoCpp);
+        cpp.Should().Contain("if (currentTemperature > 30.0)");
+        cpp.Should().Contain("else {");
+
+        string py = BoxCodeGenerator.GenerateCode(blocks, MicrocontrollerBoardType.Esp32DevKitV1, TargetProgrammingLanguage.MicroPython);
+        py.Should().Contain("if currentTemperature > 30.0:");
+        py.Should().Contain("else:");
+    }
+
+    [Fact]
+    public void BoxCoding_LogicalAnd_And_LogicalOr_Generate_Valid_Code()
+    {
+        var blocks = new List<BoxBlockItem>
+        {
+            new() { Kind = BoxBlockKind.WhenStarted },
+            new()
+            {
+                Kind = BoxBlockKind.LogicalAnd,
+                VariableName = "currentTemperature",
+                ConditionOperator = ">",
+                ConditionThreshold = 25.0,
+                SecondaryVariableName = "currentHumidity",
+                SecondaryConditionOperator = "<",
+                SecondaryConditionThreshold = 70.0
+            },
+            new()
+            {
+                Kind = BoxBlockKind.LogicalOr,
+                VariableName = "currentTemperature",
+                ConditionOperator = ">",
+                ConditionThreshold = 40.0,
+                SecondaryVariableName = "gasLevelAnalog",
+                SecondaryConditionOperator = ">",
+                SecondaryConditionThreshold = 400.0
+            }
+        };
+
+        string cpp = BoxCodeGenerator.GenerateCode(blocks, MicrocontrollerBoardType.ArduinoUnoR3R4, TargetProgrammingLanguage.ArduinoCpp);
+        cpp.Should().Contain("(currentTemperature > 25.0) && (currentHumidity < 70.0)");
+        cpp.Should().Contain("(currentTemperature > 40.0) || (gasLevelAnalog > 400.0)");
+
+        string py = BoxCodeGenerator.GenerateCode(blocks, MicrocontrollerBoardType.Esp32DevKitV1, TargetProgrammingLanguage.MicroPython);
+        py.Should().Contain("(currentTemperature > 25.0) and (currentHumidity < 70.0)");
+        py.Should().Contain("(currentTemperature > 40.0) or (gasLevelAnalog > 400.0)");
+    }
+
+    [Fact]
+    public void BoxCoding_MathOperation_And_RepeatTimes_Generate_Valid_Code()
+    {
+        var blocks = new List<BoxBlockItem>
+        {
+            new() { Kind = BoxBlockKind.WhenStarted },
+            new()
+            {
+                Kind = BoxBlockKind.MathOperation,
+                MathTargetVariable = "calcResult",
+                Operand1 = "currentTemperature",
+                MathOperator = "*",
+                Operand2 = "1.8"
+            },
+            new()
+            {
+                Kind = BoxBlockKind.RepeatTimes,
+                RepeatCount = 7
+            }
+        };
+
+        string cpp = BoxCodeGenerator.GenerateCode(blocks, MicrocontrollerBoardType.ArduinoUnoR3R4, TargetProgrammingLanguage.ArduinoCpp);
+        cpp.Should().Contain("float calcResult = currentTemperature * 1.8;");
+        cpp.Should().Contain("for (int loopIndex = 0; loopIndex < 7; loopIndex++)");
+
+        string py = BoxCodeGenerator.GenerateCode(blocks, MicrocontrollerBoardType.Esp32DevKitV1, TargetProgrammingLanguage.MicroPython);
+        py.Should().Contain("calcResult = currentTemperature * 1.8");
+        py.Should().Contain("for loop_idx in range(7):");
+    }
+
+    [Fact]
+    public void BoxCoding_Lcd1602_Has_ModelName_And_AutoDetect_Matches_Sensors()
+    {
+        var parts = new List<DraftPart>
+        {
+            new(1, ComponentKind.Sensor, new[] { "A1", "A2", "A3", "A4" }, "LCD1602-I2C"),
+            new(2, ComponentKind.Sensor, new[] { "B1", "B2", "B3", "B4" }, "DHT11-TEMP-HUMIDITY")
+        };
+
+        var detected = BoxCodeGenerator.AutoDetectFromCircuit(parts, MicrocontrollerBoardType.ArduinoUnoR3R4);
+
+        detected.Should().Contain(b => b.Kind == BoxBlockKind.LcdInitI2c && b.ModelName == "LCD1602 I2C");
+        detected.Should().Contain(b => b.Kind == BoxBlockKind.LcdPrintSensor && b.ModelName == "LCD1602 I2C");
+        detected.Should().Contain(b => b.Kind == BoxBlockKind.ReadDhtSensor && b.ModelName == "DHT11");
+    }
+
+    [Fact]
+    public void BoxCodingStudioViewModel_LcdStimulation_And_Templating_Works()
+    {
+        var vm = new BreadboardAOI.App.ViewModels.BoxCodingStudioViewModel(Array.Empty<DraftPart>());
+
+        // Palette under Sensors includes LCD1602
+        vm.SelectCategoryFilter("Sensors");
+        vm.DisplayPaletteBlocks.Should().Contain(b => b.ModelName == "LCD1602 I2C");
+
+        // When script has no LCD blocks, IsLcdStimulated is false
+        vm.Blocks.Clear();
+        vm.RegenerateCode();
+        vm.IsLcdStimulated.Should().BeFalse();
+
+        // When LCD print sensor block is added with Temp: "temp"C, it stimulates and formats
+        vm.Blocks.Add(new BoxBlockItem
+        {
+            Kind = BoxBlockKind.LcdPrintSensor,
+            ModelName = "LCD1602 I2C",
+            LcdRow = 0,
+            CustomMessage = "Temp: \"temp\"C"
+        });
+        vm.RegenerateCode();
+
+        vm.IsLcdStimulated.Should().BeTrue();
+        vm.LcdSimulatedRow0.Should().Be("Temp: 24.5C");
+    }
 }

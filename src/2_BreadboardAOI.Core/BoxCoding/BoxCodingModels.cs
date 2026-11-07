@@ -60,7 +60,13 @@ public enum BoxBlockKind
     LcdClear,
     LcdBacklight,
     IfCondition,
+    IfElseCondition,
+    LogicalAnd,
+    LogicalOr,
     CompareCondition,
+    MathOperation,
+    RepeatTimes,
+    WhileLoop,
     SetVariable,
     Delay,
     SerialPrint
@@ -71,13 +77,15 @@ public sealed class BoxBlockItem : INotifyPropertyChanged
 {
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    private void SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+    private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {
         if (!EqualityComparer<T>.Default.Equals(field, value))
         {
             field = value;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+            return true;
         }
+        return false;
     }
 
     private string _id = Guid.NewGuid().ToString("N")[..8];
@@ -91,6 +99,10 @@ public sealed class BoxBlockItem : INotifyPropertyChanged
 
     private string _title = string.Empty;
     public string Title { get => _title; set => SetField(ref _title, value); }
+
+    private string _modelName = string.Empty;
+    /// <summary>Hardware model designation (e.g. LCD1602 I2C, DHT11, HC-SR04, PCF8574, MPU-6050).</summary>
+    public string ModelName { get => _modelName; set => SetField(ref _modelName, value); }
 
     private string _icon = "⚡";
     public string Icon { get => _icon; set => SetField(ref _icon, value); }
@@ -122,12 +134,44 @@ public sealed class BoxBlockItem : INotifyPropertyChanged
     public string Parameter2 { get => _parameter2; set => SetField(ref _parameter2, value); }
 
     private string _conditionOperator = ">";
-    /// <summary>Comparison operator for logic blocks (&lt;, &gt;, ==, !=).</summary>
+    /// <summary>Comparison operator for logic blocks (&lt;, &gt;, ==, !=, &gt;=, &lt;=).</summary>
     public string ConditionOperator { get => _conditionOperator; set => SetField(ref _conditionOperator, value); }
 
     private double _conditionThreshold = 50.0;
     /// <summary>Threshold value for conditional triggers.</summary>
     public double ConditionThreshold { get => _conditionThreshold; set => SetField(ref _conditionThreshold, value); }
+
+    private string _secondaryVariableName = string.Empty;
+    /// <summary>Second variable name used for compound logic comparisons (AND / OR).</summary>
+    public string SecondaryVariableName { get => _secondaryVariableName; set => SetField(ref _secondaryVariableName, value); }
+
+    private string _secondaryConditionOperator = "<";
+    /// <summary>Comparison operator for secondary condition.</summary>
+    public string SecondaryConditionOperator { get => _secondaryConditionOperator; set => SetField(ref _secondaryConditionOperator, value); }
+
+    private double _secondaryConditionThreshold = 80.0;
+    /// <summary>Threshold value for secondary condition.</summary>
+    public double SecondaryConditionThreshold { get => _secondaryConditionThreshold; set => SetField(ref _secondaryConditionThreshold, value); }
+
+    private string _mathTargetVariable = "calcResult";
+    /// <summary>Destination variable name for math operations.</summary>
+    public string MathTargetVariable { get => _mathTargetVariable; set => SetField(ref _mathTargetVariable, value); }
+
+    private string _mathOperator = "+";
+    /// <summary>Mathematical operator (+, -, *, /, %).</summary>
+    public string MathOperator { get => _mathOperator; set => SetField(ref _mathOperator, value); }
+
+    private string _operand1 = "currentTemperature";
+    /// <summary>First operand for math operations.</summary>
+    public string Operand1 { get => _operand1; set => SetField(ref _operand1, value); }
+
+    private string _operand2 = "1.0";
+    /// <summary>Second operand for math operations.</summary>
+    public string Operand2 { get => _operand2; set => SetField(ref _operand2, value); }
+
+    private int _repeatCount = 5;
+    /// <summary>Number of loop repetitions for RepeatTimes block.</summary>
+    public int RepeatCount { get => _repeatCount; set => SetField(ref _repeatCount, value); }
 
     private string _customMessage = string.Empty;
     /// <summary>Custom telemetry or serial monitor message.</summary>
@@ -155,7 +199,20 @@ public sealed class BoxBlockItem : INotifyPropertyChanged
 
     private int _indentationLevel = 0;
     /// <summary>Visual indentation level for Scratch-style container blocks.</summary>
-    public int IndentationLevel { get => _indentationLevel; set => SetField(ref _indentationLevel, value); }
+    public int IndentationLevel
+    {
+        get => _indentationLevel;
+        set
+        {
+            if (SetField(ref _indentationLevel, Math.Clamp(value, 0, 6)))
+            {
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IndentationLeft)));
+            }
+        }
+    }
+
+    /// <summary>Visual horizontal indent offset (pixels) for visual hierarchy.</summary>
+    public double IndentationLeft => IndentationLevel * 18.0;
 
     private bool _isEnabled = true;
     /// <summary>Whether this block is included in code generation.</summary>
@@ -169,6 +226,7 @@ public sealed class BoxBlockItem : INotifyPropertyChanged
             Kind = Kind,
             Category = Category,
             Title = Title,
+            ModelName = ModelName,
             Icon = Icon,
             AccentHexColor = AccentHexColor,
             BackgroundHexColor = BackgroundHexColor,
@@ -179,6 +237,14 @@ public sealed class BoxBlockItem : INotifyPropertyChanged
             Parameter2 = Parameter2,
             ConditionOperator = ConditionOperator,
             ConditionThreshold = ConditionThreshold,
+            SecondaryVariableName = SecondaryVariableName,
+            SecondaryConditionOperator = SecondaryConditionOperator,
+            SecondaryConditionThreshold = SecondaryConditionThreshold,
+            MathTargetVariable = MathTargetVariable,
+            MathOperator = MathOperator,
+            Operand1 = Operand1,
+            Operand2 = Operand2,
+            RepeatCount = RepeatCount,
             CustomMessage = CustomMessage,
             Description = Description,
             LcdRow = LcdRow,

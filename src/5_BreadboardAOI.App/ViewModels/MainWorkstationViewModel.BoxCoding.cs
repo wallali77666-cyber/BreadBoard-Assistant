@@ -21,7 +21,7 @@ public sealed partial class MainWorkstationViewModel
 
     // ---- 16x2 I2C Character LCD CAD AR Simulation --------------------------
     [ObservableProperty]
-    private bool _showLcdSimulation = true;
+    private bool _showLcdSimulation = false;
 
     [ObservableProperty]
     private string _lcdSimulatedRow0 = "Breadboard AOI";
@@ -64,6 +64,16 @@ public sealed partial class MainWorkstationViewModel
 
             if (_boxCodingStudioWindow.DataContext is BoxCodingStudioViewModel boxVm)
             {
+                boxVm.LcdSimulatedStateUpdated += (isStimulated, r0, r1) =>
+                {
+                    ShowLcdSimulation = isStimulated;
+                    _renderer.Layers.ShowLcdSimulation = isStimulated;
+                    LcdSimulatedRow0 = r0;
+                    LcdSimulatedRow1 = r1;
+                    _renderer.Layers.LcdSimulatedRow0 = r0;
+                    _renderer.Layers.LcdSimulatedRow1 = r1;
+                };
+
                 boxVm.LcdSimulatedTextUpdated += (r0, r1) =>
                 {
                     LcdSimulatedRow0 = r0;
@@ -72,6 +82,8 @@ public sealed partial class MainWorkstationViewModel
                     _renderer.Layers.LcdSimulatedRow1 = r1;
                 };
 
+                ShowLcdSimulation = boxVm.IsLcdStimulated;
+                _renderer.Layers.ShowLcdSimulation = boxVm.IsLcdStimulated;
                 if (!string.IsNullOrEmpty(boxVm.LcdSimulatedRow0))
                 {
                     LcdSimulatedRow0 = boxVm.LcdSimulatedRow0;

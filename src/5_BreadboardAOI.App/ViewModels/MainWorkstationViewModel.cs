@@ -277,6 +277,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     private static readonly PartValuePreset[] RegulatorPresets = ConvertPresets(ComponentCatalog.StandardRegulators);
     private static readonly PartValuePreset[] BuzzerPresets = ConvertPresets(ComponentCatalog.StandardBuzzers);
     private static readonly PartValuePreset[] SensorPresets = ConvertPresets(ComponentCatalog.StandardSensors);
+    private static readonly PartValuePreset[] DisplayPresets = ConvertPresets(ComponentCatalog.StandardDisplays);
     private static readonly PartValuePreset[] BatteryPresets = ConvertPresets(ComponentCatalog.StandardBatteries);
 
     private static PartValuePreset[] ConvertPresets(IReadOnlyList<PartPreset> presets)
@@ -361,7 +362,8 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             new BuildPartOption(ComponentKind.IntegratedCircuit, "IC", "NE555P timer / Op-Amp across trench"),
             new BuildPartOption(ComponentKind.Potentiometer, "POTENTIOMETER", "10k trimpot or rotary dial"),
             new BuildPartOption(ComponentKind.VoltageRegulator, "REGULATOR", "L7805 +5V / LD33 +3.3V TO-220"),
-            new BuildPartOption(ComponentKind.Sensor, "SENSOR", "LDR, Thermistor, HC-SR04, DHT11, PIR"),
+            new BuildPartOption(ComponentKind.Sensor, "LCD / DISPLAY", "16x2 Character LCD (I2C) / OLED 128x64 display module"),
+            new BuildPartOption(ComponentKind.Sensor, "SENSOR", "LDR, DHT11, HC-SR04, LCD1602, PIR, MPU6050"),
             new BuildPartOption(ComponentKind.Battery, "BATTERY", "9V / MB102 / 4xAA / CR2032 power source"),
             new BuildPartOption(ComponentKind.Buzzer, "BUZZER", "5V active piezo buzzer"),
             new BuildPartOption(ComponentKind.PushButton, "BUTTON", "6 mm tact switch"),
@@ -372,7 +374,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         {
             new PinCountOption(2, "2-LEAD (R, C, LED, Diode, Sensor)"),
             new PinCountOption(3, "3-PIN ROW (TO-92 / TO-220 / Pot)"),
-            new PinCountOption(4, "4-PIN ROW (HC-SR04 / DHT11 / MQ-2)"),
+            new PinCountOption(4, "4-PIN ROW (HC-SR04 / DHT11 / MQ-2 / LCD1602)"),
             new PinCountOption(8, "DIP-8 (555, op-amp)"),
             new PinCountOption(14, "DIP-14 (74LS00 ...)"),
             new PinCountOption(16, "DIP-16"),
@@ -558,7 +560,8 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     public bool IsPotentiometerSelected => SelectedPartOption?.Kind == ComponentKind.Potentiometer;
     public bool IsRegulatorSelected => SelectedPartOption?.Kind == ComponentKind.VoltageRegulator;
     public bool IsBuzzerSelected => SelectedPartOption?.Kind == ComponentKind.Buzzer;
-    public bool IsSensorSelected => SelectedPartOption?.Kind == ComponentKind.Sensor;
+    public bool IsDisplaySelected => SelectedPartOption?.Label.Contains("LCD", StringComparison.OrdinalIgnoreCase) == true || SelectedPartOption?.Label.Contains("DISPLAY", StringComparison.OrdinalIgnoreCase) == true;
+    public bool IsSensorSelected => SelectedPartOption?.Kind == ComponentKind.Sensor && !IsDisplaySelected;
     public bool IsBatterySelected => SelectedPartOption?.Kind == ComponentKind.Battery;
     public bool IsDevBoardSelected => SelectedPartOption?.Kind == ComponentKind.Microcontroller;
 
@@ -1871,9 +1874,15 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
 
         _renderer.SelectedTrackId = part.TrackId;
 
+        bool isLcdPart = part.Kind == ComponentKind.Sensor && (part.Value?.Contains("LCD", StringComparison.OrdinalIgnoreCase) == true || part.Value?.Contains("1602", StringComparison.OrdinalIgnoreCase) == true);
         foreach (var opt in BuildPartOptions)
         {
-            if (opt.Kind == part.Kind)
+            if (isLcdPart && opt.Label.Contains("LCD", StringComparison.OrdinalIgnoreCase))
+            {
+                SelectedPartOption = opt;
+                break;
+            }
+            if (!isLcdPart && opt.Kind == part.Kind && !opt.Label.Contains("LCD", StringComparison.OrdinalIgnoreCase))
             {
                 SelectedPartOption = opt;
                 break;
@@ -2587,6 +2596,14 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
 
     partial void OnShowAllStripsChanged(bool value) => _renderer.Layers.ShowAllStrips = value;
 
+    private IReadOnlyList<PartValuePreset> PresetsFor(BuildPartOption? option)
+    {
+        if (option is null) return Array.Empty<PartValuePreset>();
+        if (option.Label.Contains("LCD", StringComparison.OrdinalIgnoreCase) || option.Label.Contains("DISPLAY", StringComparison.OrdinalIgnoreCase))
+            return DisplayPresets;
+        return PresetsFor(option.Kind);
+    }
+
     private static IReadOnlyList<PartValuePreset> PresetsFor(ComponentKind kind) => kind switch
     {
         ComponentKind.Resistor => ResistorPresets,
@@ -2604,12 +2621,12 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         _ => Array.Empty<PartValuePreset>()
     };
 
-    private void RefreshPartValuePresets(ComponentKind kind)
+    private void RefreshPartValuePresets(BuildPartOption? option)
     {
         PartValuePresets.Clear();
         SelectedPartValuePreset = null;
 
-        foreach (PartValuePreset preset in PresetsFor(kind))
+        foreach (PartValuePreset preset in PresetsFor(option))
             PartValuePresets.Add(preset);
     }
 
@@ -2704,6 +2721,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         OnPropertyChanged(nameof(IsPotentiometerSelected));
         OnPropertyChanged(nameof(IsRegulatorSelected));
         OnPropertyChanged(nameof(IsBuzzerSelected));
+        OnPropertyChanged(nameof(IsDisplaySelected));
         OnPropertyChanged(nameof(IsSensorSelected));
         OnPropertyChanged(nameof(IsBatterySelected));
         OnPropertyChanged(nameof(IsDevBoardSelected));
@@ -2716,7 +2734,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         if (value is null)
             return;
 
-        RefreshPartValuePresets(value.Kind);
+        RefreshPartValuePresets(value);
 
         _isSyncingPartValue = true;
         try
@@ -2771,8 +2789,16 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
                         NewPartSymbol = "Device/Buzzer";
                         break;
                     case ComponentKind.Sensor:
-                        NewPartValue = "LDR GL5528";
-                        NewPartSymbol = "Sensor_Optical/LDR_GL5528";
+                        if (value.Label.Contains("LCD", StringComparison.OrdinalIgnoreCase) || value.Label.Contains("DISPLAY", StringComparison.OrdinalIgnoreCase))
+                        {
+                            NewPartValue = "LCD1602-I2C";
+                            NewPartSymbol = "Display/LCD1602_I2C";
+                        }
+                        else
+                        {
+                            NewPartValue = "LDR GL5528";
+                            NewPartSymbol = "Sensor_Optical/LDR_GL5528";
+                        }
                         break;
                     case ComponentKind.Battery:
                         NewPartValue = "9V";
@@ -2793,6 +2819,20 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         IReadOnlyList<PinCountOption>? footprints = PinCountOptions;
         if (footprints is not { Count: > 0 })
             return;
+
+        if (value.Label.Contains("LCD", StringComparison.OrdinalIgnoreCase) || value.Label.Contains("DISPLAY", StringComparison.OrdinalIgnoreCase))
+        {
+            for (int i = 0; i < footprints.Count; i++)
+            {
+                if (footprints[i].Count == 4)
+                {
+                    SelectedPinCount = footprints[i];
+                    break;
+                }
+            }
+            BuilderHint = "LCD1602 16x2 Character LCD (I2C) selected: 4-pin footprint (GND, VCC, SDA, SCL). Click tie point on breadboard to place.";
+            return;
+        }
 
         if (value.Kind == ComponentKind.Transistor || value.Kind == ComponentKind.Potentiometer || value.Kind == ComponentKind.VoltageRegulator)
         {
@@ -3455,9 +3495,15 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
 
             if (value is not null)
             {
+                bool isLcdPart = value.Part.Kind == ComponentKind.Sensor && (value.Part.Value?.Contains("LCD", StringComparison.OrdinalIgnoreCase) == true || value.Part.Value?.Contains("1602", StringComparison.OrdinalIgnoreCase) == true);
                 foreach (var opt in BuildPartOptions)
                 {
-                    if (opt.Kind == value.Part.Kind)
+                    if (isLcdPart && opt.Label.Contains("LCD", StringComparison.OrdinalIgnoreCase))
+                    {
+                        SelectedPartOption = opt;
+                        break;
+                    }
+                    if (!isLcdPart && opt.Kind == value.Part.Kind && !opt.Label.Contains("LCD", StringComparison.OrdinalIgnoreCase))
                     {
                         SelectedPartOption = opt;
                         break;
