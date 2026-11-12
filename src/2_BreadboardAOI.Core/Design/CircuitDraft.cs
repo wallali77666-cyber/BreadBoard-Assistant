@@ -180,7 +180,16 @@ public sealed class CircuitDraft
         out DraftPart part,
         out string? error)
     {
-        part = default;
+        return TryAddFootprintCore(kind, pins, value, symbolId, recordUndo: true, out part, out error);
+    }
+
+    private bool TryValidateAndResolvePins(
+        ComponentKind kind,
+        string[]? pins,
+        out string[] resolved,
+        out string? error)
+    {
+        resolved = Array.Empty<string>();
 
         if (kind == ComponentKind.Unknown)
         {
@@ -194,7 +203,7 @@ public sealed class CircuitDraft
             return false;
         }
 
-        var resolved = new string[pins.Length];
+        var candidate = new string[pins.Length];
         for (int i = 0; i < pins.Length; i++)
         {
             if (!_matrix.TryGetHole(pins[i], out HoleCoord hole))
@@ -203,20 +212,39 @@ public sealed class CircuitDraft
                 return false;
             }
 
-            resolved[i] = hole.HoleId;
+            candidate[i] = hole.HoleId;
         }
 
-        for (int i = 0; i < resolved.Length; i++)
+        for (int i = 0; i < candidate.Length; i++)
         {
-            for (int j = i + 1; j < resolved.Length; j++)
+            for (int j = i + 1; j < candidate.Length; j++)
             {
-                if (string.Equals(resolved[i], resolved[j], StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(candidate[i], candidate[j], StringComparison.OrdinalIgnoreCase))
                 {
-                    error = $"Pins {i + 1} and {j + 1} both sit in {resolved[i]}; a part cannot short onto itself.";
+                    error = $"Pins {i + 1} and {j + 1} both sit in {candidate[i]}; a part cannot short onto itself.";
                     return false;
                 }
             }
         }
+
+        resolved = candidate;
+        error = null;
+        return true;
+    }
+
+    private bool TryAddFootprintCore(
+        ComponentKind kind,
+        string[]? pins,
+        string? value,
+        string? symbolId,
+        bool recordUndo,
+        out DraftPart part,
+        out string? error)
+    {
+        part = default;
+
+        if (!TryValidateAndResolvePins(kind, pins, out string[] resolved, out error))
+            return false;
 
         string? normalizedSymbol = string.IsNullOrWhiteSpace(symbolId) ? null : symbolId.Trim();
 
@@ -227,7 +255,9 @@ public sealed class CircuitDraft
             ResolveValue(kind, resolved.Length, value),
             normalizedSymbol);
 
-        RecordSnapshot();
+        if (recordUndo)
+            RecordSnapshot();
+
         _parts.Add(part);
         _dirty = true;
         Revision++;
@@ -236,7 +266,10 @@ public sealed class CircuitDraft
     }
 
     /// <summary>Re-adds a vision detection (used by "load demo into builder").</summary>
-    public bool TryAddDetection(in DetectedComponent detection, out string? error)
+    public bool TryAddDetection(in DetectedComponent detection, out string? error) =>
+        TryAddDetectionCore(detection, recordUndo: true, out error);
+
+    private bool TryAddDetectionCore(in DetectedComponent detection, bool recordUndo, out string? error)
     {
         if (!_matrix.TrySnapToHole(detection.Lead1Px, detection.Lead1Py, out HoleCoord hole1)
             || !_matrix.TrySnapToHole(detection.Lead2Px, detection.Lead2Py, out HoleCoord hole2))
@@ -261,11 +294,12 @@ public sealed class CircuitDraft
             pins[i + 2] = hole.HoleId;
         }
 
-        return TryAddFootprint(
+        return TryAddFootprintCore(
             detection.Kind,
             pins,
             detection.DecodedValueLabel,
             detection.SymbolId,
+            recordUndo,
             out _,
             out error);
     }
@@ -285,11 +319,20 @@ public sealed class CircuitDraft
     {
         skipped = 0;
 
+        bool snapshotRecorded = false;
+        List<DraftPart>? preImportParts = null;
+
         if (replaceExisting && _parts.Count > 0)
         {
+            RecordSnapshot();
+            snapshotRecorded = true;
             _parts.Clear();
             _dirty = true;
             Revision++;
+        }
+        else if (detections.Length > 0)
+        {
+            preImportParts = new List<DraftPart>(_parts);
         }
 
         int added = 0;
@@ -301,7 +344,7 @@ public sealed class CircuitDraft
                 && icPinCount >= 4
                 && detection.ExtraLeads.IsEmpty)
             {
-                if (TryAddImportedIc(detection, icPinCount, icSymbolId))
+                if (TryAddImportedIc(detection, icPinCount, icSymbolId, recordUndo: false))
                 {
                     added++;
                     continue;
@@ -311,16 +354,22 @@ public sealed class CircuitDraft
                 continue;
             }
 
-            if (TryAddDetection(detection, out _))
+            if (TryAddDetectionCore(detection, recordUndo: false, out _))
                 added++;
             else
                 skipped++;
         }
 
+        if (added > 0 && !snapshotRecorded && preImportParts is not null)
+        {
+            _undoStack.Push(preImportParts);
+            _redoStack.Clear();
+        }
+
         return added;
     }
 
-    private bool TryAddImportedIc(in DetectedComponent detection, int pinCount, string? symbolId)
+    private bool TryAddImportedIc(in DetectedComponent detection, int pinCount, string? symbolId, bool recordUndo)
     {
         if (!_matrix.TrySnapToHole(detection.Lead1Px, detection.Lead1Py, out HoleCoord anchor, maxRadius: 24f)
             && !_matrix.TrySnapToHole(detection.Lead2Px, detection.Lead2Py, out anchor, maxRadius: 24f))
@@ -333,7 +382,7 @@ public sealed class CircuitDraft
         if (string.IsNullOrWhiteSpace(value) || string.Equals(value, "DIP", StringComparison.OrdinalIgnoreCase))
             value = $"DIP-{pinCount}";
 
-        return TryAddFootprint(ComponentKind.IntegratedCircuit, pins, value, symbolId, out _, out _);
+        return TryAddFootprintCore(ComponentKind.IntegratedCircuit, pins, value, symbolId, recordUndo, out _, out _);
     }
 
     public bool RemoveAt(int index)
@@ -394,6 +443,7 @@ public sealed class CircuitDraft
             if (string.Equals(part.Value, resolved, StringComparison.Ordinal))
                 return true;
 
+            RecordSnapshot();
             _parts[i] = part with { Value = resolved };
             _dirty = true;
             Revision++;
@@ -417,6 +467,7 @@ public sealed class CircuitDraft
             if (string.Equals(part.SymbolId, normalized, StringComparison.Ordinal))
                 return true;
 
+            RecordSnapshot();
             _parts[i] = part with { SymbolId = normalized };
             _dirty = true;
             Revision++;
@@ -429,23 +480,24 @@ public sealed class CircuitDraft
     /// <summary>Moves a part onto a new set of holes, keeping its value and symbol.</summary>
     public bool TryReplacePins(int trackId, string[]? pins, out string? error)
     {
-        if (pins is null || pins.Length < 2)
-        {
-            error = "A part needs at least two pins.";
-            return false;
-        }
-
         for (int i = 0; i < _parts.Count; i++)
         {
             DraftPart part = _parts[i];
             if (part.TrackId != trackId)
                 continue;
 
-            if (!TryAddFootprint(part.Kind, pins, part.Value, part.SymbolId, out DraftPart replacement, out error))
+            if (!TryValidateAndResolvePins(part.Kind, pins, out string[] resolved, out error))
                 return false;
 
-            // Keep the original track id so selection and the tutor stay stable.
-            _parts[i] = replacement with { TrackId = part.TrackId, Value = part.Value };
+            if (part.Pins.AsSpan().SequenceEqual(resolved))
+            {
+                error = null;
+                return true;
+            }
+
+            RecordSnapshot();
+            // Keep the original track id, value, and symbol without appending a duplicate part.
+            _parts[i] = part with { Pins = resolved };
             _dirty = true;
             Revision++;
             error = null;

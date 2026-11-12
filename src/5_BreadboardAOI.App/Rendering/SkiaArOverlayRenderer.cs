@@ -63,6 +63,12 @@ public sealed class OverlayLayerSettings
 
     /// <summary>Live simulated text for 16x2 LCD Row 1.</summary>
     public string LcdSimulatedRow1 { get; set; } = "LCD 1602 Active";
+
+    /// <summary>Renders thermal / current IR heatmap hotspots over active components.</summary>
+    public bool ShowThermalHeatmap { get; set; }
+
+    /// <summary>Renders the external USB-ISP/UART Hardware Programmer &amp; active USB cable beside the board.</summary>
+    public bool ShowHardwareProgrammer { get; set; } = true;
 }
 
 /// <summary>Result of snapping the mouse cursor through the pin matrix.</summary>
@@ -529,6 +535,11 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
         // Live interactive 2.5D/3D jumper wire dragging (from breadboard hole or MCU pin to cursor)
         DrawActiveWireDrag(canvas, boardRect, _boardPixelWidth / BreadboardWidthMm);
 
+        if (Layers.ShowHardwareProgrammer)
+            DrawHardwareProgrammerAndUsbCable(canvas, boardRect, _activeMcuLayouts, _boardPixelWidth / BreadboardWidthMm);
+        else
+            ClearProgrammerHitRects();
+
         // Telemetry/title/legend are screen HUDs, not copper. Repaint them above
         // the jumpers so a wire never obscures a label or a readout.
         canvas.Save();
@@ -620,6 +631,9 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
             DrawTargetRatsnest(canvas, ratsnest);
 
         DrawAvometerProbes(canvas);
+
+        if (Layers.ShowThermalHeatmap && ActiveThermalHotspots.Count > 0)
+            DrawThermalHeatmapOverlay(canvas);
     }
 
     /// <summary>
@@ -1270,10 +1284,10 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
     /// </summary>
     private (float ExtraWidth, float ExtraHeight) ComputeDockReserve(float scale)
     {
-        if (ActiveMicrocontrollers.Count == 0)
+        const float unitsPerMm = BoardWidth / BreadboardWidthMm;
+        if (ActiveMicrocontrollers.Count == 0 && !Layers.ShowHardwareProgrammer)
             return (0f, 0f);
 
-        const float unitsPerMm = BoardWidth / BreadboardWidthMm;
         float safeScale = MathF.Max(scale, 0.05f);
         float pixelsPerMm = (BoardWidth * safeScale) / BreadboardWidthMm;
         float gapUnits = OffBoardMicrocontrollerRenderer.DockGapMm * unitsPerMm;
@@ -1281,6 +1295,7 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
         float slotGapUnits = 14.0f * unitsPerMm;
         float extraWidth = 0f;
         float extraHeight = 0f;
+        bool hasRightMarginMcu = false;
 
         foreach (OffBoardMicrocontrollerVisualState mcu in ActiveMicrocontrollers)
         {
@@ -1301,6 +1316,7 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
             }
             else
             {
+                hasRightMarginMcu = true;
                 float slotOffset = mcu.DockSlotIndex * (boardHeightUnits + slotGapUnits);
                 extraWidth = MathF.Max(
                     extraWidth,
@@ -1314,6 +1330,14 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
                         + titleUnits
                         - BoardHeight));
             }
+        }
+
+        if (Layers.ShowHardwareProgrammer)
+        {
+            float programmerReserveUnits = (14.0f + 32.0f) * unitsPerMm;
+            extraWidth = hasRightMarginMcu
+                ? extraWidth + programmerReserveUnits
+                : MathF.Max(extraWidth, programmerReserveUnits);
         }
 
         return (extraWidth, extraHeight);
@@ -1786,7 +1810,17 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
             _lcdCellGridPaint,
             _lcdCharTextPaint,
             _lcdPinHeaderPaint,
-            _lcdSilkscreenPaint);
+            _lcdSilkscreenPaint,
+            _partCapCeramicBodyPaint,
+            _partCapCeramicEdgePaint,
+            _jumperRedPaint,
+            _jumperBlackPaint,
+            _jumperBluePaint,
+            _jumperYellowPaint,
+            _jumperGreenPaint,
+            _jumperOrangePaint,
+            _jumperPurplePaint,
+            _jumperWhitePaint);
 
         for (int i = 0; i < _bandPaints.Length; i++)
             _bandPaints[i].Dispose();

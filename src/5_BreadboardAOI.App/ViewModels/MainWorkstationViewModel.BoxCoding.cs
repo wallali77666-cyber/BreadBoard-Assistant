@@ -10,6 +10,7 @@ using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using BreadboardAOI.App.Views;
+using BreadboardAOI.Core.BoxCoding;
 using BreadboardAOI.Core.Design;
 using BreadboardAOI.Core.DrcEngine;
 
@@ -80,6 +81,18 @@ public sealed partial class MainWorkstationViewModel
                     LcdSimulatedRow1 = r1;
                     _renderer.Layers.LcdSimulatedRow0 = r0;
                     _renderer.Layers.LcdSimulatedRow1 = r1;
+                };
+
+                boxVm.SendToProgrammerRequested += (code, language, boardType) =>
+                {
+                    if (boardType != MicrocontrollerBoardType.None && SelectedDevBoardType != boardType)
+                        SelectedDevBoardType = boardType;
+
+                    var mappedLanguage = (BoxCodingLanguage)language;
+                    ActiveFirmwareCode = code;
+                    ActiveFirmwareLanguage = mappedLanguage;
+                    ConnectUsbCable();
+                    OpenProgrammerUploadDialogCore(code, mappedLanguage);
                 };
 
                 ShowLcdSimulation = boxVm.IsLcdStimulated;

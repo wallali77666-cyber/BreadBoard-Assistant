@@ -326,7 +326,7 @@ public sealed class VramBudgetMonitor : IDisposable
 
         try
         {
-            NvmlShutdown();
+            _ = NvmlShutdown();
         }
         catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
         {

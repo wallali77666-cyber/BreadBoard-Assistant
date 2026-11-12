@@ -28,6 +28,7 @@ using BreadboardAOI.App.Orchestration;
 using BreadboardAOI.App.Rendering;
 using BreadboardAOI.App.Views;
 using BreadboardAOI.App.Workspace;
+using BreadboardAOI.Core.BoxCoding;
 using BreadboardAOI.Core.Contracts;
 using BreadboardAOI.Core.Design;
 using BreadboardAOI.Core.DrcEngine;
@@ -404,6 +405,9 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         _renderer.Layers.ShowLcdSimulation = ShowLcdSimulation;
         _renderer.Layers.LcdSimulatedRow0 = LcdSimulatedRow0;
         _renderer.Layers.LcdSimulatedRow1 = LcdSimulatedRow1;
+        _renderer.Layers.ShowHardwareProgrammer = ShowHardwareProgrammer;
+        _renderer.Layers.ShowThermalHeatmap = ShowThermalHeatmap;
+        OnDevBoardTypeChangedForProgrammer(SelectedDevBoardType);
 
         _telemetryTimer = new DispatcherTimer(DispatcherPriority.Background, _dispatcher)
         {
@@ -588,6 +592,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         OnPropertyChanged(nameof(IsEsp32Selected));
         OnPropertyChanged(nameof(IsWemosSelected));
         OnPropertyChanged(nameof(IsStm32Selected));
+        OnDevBoardTypeChangedForProgrammer(value);
     }
 
     public bool IsNoneSelected => SelectedDevBoardType == MicrocontrollerBoardType.None;
@@ -1449,8 +1454,6 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     [RelayCommand] public void PanUp() => PanViewport(0f, 50f);
     [RelayCommand] public void PanDown() => PanViewport(0f, -50f);
     [RelayCommand] public void ResetPan() => ResetZoom();
-    private void SuppressUnusedPan() {
-    }
 
     // ---- X-ray builder interactions ---------------------------------------
 
@@ -1461,7 +1464,16 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     /// </summary>
     public void HandleViewportClick(double viewportX, double viewportY, bool secondary)
     {
-        if (_disposed || !IsBuildMode)
+        if (_disposed)
+            return;
+
+        if (!secondary && _renderer.TryHitTestProgrammerUploadButton((float)viewportX, (float)viewportY))
+        {
+            OpenProgrammerUploadDialog();
+            return;
+        }
+
+        if (!IsBuildMode)
             return;
 
         UpdateHover(viewportX, viewportY);
@@ -2239,6 +2251,9 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
 
         if (IsDevBoardDocked && ActiveDevBoardWires.Count > 0)
             EvaluateDevBoardCircuit();
+
+        if (ShowThermalHeatmap)
+            RefreshThermalHeatmap();
     }
 
     private void ClearPendingBuild()
@@ -2571,7 +2586,6 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             DemoModeEnabled = false;
         if (value.Source == CameraSource.Synthetic && !DemoModeEnabled)
             DemoModeEnabled = true;
-            _pendingImagePath = null;
 
         _coordinator?.SetCameraSource(value.Source);
     }
@@ -3862,6 +3876,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         _telemetryTimer.Stop();
         _remoteTimer.Stop();
         _qwenProbeTimer.Stop();
+        _virtualFirmwareTimer?.Stop();
         _renderer.HoverChanged -= OnRendererHoverChanged;
 
         InspectionPipelineCoordinator? coordinator = _coordinator;
@@ -3892,6 +3907,15 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
 
         _aiVisionWindow?.Close();
         _aiVisionWindow = null;
+
+        _boxCodingStudioWindow?.Close();
+        _boxCodingStudioWindow = null;
+
+        _programmerUploadDialog?.Close();
+        _programmerUploadDialog = null;
+
+        _datasheetFetcher?.Dispose();
+        _datasheetFetcher = null;
 
         _renderer.Dispose();
 

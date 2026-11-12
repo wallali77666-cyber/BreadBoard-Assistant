@@ -6,7 +6,9 @@
 using System;
 using System.Collections.Generic;
 using System.Windows;
+using System.Windows.Input;
 using BreadboardAOI.App.ViewModels;
+using BreadboardAOI.Core.BoxCoding;
 using BreadboardAOI.Core.Design;
 using BreadboardAOI.Core.DrcEngine;
 
@@ -27,5 +29,13 @@ public partial class BoxCodingStudioWindow : Window
         InitializeComponent();
         ViewModel = new BoxCodingStudioViewModel(draftParts, initialBoard);
         DataContext = ViewModel;
+    }
+
+    private void OnBlockCardPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: BoxBlockItem block })
+        {
+            ViewModel.SelectedBlock = block;
+        }
     }
 }

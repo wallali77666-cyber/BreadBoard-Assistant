@@ -34,6 +34,13 @@ public static class BoxCodeGenerator
         };
     }
 
+    /// <summary>Compiles the list of visual blocks into complete source code using canonical language enum.</summary>
+    public static string GenerateCode(
+        IReadOnlyList<BoxBlockItem> blocks,
+        MicrocontrollerBoardType boardType,
+        BoxCodingLanguage language) =>
+        GenerateCode(blocks, boardType, (TargetProgrammingLanguage)language);
+
     /// <summary>Generates complete, production-ready Arduino C++ (.ino) firmware.</summary>
     public static string GenerateArduinoCpp(IReadOnlyList<BoxBlockItem> blocks, MicrocontrollerBoardType boardType)
     {
@@ -86,6 +93,7 @@ public static class BoxCodeGenerator
                     AddPinDef(sb, pinDefs, "PIN_DHT", CleanPin(b.Pin1));
                     break;
                 case BoxBlockKind.ReadUltrasonic:
+                case BoxBlockKind.ReadUltrasonicCm:
                     AddPinDef(sb, pinDefs, "PIN_TRIG", CleanPin(b.Pin1));
                     AddPinDef(sb, pinDefs, "PIN_ECHO", CleanPin(b.Pin2));
                     break;
@@ -117,7 +125,15 @@ public static class BoxCodeGenerator
                     AddPinDef(sb, pinDefs, "PIN_PWM", CleanPin(b.Pin1));
                     break;
                 case BoxBlockKind.SetBuzzer:
+                case BoxBlockKind.PlayToneNote:
                     AddPinDef(sb, pinDefs, "PIN_BUZZER", CleanPin(b.Pin1));
+                    break;
+                case BoxBlockKind.SetRgbLed:
+                case BoxBlockKind.RgbLedColor:
+                    var (rgbRPin, rgbGPin, rgbBPin) = ParseRgbPins(b, boardType);
+                    AddPinDef(sb, pinDefs, "PIN_RGB_R", rgbRPin);
+                    AddPinDef(sb, pinDefs, "PIN_RGB_G", rgbGPin);
+                    AddPinDef(sb, pinDefs, "PIN_RGB_B", rgbBPin);
                     break;
                 case BoxBlockKind.SetServo:
                     AddPinDef(sb, pinDefs, "PIN_SERVO", CleanPin(b.Pin1));
@@ -147,34 +163,98 @@ public static class BoxCodeGenerator
             sb.AppendLine();
 
         sb.AppendLine("// --- Global Variables ---");
+        var declaredVars = new HashSet<string>(StringComparer.Ordinal);
         if (hasDht)
         {
             sb.AppendLine("float currentTemperature = 0.0;");
             sb.AppendLine("float currentHumidity = 0.0;");
+            declaredVars.Add("currentTemperature");
+            declaredVars.Add("currentHumidity");
         }
-        if (blocks.Any(b => b.Kind == BoxBlockKind.ReadUltrasonic))
+        if (blocks.Any(b => b.Kind is BoxBlockKind.ReadUltrasonic or BoxBlockKind.ReadUltrasonicCm))
         {
             sb.AppendLine("long echoDuration = 0;");
             sb.AppendLine("float measuredDistanceCm = 0.0;");
+            declaredVars.Add("echoDuration");
+            declaredVars.Add("measuredDistanceCm");
+        }
+        foreach (var b in blocks.Where(x => x.Kind == BoxBlockKind.ReadUltrasonicCm))
+        {
+            string uVar = GetUltrasonicVarName(b);
+            if (declaredVars.Add(uVar))
+                sb.AppendLine($"float {uVar} = 0.0;");
         }
         if (blocks.Any(b => b.Kind == BoxBlockKind.ReadLdrLight))
+        {
             sb.AppendLine("int ldrLightLevel = 0;");
+            declaredVars.Add("ldrLightLevel");
+        }
         if (blocks.Any(b => b.Kind == BoxBlockKind.ReadPotentiometer))
+        {
             sb.AppendLine("int potAnalogValue = 0;");
+            declaredVars.Add("potAnalogValue");
+        }
         if (blocks.Any(b => b.Kind == BoxBlockKind.ReadPirMotion))
+        {
             sb.AppendLine("bool pirMotionDetected = false;");
+            declaredVars.Add("pirMotionDetected");
+        }
         if (blocks.Any(b => b.Kind == BoxBlockKind.ReadButton))
+        {
             sb.AppendLine("bool buttonPressed = false;");
+            declaredVars.Add("buttonPressed");
+        }
         if (blocks.Any(b => b.Kind == BoxBlockKind.ReadGasSensor))
+        {
             sb.AppendLine("int gasLevelAnalog = 0;");
+            declaredVars.Add("gasLevelAnalog");
+        }
         if (blocks.Any(b => b.Kind == BoxBlockKind.ReadSoundSensor))
+        {
             sb.AppendLine("int soundLevel = 0;");
+            declaredVars.Add("soundLevel");
+        }
         if (blocks.Any(b => b.Kind == BoxBlockKind.ReadAnalogTemperature))
+        {
             sb.AppendLine("float analogTempCelsius = 0.0;");
+            declaredVars.Add("analogTempCelsius");
+        }
         if (hasMpu)
         {
             sb.AppendLine("int16_t mpuAccelX = 0, mpuAccelY = 0, mpuAccelZ = 0;");
             sb.AppendLine("int16_t mpuGyroX = 0, mpuGyroY = 0, mpuGyroZ = 0;");
+        }
+        foreach (var b in blocks)
+        {
+            if (b.Kind == BoxBlockKind.MapRange)
+            {
+                var (mapVar, mapIn, _, _, _, _) = ParseMapRange(b, isPython: false);
+                if (declaredVars.Add(mapVar))
+                    sb.AppendLine($"long {mapVar} = 0;");
+                if (IsSimpleIdentifier(mapIn) && declaredVars.Add(mapIn))
+                    sb.AppendLine($"int {mapIn} = 0;");
+            }
+            else if (b.Kind == BoxBlockKind.SetVariable)
+            {
+                string varName = SanitizeIdentifier(b.VariableName, "systemState");
+                if (declaredVars.Add(varName))
+                    sb.AppendLine($"float {varName} = 0.0;");
+            }
+            else if (b.Kind is BoxBlockKind.IfCondition or BoxBlockKind.IfElseCondition or BoxBlockKind.CompareCondition or BoxBlockKind.WhileLoop)
+            {
+                string condVar = ResolveCppConditionVariable(b, blocks, hasDht);
+                if (declaredVars.Add(condVar))
+                    sb.AppendLine($"float {condVar} = 0.0;");
+            }
+            else if (b.Kind is BoxBlockKind.LogicalAnd or BoxBlockKind.LogicalOr)
+            {
+                string v1 = SanitizeIdentifier(b.VariableName, "currentTemperature");
+                string v2 = SanitizeIdentifier(b.SecondaryVariableName, b.Kind == BoxBlockKind.LogicalAnd ? "currentHumidity" : "gasLevelAnalog");
+                if (declaredVars.Add(v1))
+                    sb.AppendLine($"float {v1} = 0.0;");
+                if (declaredVars.Add(v2))
+                    sb.AppendLine($"float {v2} = 0.0;");
+            }
         }
         sb.AppendLine();
 
@@ -213,365 +293,566 @@ public static class BoxCodeGenerator
             sb.AppendLine("    }");
         }
 
+        var setupPinsDone = new HashSet<string>(StringComparer.Ordinal);
         foreach (var b in blocks)
         {
             switch (b.Kind)
             {
                 case BoxBlockKind.ReadDhtSensor:
-                    sb.AppendLine("    dht.begin();");
+                    if (setupPinsDone.Add("DHT"))
+                        sb.AppendLine("    dht.begin();");
                     break;
                 case BoxBlockKind.ReadUltrasonic:
-                    sb.AppendLine("    pinMode(PIN_TRIG, OUTPUT);");
-                    sb.AppendLine("    pinMode(PIN_ECHO, INPUT);");
-                    sb.AppendLine("    digitalWrite(PIN_TRIG, LOW);");
+                case BoxBlockKind.ReadUltrasonicCm:
+                    if (setupPinsDone.Add("ULTRA"))
+                    {
+                        sb.AppendLine("    pinMode(PIN_TRIG, OUTPUT);");
+                        sb.AppendLine("    pinMode(PIN_ECHO, INPUT);");
+                        sb.AppendLine("    digitalWrite(PIN_TRIG, LOW);");
+                    }
                     break;
                 case BoxBlockKind.ReadPirMotion:
-                    sb.AppendLine("    pinMode(PIN_PIR, INPUT);");
+                    if (setupPinsDone.Add("PIR"))
+                        sb.AppendLine("    pinMode(PIN_PIR, INPUT);");
                     break;
                 case BoxBlockKind.ReadButton:
-                    sb.AppendLine("    pinMode(PIN_BUTTON, INPUT_PULLUP);");
+                    if (setupPinsDone.Add("BUTTON"))
+                        sb.AppendLine("    pinMode(PIN_BUTTON, INPUT_PULLUP);");
                     break;
                 case BoxBlockKind.ReadSoundSensor:
-                    sb.AppendLine("    pinMode(PIN_SOUND, INPUT);");
+                    if (setupPinsDone.Add("SOUND"))
+                        sb.AppendLine("    pinMode(PIN_SOUND, INPUT);");
                     break;
                 case BoxBlockKind.SetLed:
-                    sb.AppendLine("    pinMode(PIN_LED, OUTPUT);");
+                    if (setupPinsDone.Add("LED"))
+                        sb.AppendLine("    pinMode(PIN_LED, OUTPUT);");
                     break;
                 case BoxBlockKind.SetPwm:
-                    sb.AppendLine("    pinMode(PIN_PWM, OUTPUT);");
+                    if (setupPinsDone.Add("PWM"))
+                        sb.AppendLine("    pinMode(PIN_PWM, OUTPUT);");
                     break;
                 case BoxBlockKind.SetBuzzer:
-                    sb.AppendLine("    pinMode(PIN_BUZZER, OUTPUT);");
+                case BoxBlockKind.PlayToneNote:
+                    if (setupPinsDone.Add("BUZZER"))
+                        sb.AppendLine("    pinMode(PIN_BUZZER, OUTPUT);");
+                    break;
+                case BoxBlockKind.SetRgbLed:
+                case BoxBlockKind.RgbLedColor:
+                    if (setupPinsDone.Add("RGB"))
+                    {
+                        sb.AppendLine("    pinMode(PIN_RGB_R, OUTPUT);");
+                        sb.AppendLine("    pinMode(PIN_RGB_G, OUTPUT);");
+                        sb.AppendLine("    pinMode(PIN_RGB_B, OUTPUT);");
+                    }
                     break;
                 case BoxBlockKind.SetServo:
-                    sb.AppendLine("    servoMotor.attach(PIN_SERVO);");
+                    if (setupPinsDone.Add("SERVO"))
+                        sb.AppendLine("    servoMotor.attach(PIN_SERVO);");
                     break;
                 case BoxBlockKind.SetRelay:
-                    sb.AppendLine("    pinMode(PIN_RELAY, OUTPUT);");
+                    if (setupPinsDone.Add("RELAY"))
+                        sb.AppendLine("    pinMode(PIN_RELAY, OUTPUT);");
                     break;
             }
         }
+
+        int foreverIdx = -1;
+        for (int idx = 0; idx < blocks.Count; idx++)
+        {
+            if (blocks[idx].Kind == BoxBlockKind.ForeverLoop)
+            {
+                foreverIdx = idx;
+                break;
+            }
+        }
+
+        var setupScopedSet = new HashSet<BoxBlockItem>();
+        var setupScopedBlocks = new List<BoxBlockItem>();
+        if (foreverIdx > 0)
+        {
+            for (int idx = 0; idx < foreverIdx; idx++)
+            {
+                var blk = blocks[idx];
+                if (blk.Kind != BoxBlockKind.WhenStarted && blk.IndentationLevel > 0)
+                {
+                    setupScopedSet.Add(blk);
+                    setupScopedBlocks.Add(blk);
+                }
+            }
+        }
+
+        if (setupScopedBlocks.Count > 0)
+        {
+            EmitCppBlockSequence(setupScopedBlocks, 0, setupScopedBlocks.Count, 1, sb, blocks, hasDht);
+        }
+
         sb.AppendLine("}");
         sb.AppendLine();
 
         // 5. loop() Function
+        var loopBlocks = blocks
+            .Where(b => b.Kind != BoxBlockKind.WhenStarted && b.Kind != BoxBlockKind.ForeverLoop && !setupScopedSet.Contains(b))
+            .ToList();
+
         sb.AppendLine("void loop() {");
-        foreach (var b in blocks)
-        {
-            if (b.Kind == BoxBlockKind.WhenStarted || b.Kind == BoxBlockKind.ForeverLoop)
-                continue;
-
-            switch (b.Kind)
-            {
-                case BoxBlockKind.ReadDhtSensor:
-                    sb.AppendLine("    // Read DHT Temperature & Humidity");
-                    sb.AppendLine("    currentTemperature = dht.readTemperature();");
-                    sb.AppendLine("    currentHumidity = dht.readHumidity();");
-                    sb.AppendLine("    Serial.print(F(\"[DHT] Temp: \")); Serial.print(currentTemperature); Serial.print(F(\" C, Hum: \")); Serial.print(currentHumidity); Serial.println(F(\" %\"));");
-                    break;
-
-                case BoxBlockKind.ReadUltrasonic:
-                    sb.AppendLine("    // Trigger HC-SR04 Ultrasonic 10us Pulse");
-                    sb.AppendLine("    digitalWrite(PIN_TRIG, LOW);");
-                    sb.AppendLine("    delayMicroseconds(2);");
-                    sb.AppendLine("    digitalWrite(PIN_TRIG, HIGH);");
-                    sb.AppendLine("    delayMicroseconds(10);");
-                    sb.AppendLine("    digitalWrite(PIN_TRIG, LOW);");
-                    sb.AppendLine("    echoDuration = pulseIn(PIN_ECHO, HIGH, 30000); // 30ms timeout");
-                    sb.AppendLine("    measuredDistanceCm = (echoDuration * 0.0343) / 2.0;");
-                    sb.AppendLine("    Serial.print(F(\"[HC-SR04] Distance: \")); Serial.print(measuredDistanceCm); Serial.println(F(\" cm\"));");
-                    break;
-
-                case BoxBlockKind.ReadLdrLight:
-                    sb.AppendLine("    // Read LDR Photoresistor Analog Sensor");
-                    sb.AppendLine("    ldrLightLevel = analogRead(PIN_LDR);");
-                    sb.AppendLine("    Serial.print(F(\"[LDR] Light Level: \")); Serial.println(ldrLightLevel);");
-                    break;
-
-                case BoxBlockKind.ReadPotentiometer:
-                    sb.AppendLine("    // Read Potentiometer Dial");
-                    sb.AppendLine("    potAnalogValue = analogRead(PIN_POT);");
-                    sb.AppendLine("    Serial.print(F(\"[POT] Value: \")); Serial.println(potAnalogValue);");
-                    break;
-
-                case BoxBlockKind.ReadPirMotion:
-                    sb.AppendLine("    // Read PIR Motion Sensor");
-                    sb.AppendLine("    pirMotionDetected = digitalRead(PIN_PIR) == HIGH;");
-                    sb.AppendLine("    Serial.print(F(\"[PIR] Motion: \")); Serial.println(pirMotionDetected ? F(\"DETECTED\") : F(\"CLEAR\"));");
-                    break;
-
-                case BoxBlockKind.ReadButton:
-                    sb.AppendLine("    // Read Push Button (Active LOW with pullup)");
-                    sb.AppendLine("    buttonPressed = digitalRead(PIN_BUTTON) == LOW;");
-                    sb.AppendLine("    Serial.print(F(\"[BUTTON] State: \")); Serial.println(buttonPressed ? F(\"PRESSED\") : F(\"RELEASED\"));");
-                    break;
-
-                case BoxBlockKind.ReadGasSensor:
-                    sb.AppendLine("    // Read MQ-2 Gas & Smoke Analog Sensor");
-                    sb.AppendLine("    gasLevelAnalog = analogRead(PIN_GAS_AO);");
-                    sb.AppendLine("    Serial.print(F(\"[GAS] Level: \")); Serial.println(gasLevelAnalog);");
-                    break;
-
-                case BoxBlockKind.ReadSoundSensor:
-                    sb.AppendLine("    // Read Sound Microphone Sensor");
-                    sb.AppendLine("    soundLevel = digitalRead(PIN_SOUND);");
-                    sb.AppendLine("    Serial.print(F(\"[SOUND] Detected: \")); Serial.println(soundLevel == HIGH ? F(\"YES\") : F(\"NO\"));");
-                    break;
-
-                case BoxBlockKind.ReadAnalogTemperature:
-                    sb.AppendLine("    // Read TMP36 / LM35 Precision Temperature");
-                    sb.AppendLine("    analogTempCelsius = ((analogRead(PIN_TEMP_ANALOG) * 5.0 / 1024.0) - 0.5) * 100.0;");
-                    sb.AppendLine("    Serial.print(F(\"[TEMP] Celsius: \")); Serial.println(analogTempCelsius);");
-                    break;
-
-                case BoxBlockKind.ReadMpu6050:
-                    sb.AppendLine("    // Read MPU-6050 6-Axis Accelerometer & Gyroscope");
-                    sb.AppendLine("    Wire.beginTransmission(0x68);");
-                    sb.AppendLine("    Wire.write(0x3B);");
-                    sb.AppendLine("    Wire.endTransmission(false);");
-                    sb.AppendLine("    Wire.requestFrom(0x68, 14, true);");
-                    sb.AppendLine("    mpuAccelX = Wire.read()<<8 | Wire.read();");
-                    sb.AppendLine("    mpuAccelY = Wire.read()<<8 | Wire.read();");
-                    sb.AppendLine("    mpuAccelZ = Wire.read()<<8 | Wire.read();");
-                    sb.AppendLine("    Serial.print(F(\"[MPU] Accel X:\")); Serial.print(mpuAccelX); Serial.print(F(\" Y:\")); Serial.println(mpuAccelY);");
-                    break;
-
-                case BoxBlockKind.DisplayOledI2c:
-                    string oledText = string.IsNullOrWhiteSpace(b.Parameter1) ? "Telemetry OK" : b.Parameter1;
-                    sb.AppendLine("    // Update SSD1306 OLED Display");
-                    sb.AppendLine("    oledDisplay.clearDisplay();");
-                    sb.AppendLine("    oledDisplay.setCursor(0, 16);");
-                    sb.AppendLine($"    oledDisplay.println(F(\"{oledText}\"));");
-                    sb.AppendLine("    oledDisplay.display();");
-                    break;
-
-                case BoxBlockKind.SetLed:
-                    string ledState = (b.Parameter1 ?? "HIGH").ToUpperInvariant().Contains("LOW") ? "LOW" : "HIGH";
-                    sb.AppendLine($"    // Set LED Output");
-                    sb.AppendLine($"    digitalWrite(PIN_LED, {ledState});");
-                    break;
-
-                case BoxBlockKind.SetPwm:
-                    int pwmVal = int.TryParse(b.Parameter1, out int p) ? Math.Clamp(p, 0, 255) : 128;
-                    sb.AppendLine($"    // Output PWM (0..255)");
-                    sb.AppendLine($"    analogWrite(PIN_PWM, {pwmVal});");
-                    break;
-
-                case BoxBlockKind.SetBuzzer:
-                    int freq = int.TryParse(b.Parameter1, out int f) ? f : 1000;
-                    int dur = int.TryParse(b.Parameter2, out int d) ? d : 250;
-                    sb.AppendLine($"    // Sound Tone on Buzzer");
-                    sb.AppendLine($"    tone(PIN_BUZZER, {freq}, {dur});");
-                    break;
-
-                case BoxBlockKind.SetServo:
-                    int angle = int.TryParse(b.Parameter1, out int a) ? Math.Clamp(a, 0, 180) : 90;
-                    sb.AppendLine($"    // Move Servo Angle (0..180 deg)");
-                    sb.AppendLine($"    servoMotor.write({angle});");
-                    break;
-
-                case BoxBlockKind.SetRelay:
-                    string relayState = (b.Parameter1 ?? "HIGH").ToUpperInvariant().Contains("LOW") ? "LOW" : "HIGH";
-                    sb.AppendLine($"    // Switch Relay Module");
-                    sb.AppendLine($"    digitalWrite(PIN_RELAY, {relayState});");
-                    break;
-
-                case BoxBlockKind.IfCondition:
-                    string op = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
-                    double thresh = b.ConditionThreshold;
-                    sb.AppendLine($"    // Conditional Logic Block");
-                    sb.AppendLine($"    if (measuredDistanceCm {op} {thresh:0.0}) {{");
-                    sb.AppendLine($"        Serial.println(F(\"==> Condition Met: Triggering Actuator!\"));");
-                    sb.AppendLine($"        digitalWrite(PIN_LED, HIGH);");
-                    sb.AppendLine($"    }} else {{");
-                    sb.AppendLine($"        digitalWrite(PIN_LED, LOW);");
-                    sb.AppendLine($"    }}");
-                    break;
-
-                case BoxBlockKind.IfElseCondition:
-                    string ieOp = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
-                    string ieVar = string.IsNullOrWhiteSpace(b.VariableName)
-                        ? (hasDht ? "currentTemperature" : (blocks.Any(x => x.Kind == BoxBlockKind.ReadUltrasonic) ? "measuredDistanceCm" : "sensorVal"))
-                        : b.VariableName;
-                    double ieThresh = b.ConditionThreshold;
-                    sb.AppendLine($"    // If-Else Conditional Branch ({ieVar} {ieOp} {ieThresh:0.0})");
-                    sb.AppendLine($"    if ({ieVar} {ieOp} {ieThresh:0.0}) {{");
-                    sb.AppendLine($"        Serial.print(F(\"==> Condition Met on \")); Serial.println(F(\"{ieVar}\"));");
-                    if (blocks.Any(x => x.Kind == BoxBlockKind.SetLed))
-                        sb.AppendLine("        digitalWrite(PIN_LED, HIGH);");
-                    sb.AppendLine("    } else {");
-                    sb.AppendLine($"        Serial.println(F(\"==> Condition False (Else Branch)\"));");
-                    if (blocks.Any(x => x.Kind == BoxBlockKind.SetLed))
-                        sb.AppendLine("        digitalWrite(PIN_LED, LOW);");
-                    sb.AppendLine("    }");
-                    break;
-
-                case BoxBlockKind.LogicalAnd:
-                    string andVar1 = string.IsNullOrWhiteSpace(b.VariableName) ? "currentTemperature" : b.VariableName;
-                    string andOp1 = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
-                    double andTh1 = b.ConditionThreshold;
-                    string andVar2 = string.IsNullOrWhiteSpace(b.SecondaryVariableName) ? "currentHumidity" : b.SecondaryVariableName;
-                    string andOp2 = string.IsNullOrWhiteSpace(b.SecondaryConditionOperator) ? "<" : b.SecondaryConditionOperator;
-                    double andTh2 = b.SecondaryConditionThreshold;
-                    sb.AppendLine($"    // Compound Logic AND: ({andVar1} {andOp1} {andTh1:0.0}) && ({andVar2} {andOp2} {andTh2:0.0})");
-                    sb.AppendLine($"    if (({andVar1} {andOp1} {andTh1:0.0}) && ({andVar2} {andOp2} {andTh2:0.0})) {{");
-                    sb.AppendLine($"        Serial.println(F(\"==> Logical AND Condition MET\"));");
-                    sb.AppendLine("    }");
-                    break;
-
-                case BoxBlockKind.LogicalOr:
-                    string orVar1 = string.IsNullOrWhiteSpace(b.VariableName) ? "currentTemperature" : b.VariableName;
-                    string orOp1 = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
-                    double orTh1 = b.ConditionThreshold;
-                    string orVar2 = string.IsNullOrWhiteSpace(b.SecondaryVariableName) ? "currentHumidity" : b.SecondaryVariableName;
-                    string orOp2 = string.IsNullOrWhiteSpace(b.SecondaryConditionOperator) ? ">" : b.SecondaryConditionOperator;
-                    double orTh2 = b.SecondaryConditionThreshold;
-                    sb.AppendLine($"    // Compound Logic OR: ({orVar1} {orOp1} {orTh1:0.0}) || ({orVar2} {orOp2} {orTh2:0.0})");
-                    sb.AppendLine($"    if (({orVar1} {orOp1} {orTh1:0.0}) || ({orVar2} {orOp2} {orTh2:0.0})) {{");
-                    sb.AppendLine($"        Serial.println(F(\"==> Logical OR Condition MET\"));");
-                    sb.AppendLine("    }");
-                    break;
-
-                case BoxBlockKind.LcdInitI2c:
-                    string addr = string.IsNullOrWhiteSpace(b.LcdI2cAddress) ? "0x27" : b.LcdI2cAddress;
-                    sb.AppendLine($"    // Initialize LCD 1602 I2C Display (Addr: {addr})");
-                    sb.AppendLine("    lcd.init();");
-                    sb.AppendLine("    lcd.backlight();");
-                    break;
-
-                case BoxBlockKind.LcdPrintText:
-                    int pRow = Math.Clamp(b.LcdRow, 0, 1);
-                    int pCol = Math.Clamp(b.LcdCol, 0, 15);
-                    string textToPrint = string.IsNullOrWhiteSpace(b.Parameter1)
-                        ? (string.IsNullOrWhiteSpace(b.CustomMessage) ? "Hello World!" : b.CustomMessage)
-                        : b.Parameter1;
-                    sb.AppendLine($"    // Print Text to LCD 1602 (Row {pRow}, Col {pCol})");
-                    sb.AppendLine($"    lcd.setCursor({pCol}, {pRow});");
-                    sb.AppendLine($"    lcd.print(F(\"{textToPrint.Replace("\"", "\\\"")}\"));");
-                    break;
-
-                case BoxBlockKind.LcdPrintSensor:
-                    int sRow = Math.Clamp(b.LcdRow, 0, 1);
-                    int sCol = Math.Clamp(b.LcdCol, 0, 15);
-                    string sensorFmt = string.IsNullOrWhiteSpace(b.CustomMessage)
-                        ? (string.IsNullOrWhiteSpace(b.Parameter1) ? "Temp: {temp}C" : b.Parameter1)
-                        : b.CustomMessage;
-                    sb.AppendLine($"    // Print Sensor Reading to LCD 1602 (Row {sRow}, Col {sCol})");
-                    sb.AppendLine($"    lcd.setCursor({sCol}, {sRow});");
-                    if (sensorFmt.Contains("{temp}", StringComparison.OrdinalIgnoreCase) || hasDht)
-                    {
-                        string prefix = sensorFmt.Contains("{temp}", StringComparison.OrdinalIgnoreCase)
-                            ? sensorFmt.Substring(0, sensorFmt.IndexOf("{temp}", StringComparison.OrdinalIgnoreCase))
-                            : "Temp: ";
-                        string suffix = sensorFmt.Contains("{temp}", StringComparison.OrdinalIgnoreCase)
-                            ? sensorFmt.Substring(sensorFmt.IndexOf("{temp}", StringComparison.OrdinalIgnoreCase) + 6)
-                            : "C";
-                        sb.AppendLine($"    lcd.print(F(\"{prefix.Replace("\"", "\\\"")}\"));");
-                        sb.AppendLine("    lcd.print(currentTemperature, 1);");
-                        if (!string.IsNullOrEmpty(suffix))
-                            sb.AppendLine($"    lcd.print(F(\"{suffix.Replace("\"", "\\\"")}\"));");
-                    }
-                    else if (sensorFmt.Contains("{hum}", StringComparison.OrdinalIgnoreCase))
-                    {
-                        string prefix = sensorFmt.Substring(0, sensorFmt.IndexOf("{hum}", StringComparison.OrdinalIgnoreCase));
-                        string suffix = sensorFmt.Substring(sensorFmt.IndexOf("{hum}", StringComparison.OrdinalIgnoreCase) + 5);
-                        sb.AppendLine($"    lcd.print(F(\"{prefix.Replace("\"", "\\\"")}\"));");
-                        sb.AppendLine("    lcd.print(currentHumidity, 1);");
-                        if (!string.IsNullOrEmpty(suffix))
-                            sb.AppendLine($"    lcd.print(F(\"{suffix.Replace("\"", "\\\"")}\"));");
-                    }
-                    else if (blocks.Any(x => x.Kind == BoxBlockKind.ReadUltrasonic))
-                    {
-                        sb.AppendLine("    lcd.print(F(\"Dist: \"));");
-                        sb.AppendLine("    lcd.print(measuredDistanceCm, 1);");
-                        sb.AppendLine("    lcd.print(F(\" cm\"));");
-                    }
-                    else if (blocks.Any(x => x.Kind == BoxBlockKind.ReadPotentiometer))
-                    {
-                        sb.AppendLine("    lcd.print(F(\"Pot: \"));");
-                        sb.AppendLine("    lcd.print(potAnalogValue);");
-                    }
-                    else
-                    {
-                        sb.AppendLine($"    lcd.print(F(\"{sensorFmt.Replace("\"", "\\\"")}\"));");
-                    }
-                    break;
-
-                case BoxBlockKind.LcdClear:
-                    sb.AppendLine("    // Clear 16x2 LCD Display");
-                    sb.AppendLine("    lcd.clear();");
-                    break;
-
-                case BoxBlockKind.LcdBacklight:
-                    bool isBlOn = (b.Parameter1 ?? "ON").ToUpperInvariant().Contains("ON");
-                    sb.AppendLine($"    // LCD Backlight {(isBlOn ? "ON" : "OFF")}");
-                    sb.AppendLine(isBlOn ? "    lcd.backlight();" : "    lcd.noBacklight();");
-                    break;
-
-                case BoxBlockKind.CompareCondition:
-                    string cmpOp = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
-                    string cmpVar = string.IsNullOrWhiteSpace(b.VariableName)
-                        ? (hasDht ? "currentTemperature" : (blocks.Any(x => x.Kind == BoxBlockKind.ReadUltrasonic) ? "measuredDistanceCm" : "sensorVal"))
-                        : b.VariableName;
-                    sb.AppendLine($"    // Compare Condition ({cmpVar} {cmpOp} {b.ConditionThreshold:0.0})");
-                    sb.AppendLine($"    if ({cmpVar} {cmpOp} {b.ConditionThreshold:0.0}) {{");
-                    sb.AppendLine($"        Serial.print(F(\"==> Comparison Threshold Reached on \")); Serial.println(F(\"{cmpVar}\"));");
-                    sb.AppendLine("    }");
-                    break;
-
-                case BoxBlockKind.SetVariable:
-                    string varName = string.IsNullOrWhiteSpace(b.VariableName) ? "systemState" : b.VariableName;
-                    string varVal = string.IsNullOrWhiteSpace(b.Parameter1) ? "1" : b.Parameter1;
-                    sb.AppendLine($"    // Set Variable");
-                    sb.AppendLine($"    {varName} = {varVal};");
-                    break;
-
-                case BoxBlockKind.MathOperation:
-                    string targetVar = string.IsNullOrWhiteSpace(b.MathTargetVariable) ? "calcResult" : b.MathTargetVariable;
-                    string op1 = string.IsNullOrWhiteSpace(b.Operand1) ? "currentTemperature" : b.Operand1;
-                    string mathOp = string.IsNullOrWhiteSpace(b.MathOperator) ? "+" : b.MathOperator;
-                    string op2 = string.IsNullOrWhiteSpace(b.Operand2) ? "1.0" : b.Operand2;
-                    sb.AppendLine($"    // Math Calculation: {targetVar} = {op1} {mathOp} {op2}");
-                    sb.AppendLine($"    float {targetVar} = {op1} {mathOp} {op2};");
-                    sb.AppendLine($"    Serial.print(F(\"[MATH] {targetVar}: \")); Serial.println({targetVar});");
-                    break;
-
-                case BoxBlockKind.RepeatTimes:
-                    int rpt = b.RepeatCount > 0 ? b.RepeatCount : 5;
-                    sb.AppendLine($"    // Repeat Loop ({rpt} iterations)");
-                    sb.AppendLine($"    for (int loopIndex = 0; loopIndex < {rpt}; loopIndex++) {{");
-                    sb.AppendLine($"        Serial.print(F(\"==> Loop Index: \")); Serial.println(loopIndex);");
-                    sb.AppendLine("        delay(50);");
-                    sb.AppendLine("    }");
-                    break;
-
-                case BoxBlockKind.WhileLoop:
-                    string wVar = string.IsNullOrWhiteSpace(b.VariableName) ? "buttonPressed" : b.VariableName;
-                    string wOp = string.IsNullOrWhiteSpace(b.ConditionOperator) ? "==" : b.ConditionOperator;
-                    string wTarget = b.ConditionThreshold.ToString("0.0", CultureInfo.InvariantCulture);
-                    sb.AppendLine($"    // While Loop ({wVar} {wOp} {wTarget})");
-                    sb.AppendLine($"    while ({wVar} {wOp} {wTarget}) {{");
-                    sb.AppendLine("        Serial.println(F(\"==> Inside While Loop...\"));");
-                    sb.AppendLine("        delay(100);");
-                    sb.AppendLine("        break; // Guard against infinite blocking");
-                    sb.AppendLine("    }");
-                    break;
-
-                case BoxBlockKind.Delay:
-                    int delayMs = int.TryParse(b.Parameter1, out int ms) ? Math.Max(10, ms) : 500;
-                    sb.AppendLine($"    // Execution Pause");
-                    sb.AppendLine($"    delay({delayMs});");
-                    break;
-
-                case BoxBlockKind.SerialPrint:
-                    string msg = string.IsNullOrWhiteSpace(b.CustomMessage) ? "Telemetry heartbeat" : b.CustomMessage.Replace("\"", "\\\"");
-                    sb.AppendLine($"    Serial.println(F(\"{msg}\"));");
-                    break;
-            }
-        }
-
+        EmitCppBlockSequence(loopBlocks, 0, loopBlocks.Count, 1, sb, blocks, hasDht);
         sb.AppendLine("}");
         return sb.ToString();
+    }
+
+    private static void EmitCppBlockSequence(
+        IReadOnlyList<BoxBlockItem> scopeBlocks,
+        int startIndex,
+        int endIndex,
+        int codeDepth,
+        StringBuilder sb,
+        IReadOnlyList<BoxBlockItem> allBlocks,
+        bool hasDht)
+    {
+        int i = startIndex;
+        while (i < endIndex)
+        {
+            var b = scopeBlocks[i];
+            if (b.IsContainerBlock)
+            {
+                int parentIndent = b.IndentationLevel;
+                int sliceEnd = i + 1;
+                while (sliceEnd < endIndex && scopeBlocks[sliceEnd].IndentationLevel > parentIndent)
+                {
+                    sliceEnd++;
+                }
+
+                EmitCppContainerBlock(b, scopeBlocks, i + 1, sliceEnd, codeDepth, sb, allBlocks, hasDht);
+                i = sliceEnd;
+            }
+            else
+            {
+                EmitSingleCppBlock(b, codeDepth, sb, allBlocks, hasDht);
+                i++;
+            }
+        }
+    }
+
+    private static void EmitCppContainerBlock(
+        BoxBlockItem b,
+        IReadOnlyList<BoxBlockItem> scopeBlocks,
+        int childStart,
+        int childEnd,
+        int codeDepth,
+        StringBuilder sb,
+        IReadOnlyList<BoxBlockItem> allBlocks,
+        bool hasDht)
+    {
+        string indent = new string(' ', codeDepth * 4);
+        string childIndent = new string(' ', (codeDepth + 1) * 4);
+        bool hasChildren = childEnd > childStart;
+
+        switch (b.Kind)
+        {
+            case BoxBlockKind.IfCondition:
+            {
+                string op = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
+                string condVar = ResolveCppConditionVariable(b, allBlocks, hasDht);
+                string thresh = b.ConditionThreshold.ToString("0.0", CultureInfo.InvariantCulture);
+                sb.AppendLine($"{indent}// Conditional Logic Block");
+                sb.AppendLine($"{indent}if ({condVar} {op} {thresh}) {{");
+                if (hasChildren)
+                    EmitCppBlockSequence(scopeBlocks, childStart, childEnd, codeDepth + 1, sb, allBlocks, hasDht);
+                else
+                    sb.AppendLine($"{childIndent}// Add indented child blocks inside this block");
+                sb.AppendLine($"{indent}}}");
+                break;
+            }
+            case BoxBlockKind.IfElseCondition:
+            {
+                string op = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
+                string condVar = ResolveCppConditionVariable(b, allBlocks, hasDht);
+                string thresh = b.ConditionThreshold.ToString("0.0", CultureInfo.InvariantCulture);
+                sb.AppendLine($"{indent}// If-Else Conditional Branch ({condVar} {op} {thresh})");
+                sb.AppendLine($"{indent}if ({condVar} {op} {thresh}) {{");
+                if (hasChildren)
+                    EmitCppBlockSequence(scopeBlocks, childStart, childEnd, codeDepth + 1, sb, allBlocks, hasDht);
+                else
+                    sb.AppendLine($"{childIndent}// Add indented child blocks inside this block");
+                sb.AppendLine($"{indent}}} else {{");
+                sb.AppendLine($"{childIndent}// Add indented child blocks inside this block");
+                sb.AppendLine($"{indent}}}");
+                break;
+            }
+            case BoxBlockKind.RepeatTimes:
+            {
+                int rpt = b.RepeatCount > 0 ? b.RepeatCount : 5;
+                sb.AppendLine($"{indent}// Repeat Loop ({rpt} iterations)");
+                sb.AppendLine($"{indent}for (int loopIndex = 0; loopIndex < {rpt}; loopIndex++) {{");
+                if (hasChildren)
+                    EmitCppBlockSequence(scopeBlocks, childStart, childEnd, codeDepth + 1, sb, allBlocks, hasDht);
+                else
+                    sb.AppendLine($"{childIndent}// Add indented child blocks inside this block");
+                sb.AppendLine($"{indent}}}");
+                break;
+            }
+            case BoxBlockKind.WhileLoop:
+            {
+                string wVar = ResolveCppConditionVariable(b, allBlocks, hasDht, fallback: "buttonPressed");
+                string wOp = string.IsNullOrWhiteSpace(b.ConditionOperator) ? "==" : b.ConditionOperator;
+                string wTarget = b.ConditionThreshold.ToString("0.0", CultureInfo.InvariantCulture);
+                sb.AppendLine($"{indent}// While Loop ({wVar} {wOp} {wTarget})");
+                sb.AppendLine($"{indent}while ({wVar} {wOp} {wTarget}) {{");
+                if (hasChildren)
+                    EmitCppBlockSequence(scopeBlocks, childStart, childEnd, codeDepth + 1, sb, allBlocks, hasDht);
+                else
+                    sb.AppendLine($"{childIndent}// Add indented child blocks inside this block");
+                sb.AppendLine($"{childIndent}break; // Guard against infinite blocking");
+                sb.AppendLine($"{indent}}}");
+                break;
+            }
+        }
+    }
+
+    private static void EmitSingleCppBlock(
+        BoxBlockItem b,
+        int codeDepth,
+        StringBuilder sb,
+        IReadOnlyList<BoxBlockItem> blocks,
+        bool hasDht)
+    {
+        string indent = new string(' ', codeDepth * 4);
+        string childIndent = new string(' ', (codeDepth + 1) * 4);
+
+        switch (b.Kind)
+        {
+            case BoxBlockKind.ReadDhtSensor:
+                sb.AppendLine($"{indent}// Read DHT Temperature & Humidity");
+                sb.AppendLine($"{indent}currentTemperature = dht.readTemperature();");
+                sb.AppendLine($"{indent}currentHumidity = dht.readHumidity();");
+                sb.AppendLine($"{indent}Serial.print(F(\"[DHT] Temp: \")); Serial.print(currentTemperature); Serial.print(F(\" C, Hum: \")); Serial.print(currentHumidity); Serial.println(F(\" %\"));");
+                break;
+
+            case BoxBlockKind.ReadUltrasonic:
+                sb.AppendLine($"{indent}// Trigger HC-SR04 Ultrasonic 10us Pulse");
+                sb.AppendLine($"{indent}digitalWrite(PIN_TRIG, LOW);");
+                sb.AppendLine($"{indent}delayMicroseconds(2);");
+                sb.AppendLine($"{indent}digitalWrite(PIN_TRIG, HIGH);");
+                sb.AppendLine($"{indent}delayMicroseconds(10);");
+                sb.AppendLine($"{indent}digitalWrite(PIN_TRIG, LOW);");
+                sb.AppendLine($"{indent}echoDuration = pulseIn(PIN_ECHO, HIGH, 30000); // 30ms timeout");
+                sb.AppendLine($"{indent}measuredDistanceCm = (echoDuration * 0.0343) / 2.0;");
+                sb.AppendLine($"{indent}Serial.print(F(\"[HC-SR04] Distance: \")); Serial.print(measuredDistanceCm); Serial.println(F(\" cm\"));");
+                break;
+
+            case BoxBlockKind.ReadUltrasonicCm:
+            {
+                string uVar = GetUltrasonicVarName(b);
+                sb.AppendLine($"{indent}// Trigger HC-SR04 Ultrasonic & Store cm in {uVar}");
+                sb.AppendLine($"{indent}digitalWrite(PIN_TRIG, LOW);");
+                sb.AppendLine($"{indent}delayMicroseconds(2);");
+                sb.AppendLine($"{indent}digitalWrite(PIN_TRIG, HIGH);");
+                sb.AppendLine($"{indent}delayMicroseconds(10);");
+                sb.AppendLine($"{indent}digitalWrite(PIN_TRIG, LOW);");
+                sb.AppendLine($"{indent}echoDuration = pulseIn(PIN_ECHO, HIGH, 30000);");
+                sb.AppendLine($"{indent}{uVar} = (echoDuration * 0.0343) / 2.0;");
+                sb.AppendLine($"{indent}measuredDistanceCm = {uVar};");
+                sb.AppendLine($"{indent}Serial.print(F(\"[HC-SR04] {uVar}: \")); Serial.print({uVar}); Serial.println(F(\" cm\"));");
+                break;
+            }
+
+            case BoxBlockKind.ReadLdrLight:
+                sb.AppendLine($"{indent}// Read LDR Photoresistor Analog Sensor");
+                sb.AppendLine($"{indent}ldrLightLevel = analogRead(PIN_LDR);");
+                sb.AppendLine($"{indent}Serial.print(F(\"[LDR] Light Level: \")); Serial.println(ldrLightLevel);");
+                break;
+
+            case BoxBlockKind.ReadPotentiometer:
+                sb.AppendLine($"{indent}// Read Potentiometer Dial");
+                sb.AppendLine($"{indent}potAnalogValue = analogRead(PIN_POT);");
+                sb.AppendLine($"{indent}Serial.print(F(\"[POT] Value: \")); Serial.println(potAnalogValue);");
+                break;
+
+            case BoxBlockKind.ReadPirMotion:
+                sb.AppendLine($"{indent}// Read PIR Motion Sensor");
+                sb.AppendLine($"{indent}pirMotionDetected = digitalRead(PIN_PIR) == HIGH;");
+                sb.AppendLine($"{indent}Serial.print(F(\"[PIR] Motion: \")); Serial.println(pirMotionDetected ? F(\"DETECTED\") : F(\"CLEAR\"));");
+                break;
+
+            case BoxBlockKind.ReadButton:
+                sb.AppendLine($"{indent}// Read Push Button (Active LOW with pullup)");
+                sb.AppendLine($"{indent}buttonPressed = digitalRead(PIN_BUTTON) == LOW;");
+                sb.AppendLine($"{indent}Serial.print(F(\"[BUTTON] State: \")); Serial.println(buttonPressed ? F(\"PRESSED\") : F(\"RELEASED\"));");
+                break;
+
+            case BoxBlockKind.ReadGasSensor:
+                sb.AppendLine($"{indent}// Read MQ-2 Gas & Smoke Analog Sensor");
+                sb.AppendLine($"{indent}gasLevelAnalog = analogRead(PIN_GAS_AO);");
+                sb.AppendLine($"{indent}Serial.print(F(\"[GAS] Level: \")); Serial.println(gasLevelAnalog);");
+                break;
+
+            case BoxBlockKind.ReadSoundSensor:
+                sb.AppendLine($"{indent}// Read Sound Microphone Sensor");
+                sb.AppendLine($"{indent}soundLevel = digitalRead(PIN_SOUND);");
+                sb.AppendLine($"{indent}Serial.print(F(\"[SOUND] Detected: \")); Serial.println(soundLevel == HIGH ? F(\"YES\") : F(\"NO\"));");
+                break;
+
+            case BoxBlockKind.ReadAnalogTemperature:
+                sb.AppendLine($"{indent}// Read TMP36 / LM35 Precision Temperature");
+                sb.AppendLine($"{indent}analogTempCelsius = ((analogRead(PIN_TEMP_ANALOG) * 5.0 / 1024.0) - 0.5) * 100.0;");
+                sb.AppendLine($"{indent}Serial.print(F(\"[TEMP] Celsius: \")); Serial.println(analogTempCelsius);");
+                break;
+
+            case BoxBlockKind.ReadMpu6050:
+                sb.AppendLine($"{indent}// Read MPU-6050 6-Axis Accelerometer & Gyroscope");
+                sb.AppendLine($"{indent}Wire.beginTransmission(0x68);");
+                sb.AppendLine($"{indent}Wire.write(0x3B);");
+                sb.AppendLine($"{indent}Wire.endTransmission(false);");
+                sb.AppendLine($"{indent}Wire.requestFrom(0x68, 14, true);");
+                sb.AppendLine($"{indent}mpuAccelX = Wire.read()<<8 | Wire.read();");
+                sb.AppendLine($"{indent}mpuAccelY = Wire.read()<<8 | Wire.read();");
+                sb.AppendLine($"{indent}mpuAccelZ = Wire.read()<<8 | Wire.read();");
+                sb.AppendLine($"{indent}Serial.print(F(\"[MPU] Accel X:\")); Serial.print(mpuAccelX); Serial.print(F(\" Y:\")); Serial.println(mpuAccelY);");
+                break;
+
+            case BoxBlockKind.DisplayOledI2c:
+            {
+                string oledText = string.IsNullOrWhiteSpace(b.Parameter1) ? "Telemetry OK" : b.Parameter1;
+                sb.AppendLine($"{indent}// Update SSD1306 OLED Display");
+                sb.AppendLine($"{indent}oledDisplay.clearDisplay();");
+                sb.AppendLine($"{indent}oledDisplay.setCursor(0, 16);");
+                sb.AppendLine($"{indent}oledDisplay.println(F(\"{oledText}\"));");
+                sb.AppendLine($"{indent}oledDisplay.display();");
+                break;
+            }
+
+            case BoxBlockKind.SetLed:
+            {
+                string ledState = (b.Parameter1 ?? "HIGH").ToUpperInvariant().Contains("LOW") ? "LOW" : "HIGH";
+                sb.AppendLine($"{indent}// Set LED Output");
+                sb.AppendLine($"{indent}digitalWrite(PIN_LED, {ledState});");
+                break;
+            }
+
+            case BoxBlockKind.SetRgbLed:
+            case BoxBlockKind.RgbLedColor:
+            {
+                var (r, g, bl) = ParseRgbColors(b);
+                sb.AppendLine($"{indent}// Set RGB LED Color ({r}, {g}, {bl})");
+                sb.AppendLine($"{indent}analogWrite(PIN_RGB_R, {r});");
+                sb.AppendLine($"{indent}analogWrite(PIN_RGB_G, {g});");
+                sb.AppendLine($"{indent}analogWrite(PIN_RGB_B, {bl});");
+                break;
+            }
+
+            case BoxBlockKind.SetPwm:
+            {
+                int pwmVal = int.TryParse(b.Parameter1, out int p) ? Math.Clamp(p, 0, 255) : 128;
+                sb.AppendLine($"{indent}// Output PWM (0..255)");
+                sb.AppendLine($"{indent}analogWrite(PIN_PWM, {pwmVal});");
+                break;
+            }
+
+            case BoxBlockKind.SetBuzzer:
+            {
+                int freq = int.TryParse(b.Parameter1, out int f) ? f : 1000;
+                int dur = int.TryParse(b.Parameter2, out int d) ? d : 250;
+                sb.AppendLine($"{indent}// Sound Tone on Buzzer");
+                sb.AppendLine($"{indent}tone(PIN_BUZZER, {freq}, {dur});");
+                break;
+            }
+
+            case BoxBlockKind.PlayToneNote:
+            {
+                int hz = ParseMusicalNoteHz(b.Parameter1);
+                int dur = int.TryParse(b.Parameter2, out int d) ? Math.Max(20, d) : 200;
+                string noteLabel = string.IsNullOrWhiteSpace(b.Parameter1) ? $"{hz}Hz" : b.Parameter1.Trim();
+                sb.AppendLine($"{indent}// Play Musical Note ({noteLabel} = {hz} Hz)");
+                sb.AppendLine($"{indent}tone(PIN_BUZZER, {hz}, {dur});");
+                break;
+            }
+
+            case BoxBlockKind.SetServo:
+            {
+                int angle = int.TryParse(b.Parameter1, out int a) ? Math.Clamp(a, 0, 180) : 90;
+                sb.AppendLine($"{indent}// Move Servo Angle (0..180 deg)");
+                sb.AppendLine($"{indent}servoMotor.write({angle});");
+                break;
+            }
+
+            case BoxBlockKind.SetRelay:
+            {
+                string relayState = (b.Parameter1 ?? "HIGH").ToUpperInvariant().Contains("LOW") ? "LOW" : "HIGH";
+                sb.AppendLine($"{indent}// Switch Relay Module");
+                sb.AppendLine($"{indent}digitalWrite(PIN_RELAY, {relayState});");
+                break;
+            }
+
+            case BoxBlockKind.LogicalAnd:
+            {
+                string andVar1 = string.IsNullOrWhiteSpace(b.VariableName) ? "currentTemperature" : b.VariableName;
+                string andOp1 = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
+                double andTh1 = b.ConditionThreshold;
+                string andVar2 = string.IsNullOrWhiteSpace(b.SecondaryVariableName) ? "currentHumidity" : b.SecondaryVariableName;
+                string andOp2 = string.IsNullOrWhiteSpace(b.SecondaryConditionOperator) ? "<" : b.SecondaryConditionOperator;
+                double andTh2 = b.SecondaryConditionThreshold;
+                sb.AppendLine($"{indent}// Compound Logic AND: ({andVar1} {andOp1} {andTh1:0.0}) && ({andVar2} {andOp2} {andTh2:0.0})");
+                sb.AppendLine($"{indent}if (({andVar1} {andOp1} {andTh1:0.0}) && ({andVar2} {andOp2} {andTh2:0.0})) {{");
+                sb.AppendLine($"{childIndent}Serial.println(F(\"==> Logical AND Condition MET\"));");
+                sb.AppendLine($"{indent}}}");
+                break;
+            }
+
+            case BoxBlockKind.LogicalOr:
+            {
+                string orVar1 = string.IsNullOrWhiteSpace(b.VariableName) ? "currentTemperature" : b.VariableName;
+                string orOp1 = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
+                double orTh1 = b.ConditionThreshold;
+                string orVar2 = string.IsNullOrWhiteSpace(b.SecondaryVariableName) ? "currentHumidity" : b.SecondaryVariableName;
+                string orOp2 = string.IsNullOrWhiteSpace(b.SecondaryConditionOperator) ? ">" : b.SecondaryConditionOperator;
+                double orTh2 = b.SecondaryConditionThreshold;
+                sb.AppendLine($"{indent}// Compound Logic OR: ({orVar1} {orOp1} {orTh1:0.0}) || ({orVar2} {orOp2} {orTh2:0.0})");
+                sb.AppendLine($"{indent}if (({orVar1} {orOp1} {orTh1:0.0}) || ({orVar2} {orOp2} {orTh2:0.0})) {{");
+                sb.AppendLine($"{childIndent}Serial.println(F(\"==> Logical OR Condition MET\"));");
+                sb.AppendLine($"{indent}}}");
+                break;
+            }
+
+            case BoxBlockKind.LcdInitI2c:
+            {
+                string addr = string.IsNullOrWhiteSpace(b.LcdI2cAddress) ? "0x27" : b.LcdI2cAddress;
+                sb.AppendLine($"{indent}// Initialize LCD 1602 I2C Display (Addr: {addr})");
+                sb.AppendLine($"{indent}lcd.init();");
+                sb.AppendLine($"{indent}lcd.backlight();");
+                break;
+            }
+
+            case BoxBlockKind.LcdPrintText:
+            {
+                int pRow = Math.Clamp(b.LcdRow, 0, 1);
+                int pCol = Math.Clamp(b.LcdCol, 0, 15);
+                string textToPrint = string.IsNullOrWhiteSpace(b.Parameter1)
+                    ? (string.IsNullOrWhiteSpace(b.CustomMessage) ? "Hello World!" : b.CustomMessage)
+                    : b.Parameter1;
+                sb.AppendLine($"{indent}// Print Text to LCD 1602 (Row {pRow}, Col {pCol})");
+                sb.AppendLine($"{indent}lcd.setCursor({pCol}, {pRow});");
+                sb.AppendLine($"{indent}lcd.print(F(\"{textToPrint.Replace("\"", "\\\"")}\"));");
+                break;
+            }
+
+            case BoxBlockKind.LcdPrintSensor:
+            {
+                int sRow = Math.Clamp(b.LcdRow, 0, 1);
+                int sCol = Math.Clamp(b.LcdCol, 0, 15);
+                string sensorFmt = string.IsNullOrWhiteSpace(b.CustomMessage)
+                    ? (string.IsNullOrWhiteSpace(b.Parameter1) ? "Temp: {temp}C" : b.Parameter1)
+                    : b.CustomMessage;
+                sb.AppendLine($"{indent}// Print Sensor Reading to LCD 1602 (Row {sRow}, Col {sCol})");
+                sb.AppendLine($"{indent}lcd.setCursor({sCol}, {sRow});");
+                if (sensorFmt.Contains("{temp}", StringComparison.OrdinalIgnoreCase) || hasDht)
+                {
+                    string prefix = sensorFmt.Contains("{temp}", StringComparison.OrdinalIgnoreCase)
+                        ? sensorFmt.Substring(0, sensorFmt.IndexOf("{temp}", StringComparison.OrdinalIgnoreCase))
+                        : "Temp: ";
+                    string suffix = sensorFmt.Contains("{temp}", StringComparison.OrdinalIgnoreCase)
+                        ? sensorFmt.Substring(sensorFmt.IndexOf("{temp}", StringComparison.OrdinalIgnoreCase) + 6)
+                        : "C";
+                    sb.AppendLine($"{indent}lcd.print(F(\"{prefix.Replace("\"", "\\\"")}\"));");
+                    sb.AppendLine($"{indent}lcd.print(currentTemperature, 1);");
+                    if (!string.IsNullOrEmpty(suffix))
+                        sb.AppendLine($"{indent}lcd.print(F(\"{suffix.Replace("\"", "\\\"")}\"));");
+                }
+                else if (sensorFmt.Contains("{hum}", StringComparison.OrdinalIgnoreCase))
+                {
+                    string prefix = sensorFmt.Substring(0, sensorFmt.IndexOf("{hum}", StringComparison.OrdinalIgnoreCase));
+                    string suffix = sensorFmt.Substring(sensorFmt.IndexOf("{hum}", StringComparison.OrdinalIgnoreCase) + 5);
+                    sb.AppendLine($"{indent}lcd.print(F(\"{prefix.Replace("\"", "\\\"")}\"));");
+                    sb.AppendLine($"{indent}lcd.print(currentHumidity, 1);");
+                    if (!string.IsNullOrEmpty(suffix))
+                        sb.AppendLine($"{indent}lcd.print(F(\"{suffix.Replace("\"", "\\\"")}\"));");
+                }
+                else if (blocks.Any(x => x.Kind is BoxBlockKind.ReadUltrasonic or BoxBlockKind.ReadUltrasonicCm))
+                {
+                    sb.AppendLine($"{indent}lcd.print(F(\"Dist: \"));");
+                    sb.AppendLine($"{indent}lcd.print(measuredDistanceCm, 1);");
+                    sb.AppendLine($"{indent}lcd.print(F(\" cm\"));");
+                }
+                else if (blocks.Any(x => x.Kind == BoxBlockKind.ReadPotentiometer))
+                {
+                    sb.AppendLine($"{indent}lcd.print(F(\"Pot: \"));");
+                    sb.AppendLine($"{indent}lcd.print(potAnalogValue);");
+                }
+                else
+                {
+                    sb.AppendLine($"{indent}lcd.print(F(\"{sensorFmt.Replace("\"", "\\\"")}\"));");
+                }
+                break;
+            }
+
+            case BoxBlockKind.LcdClear:
+                sb.AppendLine($"{indent}// Clear 16x2 LCD Display");
+                sb.AppendLine($"{indent}lcd.clear();");
+                break;
+
+            case BoxBlockKind.LcdBacklight:
+            {
+                bool isBlOn = (b.Parameter1 ?? "ON").ToUpperInvariant().Contains("ON");
+                sb.AppendLine($"{indent}// LCD Backlight {(isBlOn ? "ON" : "OFF")}");
+                sb.AppendLine(isBlOn ? $"{indent}lcd.backlight();" : $"{indent}lcd.noBacklight();");
+                break;
+            }
+
+            case BoxBlockKind.CompareCondition:
+            {
+                string cmpOp = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
+                string cmpVar = ResolveCppConditionVariable(b, blocks, hasDht, fallback: "sensorVal");
+                sb.AppendLine($"{indent}// Compare Condition ({cmpVar} {cmpOp} {b.ConditionThreshold:0.0})");
+                sb.AppendLine($"{indent}if ({cmpVar} {cmpOp} {b.ConditionThreshold:0.0}) {{");
+                sb.AppendLine($"{childIndent}Serial.print(F(\"==> Comparison Threshold Reached on \")); Serial.println(F(\"{cmpVar}\"));");
+                sb.AppendLine($"{indent}}}");
+                break;
+            }
+
+            case BoxBlockKind.SetVariable:
+            {
+                string varName = SanitizeIdentifier(b.VariableName, "systemState");
+                string varVal = string.IsNullOrWhiteSpace(b.Parameter1) ? "1" : b.Parameter1;
+                sb.AppendLine($"{indent}// Set Variable");
+                sb.AppendLine($"{indent}{varName} = {varVal};");
+                break;
+            }
+
+            case BoxBlockKind.MathOperation:
+            {
+                string targetVar = SanitizeIdentifier(b.MathTargetVariable, "calcResult");
+                string op1 = string.IsNullOrWhiteSpace(b.Operand1) ? "currentTemperature" : b.Operand1;
+                string mathOp = string.IsNullOrWhiteSpace(b.MathOperator) ? "+" : b.MathOperator;
+                string op2 = string.IsNullOrWhiteSpace(b.Operand2) ? "1.0" : b.Operand2;
+                sb.AppendLine($"{indent}// Math Calculation: {targetVar} = {op1} {mathOp} {op2}");
+                sb.AppendLine($"{indent}float {targetVar} = {op1} {mathOp} {op2};");
+                sb.AppendLine($"{indent}Serial.print(F(\"[MATH] {targetVar}: \")); Serial.println({targetVar});");
+                break;
+            }
+
+            case BoxBlockKind.MapRange:
+            {
+                var (targetVar, inputExpr, inMin, inMax, outMin, outMax) = ParseMapRange(b, isPython: false);
+                sb.AppendLine($"{indent}// Map Value Range ({inMin}..{inMax} -> {outMin}..{outMax})");
+                sb.AppendLine($"{indent}{targetVar} = map((long)({inputExpr}), {inMin}, {inMax}, {outMin}, {outMax});");
+                sb.AppendLine($"{indent}Serial.print(F(\"[MAP] {targetVar}: \")); Serial.println({targetVar});");
+                break;
+            }
+
+            case BoxBlockKind.Delay:
+            {
+                int delayMs = int.TryParse(b.Parameter1, out int ms) ? Math.Max(10, ms) : 500;
+                sb.AppendLine($"{indent}// Execution Pause");
+                sb.AppendLine($"{indent}delay({delayMs});");
+                break;
+            }
+
+            case BoxBlockKind.SerialPrint:
+            {
+                string msg = string.IsNullOrWhiteSpace(b.CustomMessage) ? "Telemetry heartbeat" : b.CustomMessage.Replace("\"", "\\\"");
+                sb.AppendLine($"{indent}Serial.println(F(\"{msg}\"));");
+                break;
+            }
+        }
     }
 
     /// <summary>Generates complete MicroPython (.py) firmware.</summary>
@@ -631,6 +912,7 @@ public static class BoxCodeGenerator
             sb.AppendLine("    lcd = None");
         }
 
+        var pyInited = new HashSet<string>(StringComparer.Ordinal);
         foreach (var b in blocks)
         {
             int p1 = ExtractPinNumber(b.Pin1);
@@ -639,301 +921,559 @@ public static class BoxCodeGenerator
             switch (b.Kind)
             {
                 case BoxBlockKind.ReadDhtSensor:
-                    sb.AppendLine($"dht_sensor = dht.DHT11(Pin({p1}))");
+                    if (pyInited.Add("DHT"))
+                        sb.AppendLine($"dht_sensor = dht.DHT11(Pin({p1}))");
                     break;
                 case BoxBlockKind.ReadUltrasonic:
-                    sb.AppendLine($"trig = Pin({p1}, Pin.OUT)");
-                    sb.AppendLine($"echo = Pin({p2}, Pin.IN)");
+                case BoxBlockKind.ReadUltrasonicCm:
+                    if (pyInited.Add("ULTRA"))
+                    {
+                        sb.AppendLine($"trig = Pin({p1}, Pin.OUT)");
+                        sb.AppendLine($"echo = Pin({p2}, Pin.IN)");
+                    }
                     break;
                 case BoxBlockKind.ReadLdrLight:
-                    sb.AppendLine($"ldr = ADC(Pin({p1}))");
+                    if (pyInited.Add("LDR"))
+                        sb.AppendLine($"ldr = ADC(Pin({p1}))");
                     break;
                 case BoxBlockKind.ReadPotentiometer:
-                    sb.AppendLine($"pot = ADC(Pin({p1}))");
+                    if (pyInited.Add("POT"))
+                        sb.AppendLine($"pot = ADC(Pin({p1}))");
                     break;
                 case BoxBlockKind.ReadPirMotion:
-                    sb.AppendLine($"pir = Pin({p1}, Pin.IN)");
+                    if (pyInited.Add("PIR"))
+                        sb.AppendLine($"pir = Pin({p1}, Pin.IN)");
                     break;
                 case BoxBlockKind.ReadButton:
-                    sb.AppendLine($"button = Pin({p1}, Pin.IN, Pin.PULL_UP)");
+                    if (pyInited.Add("BTN"))
+                        sb.AppendLine($"button = Pin({p1}, Pin.IN, Pin.PULL_UP)");
                     break;
                 case BoxBlockKind.ReadGasSensor:
-                    sb.AppendLine($"gas_sensor = ADC(Pin({p1}))");
+                    if (pyInited.Add("GAS"))
+                        sb.AppendLine($"gas_sensor = ADC(Pin({p1}))");
                     break;
                 case BoxBlockKind.ReadSoundSensor:
-                    sb.AppendLine($"sound_sensor = Pin({p1}, Pin.IN)");
+                    if (pyInited.Add("SOUND"))
+                        sb.AppendLine($"sound_sensor = Pin({p1}, Pin.IN)");
                     break;
                 case BoxBlockKind.ReadAnalogTemperature:
-                    sb.AppendLine($"temp_sensor = ADC(Pin({p1}))");
+                    if (pyInited.Add("ATEMP"))
+                        sb.AppendLine($"temp_sensor = ADC(Pin({p1}))");
                     break;
                 case BoxBlockKind.SetLed:
-                    sb.AppendLine($"led = Pin({p1}, Pin.OUT)");
+                    if (pyInited.Add("LED"))
+                        sb.AppendLine($"led = Pin({p1}, Pin.OUT)");
+                    break;
+                case BoxBlockKind.SetRgbLed:
+                case BoxBlockKind.RgbLedColor:
+                    if (pyInited.Add("RGB"))
+                    {
+                        var (rStr, gStr, bStr) = ParseRgbPins(b, boardType);
+                        int rNum = ExtractPinNumber(rStr);
+                        int gNum = ExtractPinNumber(gStr);
+                        int bNum = ExtractPinNumber(bStr);
+                        sb.AppendLine($"rgb_r = PWM(Pin({rNum}), freq=1000)");
+                        sb.AppendLine($"rgb_g = PWM(Pin({gNum}), freq=1000)");
+                        sb.AppendLine($"rgb_b = PWM(Pin({bNum}), freq=1000)");
+                    }
                     break;
                 case BoxBlockKind.SetPwm:
-                    sb.AppendLine($"pwm = PWM(Pin({p1}), freq=1000)");
+                    if (pyInited.Add("PWM"))
+                        sb.AppendLine($"pwm = PWM(Pin({p1}), freq=1000)");
                     break;
                 case BoxBlockKind.SetBuzzer:
-                    sb.AppendLine($"buzzer = PWM(Pin({p1}), freq=1000, duty=0)");
+                case BoxBlockKind.PlayToneNote:
+                    if (pyInited.Add("BUZZER"))
+                        sb.AppendLine($"buzzer = PWM(Pin({p1}), freq=1000, duty=0)");
                     break;
                 case BoxBlockKind.SetRelay:
-                    sb.AppendLine($"relay = Pin({p1}, Pin.OUT)");
+                    if (pyInited.Add("RELAY"))
+                        sb.AppendLine($"relay = Pin({p1}, Pin.OUT)");
                     break;
+            }
+        }
+
+        // Initialize referenced state variables before loop to avoid NameError
+        var pyVars = new HashSet<string>(StringComparer.Ordinal);
+        if (hasDht)
+        {
+            sb.AppendLine("temp = 0.0");
+            sb.AppendLine("hum = 0.0");
+            pyVars.Add("temp");
+            pyVars.Add("hum");
+        }
+        if (blocks.Any(b => b.Kind is BoxBlockKind.ReadUltrasonic or BoxBlockKind.ReadUltrasonicCm))
+        {
+            sb.AppendLine("distance_cm = 0.0");
+            pyVars.Add("distance_cm");
+        }
+        if (blocks.Any(b => b.Kind == BoxBlockKind.ReadPotentiometer))
+        {
+            sb.AppendLine("pot_val = 0");
+            pyVars.Add("pot_val");
+        }
+        if (blocks.Any(b => b.Kind == BoxBlockKind.ReadButton))
+        {
+            sb.AppendLine("btn = 0");
+            pyVars.Add("btn");
+        }
+        foreach (var b in blocks)
+        {
+            if (b.Kind == BoxBlockKind.ReadUltrasonicCm)
+            {
+                string uVar = GetUltrasonicVarName(b);
+                if (pyVars.Add(uVar))
+                    sb.AppendLine($"{uVar} = 0.0");
+            }
+            else if (b.Kind == BoxBlockKind.MapRange)
+            {
+                var (tVar, inExpr, _, _, _, _) = ParseMapRange(b, isPython: true);
+                if (pyVars.Add(tVar))
+                    sb.AppendLine($"{tVar} = 0");
+                if (IsSimpleIdentifier(inExpr) && pyVars.Add(inExpr))
+                    sb.AppendLine($"{inExpr} = 0");
+            }
+            else if (b.Kind is BoxBlockKind.IfCondition or BoxBlockKind.IfElseCondition or BoxBlockKind.CompareCondition or BoxBlockKind.WhileLoop)
+            {
+                string condVar = ResolvePythonConditionVariable(b, blocks, hasDht);
+                if (pyVars.Add(condVar))
+                    sb.AppendLine($"{condVar} = 0.0");
             }
         }
 
         sb.AppendLine();
         sb.AppendLine($"print(\"--- {boardName} MicroPython Ready ---\")");
         sb.AppendLine();
-        sb.AppendLine("while True:");
 
-        bool anyBody = false;
-        foreach (var b in blocks)
+        int foreverIdx = -1;
+        for (int idx = 0; idx < blocks.Count; idx++)
         {
-            if (b.Kind == BoxBlockKind.WhenStarted || b.Kind == BoxBlockKind.ForeverLoop)
-                continue;
-
-            anyBody = true;
-            switch (b.Kind)
+            if (blocks[idx].Kind == BoxBlockKind.ForeverLoop)
             {
-                case BoxBlockKind.ReadDhtSensor:
-                    sb.AppendLine("    try:");
-                    sb.AppendLine("        dht_sensor.measure()");
-                    sb.AppendLine("        temp = dht_sensor.temperature()");
-                    sb.AppendLine("        hum = dht_sensor.humidity()");
-                    sb.AppendLine("        print(f\"[DHT] Temp: {temp}C, Hum: {hum}%\")");
-                    sb.AppendLine("    except Exception as ex:");
-                    sb.AppendLine("        print(\"[DHT] Read error:\", ex)");
-                    break;
-
-                case BoxBlockKind.ReadUltrasonic:
-                    sb.AppendLine("    trig.value(0)");
-                    sb.AppendLine("    time.sleep_us(2)");
-                    sb.AppendLine("    trig.value(1)");
-                    sb.AppendLine("    time.sleep_us(10)");
-                    sb.AppendLine("    trig.value(0)");
-                    sb.AppendLine("    try:");
-                    sb.AppendLine("        duration = time_pulse_us(echo, 1, 30000)");
-                    sb.AppendLine("        distance_cm = (duration * 0.0343) / 2.0");
-                    sb.AppendLine("        print(f\"[HC-SR04] Distance: {distance_cm:.1f} cm\")");
-                    sb.AppendLine("    except Exception:");
-                    sb.AppendLine("        distance_cm = -1.0");
-                    break;
-
-                case BoxBlockKind.ReadLdrLight:
-                    sb.AppendLine("    ldr_val = ldr.read_u16()");
-                    sb.AppendLine("    print(f\"[LDR] Light: {ldr_val}\")");
-                    break;
-
-                case BoxBlockKind.ReadPotentiometer:
-                    sb.AppendLine("    pot_val = pot.read_u16()");
-                    sb.AppendLine("    print(f\"[POT] Dial: {pot_val}\")");
-                    break;
-
-                case BoxBlockKind.ReadPirMotion:
-                    sb.AppendLine("    motion = pir.value() == 1");
-                    sb.AppendLine("    print(\"[PIR] Motion:\", \"DETECTED\" if motion else \"CLEAR\")");
-                    break;
-
-                case BoxBlockKind.ReadButton:
-                    sb.AppendLine("    btn = button.value() == 0");
-                    sb.AppendLine("    print(\"[BUTTON] State:\", \"PRESSED\" if btn else \"RELEASED\")");
-                    break;
-
-                case BoxBlockKind.ReadGasSensor:
-                    sb.AppendLine("    gas_val = gas_sensor.read_u16()");
-                    sb.AppendLine("    print(f\"[GAS] Reading: {gas_val}\")");
-                    break;
-
-                case BoxBlockKind.ReadSoundSensor:
-                    sb.AppendLine("    sound_trig = sound_sensor.value() == 1");
-                    sb.AppendLine("    print(\"[SOUND] Active:\", sound_trig)");
-                    break;
-
-                case BoxBlockKind.ReadAnalogTemperature:
-                    sb.AppendLine("    raw_t = temp_sensor.read_u16()");
-                    sb.AppendLine("    volts = (raw_t / 65535.0) * 3.3");
-                    sb.AppendLine("    temp_deg = (volts - 0.5) * 100.0");
-                    sb.AppendLine("    print(f\"[TEMP] Analog: {temp_deg:.1f} C\")");
-                    break;
-
-                case BoxBlockKind.ReadMpu6050:
-                    sb.AppendLine("    try:");
-                    sb.AppendLine("        mpu_data = i2c.readfrom_mem(0x68, 0x3B, 6)");
-                    sb.AppendLine("        ax = int.from_bytes(mpu_data[0:2], 'big', True)");
-                    sb.AppendLine("        ay = int.from_bytes(mpu_data[2:4], 'big', True)");
-                    sb.AppendLine("        az = int.from_bytes(mpu_data[4:6], 'big', True)");
-                    sb.AppendLine("        print(f\"[MPU] X={ax}, Y={ay}, Z={az}\")");
-                    sb.AppendLine("    except Exception:");
-                    sb.AppendLine("        pass");
-                    break;
-
-                case BoxBlockKind.DisplayOledI2c:
-                    string oMsg = string.IsNullOrWhiteSpace(b.Parameter1) ? "Telemetry OK" : b.Parameter1;
-                    sb.AppendLine("    oled.fill(0)");
-                    sb.AppendLine($"    oled.text(\"{oMsg}\", 0, 20)");
-                    sb.AppendLine("    oled.show()");
-                    break;
-
-                case BoxBlockKind.SetLed:
-                    int ledVal = (b.Parameter1 ?? "HIGH").ToUpperInvariant().Contains("LOW") ? 0 : 1;
-                    sb.AppendLine($"    led.value({ledVal})");
-                    break;
-
-                case BoxBlockKind.SetPwm:
-                    int pwmDuty = int.TryParse(b.Parameter1, out int pd) ? Math.Clamp(pd * 257, 0, 65535) : 32768;
-                    sb.AppendLine($"    pwm.duty_u16({pwmDuty})");
-                    break;
-
-                case BoxBlockKind.SetBuzzer:
-                    int freq = int.TryParse(b.Parameter1, out int f) ? f : 1000;
-                    sb.AppendLine($"    buzzer.freq({freq})");
-                    sb.AppendLine("    buzzer.duty_u16(32768)");
-                    sb.AppendLine("    time.sleep_ms(200)");
-                    sb.AppendLine("    buzzer.duty_u16(0)");
-                    break;
-
-                case BoxBlockKind.SetRelay:
-                    int relayVal = (b.Parameter1 ?? "HIGH").ToUpperInvariant().Contains("LOW") ? 0 : 1;
-                    sb.AppendLine($"    relay.value({relayVal})");
-                    break;
-
-                case BoxBlockKind.IfCondition:
-                    string op = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
-                    double thresh = b.ConditionThreshold;
-                    sb.AppendLine($"    if distance_cm {op} {thresh:0.0}:");
-                    sb.AppendLine("        print(\"==> Condition Met!\")");
-                    sb.AppendLine("        led.value(1)");
-                    sb.AppendLine("    else:");
-                    sb.AppendLine("        led.value(0)");
-                    break;
-
-                case BoxBlockKind.IfElseCondition:
-                    string upyIeOp = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
-                    string upyIeVar = string.IsNullOrWhiteSpace(b.VariableName)
-                        ? (hasDht ? "temp" : (blocks.Any(x => x.Kind == BoxBlockKind.ReadUltrasonic) ? "distance_cm" : "sensor_val"))
-                        : b.VariableName;
-                    sb.AppendLine($"    if {upyIeVar} {upyIeOp} {b.ConditionThreshold:0.0}:");
-                    sb.AppendLine("        print(\"==> Condition Met!\")");
-                    if (blocks.Any(x => x.Kind == BoxBlockKind.SetLed))
-                        sb.AppendLine("        led.value(1)");
-                    sb.AppendLine("    else:");
-                    sb.AppendLine("        print(\"==> Else branch\")");
-                    if (blocks.Any(x => x.Kind == BoxBlockKind.SetLed))
-                        sb.AppendLine("        led.value(0)");
-                    break;
-
-                case BoxBlockKind.LogicalAnd:
-                    string pyAndVar1 = string.IsNullOrWhiteSpace(b.VariableName) ? "temp" : b.VariableName;
-                    string pyAndOp1 = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
-                    string pyAndVar2 = string.IsNullOrWhiteSpace(b.SecondaryVariableName) ? "hum" : b.SecondaryVariableName;
-                    string pyAndOp2 = string.IsNullOrWhiteSpace(b.SecondaryConditionOperator) ? "<" : b.SecondaryConditionOperator;
-                    sb.AppendLine($"    if ({pyAndVar1} {pyAndOp1} {b.ConditionThreshold:0.0}) and ({pyAndVar2} {pyAndOp2} {b.SecondaryConditionThreshold:0.0}):");
-                    sb.AppendLine("        print(\"==> Logical AND Condition MET\")");
-                    break;
-
-                case BoxBlockKind.LogicalOr:
-                    string pyOrVar1 = string.IsNullOrWhiteSpace(b.VariableName) ? "temp" : b.VariableName;
-                    string pyOrOp1 = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
-                    string pyOrVar2 = string.IsNullOrWhiteSpace(b.SecondaryVariableName) ? "hum" : b.SecondaryVariableName;
-                    string pyOrOp2 = string.IsNullOrWhiteSpace(b.SecondaryConditionOperator) ? ">" : b.SecondaryConditionOperator;
-                    sb.AppendLine($"    if ({pyOrVar1} {pyOrOp1} {b.ConditionThreshold:0.0}) or ({pyOrVar2} {pyOrOp2} {b.SecondaryConditionThreshold:0.0}):");
-                    sb.AppendLine("        print(\"==> Logical OR Condition MET\")");
-                    break;
-
-                case BoxBlockKind.LcdInitI2c:
-                    sb.AppendLine("    if lcd:");
-                    sb.AppendLine("        lcd.clear()");
-                    sb.AppendLine("        lcd.backlight_on()");
-                    break;
-
-                case BoxBlockKind.LcdPrintText:
-                    int upyRow = Math.Clamp(b.LcdRow, 0, 1);
-                    int upyCol = Math.Clamp(b.LcdCol, 0, 15);
-                    string upyTxt = string.IsNullOrWhiteSpace(b.Parameter1)
-                        ? (string.IsNullOrWhiteSpace(b.CustomMessage) ? "Hello World!" : b.CustomMessage)
-                        : b.Parameter1;
-                    sb.AppendLine("    if lcd:");
-                    sb.AppendLine($"        lcd.move_to({upyCol}, {upyRow})");
-                    sb.AppendLine($"        lcd.putstr(\"{upyTxt.Replace("\"", "\\\"")}\")");
-                    break;
-
-                case BoxBlockKind.LcdPrintSensor:
-                    int upySRow = Math.Clamp(b.LcdRow, 0, 1);
-                    int upySCol = Math.Clamp(b.LcdCol, 0, 15);
-                    sb.AppendLine("    if lcd:");
-                    sb.AppendLine($"        lcd.move_to({upySCol}, {upySRow})");
-                    if (hasDht)
-                        sb.AppendLine("        lcd.putstr(f\"Temp: {temp}C\")");
-                    else if (blocks.Any(x => x.Kind == BoxBlockKind.ReadUltrasonic))
-                        sb.AppendLine("        lcd.putstr(f\"Dist: {distance_cm:.1f}cm\")");
-                    else
-                        sb.AppendLine("        lcd.putstr(\"Sensor Active\")");
-                    break;
-
-                case BoxBlockKind.LcdClear:
-                    sb.AppendLine("    if lcd: lcd.clear()");
-                    break;
-
-                case BoxBlockKind.LcdBacklight:
-                    bool upyBlOn = (b.Parameter1 ?? "ON").ToUpperInvariant().Contains("ON");
-                    sb.AppendLine(upyBlOn ? "    if lcd: lcd.backlight_on()" : "    if lcd: lcd.backlight_off()");
-                    break;
-
-                case BoxBlockKind.CompareCondition:
-                    string upyCmpOp = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
-                    string upyCmpVar = string.IsNullOrWhiteSpace(b.VariableName)
-                        ? (hasDht ? "temp" : (blocks.Any(x => x.Kind == BoxBlockKind.ReadUltrasonic) ? "distance_cm" : "sensor_val"))
-                        : b.VariableName;
-                    sb.AppendLine($"    if {upyCmpVar} {upyCmpOp} {b.ConditionThreshold:0.0}:");
-                    sb.AppendLine("        print(\"==> Comparison Threshold Reached!\")");
-                    break;
-
-                case BoxBlockKind.SetVariable:
-                    string upyVarName = string.IsNullOrWhiteSpace(b.VariableName) ? "system_state" : b.VariableName;
-                    string upyVarVal = string.IsNullOrWhiteSpace(b.Parameter1) ? "1" : b.Parameter1;
-                    sb.AppendLine($"    {upyVarName} = {upyVarVal}");
-                    break;
-
-                case BoxBlockKind.MathOperation:
-                    string pyTarget = string.IsNullOrWhiteSpace(b.MathTargetVariable) ? "calc_result" : b.MathTargetVariable;
-                    string pyOp1 = string.IsNullOrWhiteSpace(b.Operand1) ? "temp" : b.Operand1;
-                    string pyMathOp = string.IsNullOrWhiteSpace(b.MathOperator) ? "+" : b.MathOperator;
-                    string pyOp2 = string.IsNullOrWhiteSpace(b.Operand2) ? "1.0" : b.Operand2;
-                    sb.AppendLine($"    {pyTarget} = {pyOp1} {pyMathOp} {pyOp2}");
-                    sb.AppendLine($"    print(f\"[MATH] {pyTarget}: {{{pyTarget}}}\")");
-                    break;
-
-                case BoxBlockKind.RepeatTimes:
-                    int pyRpt = b.RepeatCount > 0 ? b.RepeatCount : 5;
-                    sb.AppendLine($"    for loop_idx in range({pyRpt}):");
-                    sb.AppendLine("        print(f\"==> Loop index: {loop_idx}\")");
-                    sb.AppendLine("        time.sleep_ms(50)");
-                    break;
-
-                case BoxBlockKind.WhileLoop:
-                    string pyWVar = string.IsNullOrWhiteSpace(b.VariableName) ? "btn" : b.VariableName;
-                    string pyWOp = string.IsNullOrWhiteSpace(b.ConditionOperator) ? "==" : b.ConditionOperator;
-                    sb.AppendLine($"    while {pyWVar} {pyWOp} {b.ConditionThreshold:0.0}:");
-                    sb.AppendLine("        print(\"==> Inside while loop\")");
-                    sb.AppendLine("        break");
-                    break;
-
-                case BoxBlockKind.Delay:
-                    int ms = int.TryParse(b.Parameter1, out int d) ? Math.Max(10, d) : 500;
-                    sb.AppendLine($"    time.sleep_ms({ms})");
-                    break;
-
-                case BoxBlockKind.SerialPrint:
-                    string msg = string.IsNullOrWhiteSpace(b.CustomMessage) ? "Telemetry heartbeat" : b.CustomMessage.Replace("\"", "\\\"");
-                    sb.AppendLine($"    print(\"{msg}\")");
-                    break;
+                foreverIdx = idx;
+                break;
             }
         }
 
-        if (!anyBody)
+        var setupScopedSet = new HashSet<BoxBlockItem>();
+        var setupScopedBlocks = new List<BoxBlockItem>();
+        if (foreverIdx > 0)
+        {
+            for (int idx = 0; idx < foreverIdx; idx++)
+            {
+                var blk = blocks[idx];
+                if (blk.Kind != BoxBlockKind.WhenStarted && blk.IndentationLevel > 0)
+                {
+                    setupScopedSet.Add(blk);
+                    setupScopedBlocks.Add(blk);
+                }
+            }
+        }
+
+        if (setupScopedBlocks.Count > 0)
+        {
+            EmitPythonBlockSequence(setupScopedBlocks, 0, setupScopedBlocks.Count, 0, sb, blocks, hasDht);
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("while True:");
+        var loopBlocks = blocks
+            .Where(b => b.Kind != BoxBlockKind.WhenStarted && b.Kind != BoxBlockKind.ForeverLoop && !setupScopedSet.Contains(b))
+            .ToList();
+
+        if (loopBlocks.Count == 0)
+        {
             sb.AppendLine("    time.sleep_ms(100)");
+        }
+        else
+        {
+            EmitPythonBlockSequence(loopBlocks, 0, loopBlocks.Count, 1, sb, blocks, hasDht);
+        }
 
         return sb.ToString();
+    }
+
+    private static void EmitPythonBlockSequence(
+        IReadOnlyList<BoxBlockItem> scopeBlocks,
+        int startIndex,
+        int endIndex,
+        int codeDepth,
+        StringBuilder sb,
+        IReadOnlyList<BoxBlockItem> allBlocks,
+        bool hasDht)
+    {
+        int i = startIndex;
+        while (i < endIndex)
+        {
+            var b = scopeBlocks[i];
+            if (b.IsContainerBlock)
+            {
+                int parentIndent = b.IndentationLevel;
+                int sliceEnd = i + 1;
+                while (sliceEnd < endIndex && scopeBlocks[sliceEnd].IndentationLevel > parentIndent)
+                {
+                    sliceEnd++;
+                }
+
+                EmitPythonContainerBlock(b, scopeBlocks, i + 1, sliceEnd, codeDepth, sb, allBlocks, hasDht);
+                i = sliceEnd;
+            }
+            else
+            {
+                EmitSinglePythonBlock(b, codeDepth, sb, allBlocks, hasDht);
+                i++;
+            }
+        }
+    }
+
+    private static void EmitPythonContainerBlock(
+        BoxBlockItem b,
+        IReadOnlyList<BoxBlockItem> scopeBlocks,
+        int childStart,
+        int childEnd,
+        int codeDepth,
+        StringBuilder sb,
+        IReadOnlyList<BoxBlockItem> allBlocks,
+        bool hasDht)
+    {
+        string indent = new string(' ', codeDepth * 4);
+        string childIndent = new string(' ', (codeDepth + 1) * 4);
+        bool hasChildren = childEnd > childStart;
+
+        switch (b.Kind)
+        {
+            case BoxBlockKind.IfCondition:
+            {
+                string op = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
+                string condVar = ResolvePythonConditionVariable(b, allBlocks, hasDht);
+                string thresh = b.ConditionThreshold.ToString("0.0", CultureInfo.InvariantCulture);
+                sb.AppendLine($"{indent}if {condVar} {op} {thresh}:");
+                if (hasChildren)
+                    EmitPythonBlockSequence(scopeBlocks, childStart, childEnd, codeDepth + 1, sb, allBlocks, hasDht);
+                else
+                    sb.AppendLine($"{childIndent}pass");
+                break;
+            }
+            case BoxBlockKind.IfElseCondition:
+            {
+                string op = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
+                string condVar = ResolvePythonConditionVariable(b, allBlocks, hasDht);
+                string thresh = b.ConditionThreshold.ToString("0.0", CultureInfo.InvariantCulture);
+                sb.AppendLine($"{indent}if {condVar} {op} {thresh}:");
+                if (hasChildren)
+                    EmitPythonBlockSequence(scopeBlocks, childStart, childEnd, codeDepth + 1, sb, allBlocks, hasDht);
+                else
+                    sb.AppendLine($"{childIndent}pass");
+                sb.AppendLine($"{indent}else:");
+                sb.AppendLine($"{childIndent}pass");
+                break;
+            }
+            case BoxBlockKind.RepeatTimes:
+            {
+                int pyRpt = b.RepeatCount > 0 ? b.RepeatCount : 5;
+                sb.AppendLine($"{indent}for loop_idx in range({pyRpt}):");
+                if (hasChildren)
+                    EmitPythonBlockSequence(scopeBlocks, childStart, childEnd, codeDepth + 1, sb, allBlocks, hasDht);
+                else
+                    sb.AppendLine($"{childIndent}pass");
+                break;
+            }
+            case BoxBlockKind.WhileLoop:
+            {
+                string pyWVar = ResolvePythonConditionVariable(b, allBlocks, hasDht, fallback: "btn");
+                string pyWOp = string.IsNullOrWhiteSpace(b.ConditionOperator) ? "==" : b.ConditionOperator;
+                string thresh = b.ConditionThreshold.ToString("0.0", CultureInfo.InvariantCulture);
+                sb.AppendLine($"{indent}while {pyWVar} {pyWOp} {thresh}:");
+                if (hasChildren)
+                    EmitPythonBlockSequence(scopeBlocks, childStart, childEnd, codeDepth + 1, sb, allBlocks, hasDht);
+                else
+                    sb.AppendLine($"{childIndent}pass");
+                sb.AppendLine($"{childIndent}break");
+                break;
+            }
+        }
+    }
+
+    private static void EmitSinglePythonBlock(
+        BoxBlockItem b,
+        int codeDepth,
+        StringBuilder sb,
+        IReadOnlyList<BoxBlockItem> blocks,
+        bool hasDht)
+    {
+        string indent = new string(' ', codeDepth * 4);
+        string childIndent = new string(' ', (codeDepth + 1) * 4);
+
+        switch (b.Kind)
+        {
+            case BoxBlockKind.ReadDhtSensor:
+                sb.AppendLine($"{indent}try:");
+                sb.AppendLine($"{childIndent}dht_sensor.measure()");
+                sb.AppendLine($"{childIndent}temp = dht_sensor.temperature()");
+                sb.AppendLine($"{childIndent}hum = dht_sensor.humidity()");
+                sb.AppendLine($"{childIndent}print(f\"[DHT] Temp: {{temp}}C, Hum: {{hum}}%\")");
+                sb.AppendLine($"{indent}except Exception as ex:");
+                sb.AppendLine($"{childIndent}print(\"[DHT] Read error:\", ex)");
+                break;
+
+            case BoxBlockKind.ReadUltrasonic:
+                sb.AppendLine($"{indent}trig.value(0)");
+                sb.AppendLine($"{indent}time.sleep_us(2)");
+                sb.AppendLine($"{indent}trig.value(1)");
+                sb.AppendLine($"{indent}time.sleep_us(10)");
+                sb.AppendLine($"{indent}trig.value(0)");
+                sb.AppendLine($"{indent}try:");
+                sb.AppendLine($"{childIndent}duration = time_pulse_us(echo, 1, 30000)");
+                sb.AppendLine($"{childIndent}distance_cm = (duration * 0.0343) / 2.0");
+                sb.AppendLine($"{childIndent}print(f\"[HC-SR04] Distance: {{distance_cm:.1f}} cm\")");
+                sb.AppendLine($"{indent}except Exception:");
+                sb.AppendLine($"{childIndent}distance_cm = -1.0");
+                break;
+
+            case BoxBlockKind.ReadUltrasonicCm:
+            {
+                string uVar = GetUltrasonicVarName(b);
+                sb.AppendLine($"{indent}trig.value(0)");
+                sb.AppendLine($"{indent}time.sleep_us(2)");
+                sb.AppendLine($"{indent}trig.value(1)");
+                sb.AppendLine($"{indent}time.sleep_us(10)");
+                sb.AppendLine($"{indent}trig.value(0)");
+                sb.AppendLine($"{indent}try:");
+                sb.AppendLine($"{childIndent}duration = time_pulse_us(echo, 1, 30000)");
+                sb.AppendLine($"{childIndent}{uVar} = (duration * 0.0343) / 2.0");
+                sb.AppendLine($"{childIndent}distance_cm = {uVar}");
+                sb.AppendLine($"{childIndent}print(f\"[HC-SR04] {uVar}: {{{uVar}:.1f}} cm\")");
+                sb.AppendLine($"{indent}except Exception:");
+                sb.AppendLine($"{childIndent}{uVar} = -1.0");
+                break;
+            }
+
+            case BoxBlockKind.ReadLdrLight:
+                sb.AppendLine($"{indent}ldr_val = ldr.read_u16()");
+                sb.AppendLine($"{indent}print(f\"[LDR] Light: {{ldr_val}}\")");
+                break;
+
+            case BoxBlockKind.ReadPotentiometer:
+                sb.AppendLine($"{indent}pot_val = pot.read_u16()");
+                sb.AppendLine($"{indent}print(f\"[POT] Dial: {{pot_val}}\")");
+                break;
+
+            case BoxBlockKind.ReadPirMotion:
+                sb.AppendLine($"{indent}motion = pir.value() == 1");
+                sb.AppendLine($"{indent}print(\"[PIR] Motion:\", \"DETECTED\" if motion else \"CLEAR\")");
+                break;
+
+            case BoxBlockKind.ReadButton:
+                sb.AppendLine($"{indent}btn = button.value() == 0");
+                sb.AppendLine($"{indent}print(\"[BUTTON] State:\", \"PRESSED\" if btn else \"RELEASED\")");
+                break;
+
+            case BoxBlockKind.ReadGasSensor:
+                sb.AppendLine($"{indent}gas_val = gas_sensor.read_u16()");
+                sb.AppendLine($"{indent}print(f\"[GAS] Reading: {{gas_val}}\")");
+                break;
+
+            case BoxBlockKind.ReadSoundSensor:
+                sb.AppendLine($"{indent}sound_trig = sound_sensor.value() == 1");
+                sb.AppendLine($"{indent}print(\"[SOUND] Active:\", sound_trig)");
+                break;
+
+            case BoxBlockKind.ReadAnalogTemperature:
+                sb.AppendLine($"{indent}raw_t = temp_sensor.read_u16()");
+                sb.AppendLine($"{indent}volts = (raw_t / 65535.0) * 3.3");
+                sb.AppendLine($"{indent}temp_deg = (volts - 0.5) * 100.0");
+                sb.AppendLine($"{indent}print(f\"[TEMP] Analog: {{temp_deg:.1f}} C\")");
+                break;
+
+            case BoxBlockKind.ReadMpu6050:
+                sb.AppendLine($"{indent}try:");
+                sb.AppendLine($"{childIndent}mpu_data = i2c.readfrom_mem(0x68, 0x3B, 6)");
+                sb.AppendLine($"{childIndent}ax = int.from_bytes(mpu_data[0:2], 'big', True)");
+                sb.AppendLine($"{childIndent}ay = int.from_bytes(mpu_data[2:4], 'big', True)");
+                sb.AppendLine($"{childIndent}az = int.from_bytes(mpu_data[4:6], 'big', True)");
+                sb.AppendLine($"{childIndent}print(f\"[MPU] X={{ax}}, Y={{ay}}, Z={{az}}\")");
+                sb.AppendLine($"{indent}except Exception:");
+                sb.AppendLine($"{childIndent}pass");
+                break;
+
+            case BoxBlockKind.DisplayOledI2c:
+            {
+                string oMsg = string.IsNullOrWhiteSpace(b.Parameter1) ? "Telemetry OK" : b.Parameter1;
+                sb.AppendLine($"{indent}oled.fill(0)");
+                sb.AppendLine($"{indent}oled.text(\"{oMsg}\", 0, 20)");
+                sb.AppendLine($"{indent}oled.show()");
+                break;
+            }
+
+            case BoxBlockKind.SetLed:
+            {
+                int ledVal = (b.Parameter1 ?? "HIGH").ToUpperInvariant().Contains("LOW") ? 0 : 1;
+                sb.AppendLine($"{indent}led.value({ledVal})");
+                break;
+            }
+
+            case BoxBlockKind.SetRgbLed:
+            case BoxBlockKind.RgbLedColor:
+            {
+                var (r, g, bl) = ParseRgbColors(b);
+                sb.AppendLine($"{indent}rgb_r.duty_u16({Math.Clamp(r * 257, 0, 65535)})");
+                sb.AppendLine($"{indent}rgb_g.duty_u16({Math.Clamp(g * 257, 0, 65535)})");
+                sb.AppendLine($"{indent}rgb_b.duty_u16({Math.Clamp(bl * 257, 0, 65535)})");
+                break;
+            }
+
+            case BoxBlockKind.SetPwm:
+            {
+                int pwmDuty = int.TryParse(b.Parameter1, out int pd) ? Math.Clamp(pd * 257, 0, 65535) : 32768;
+                sb.AppendLine($"{indent}pwm.duty_u16({pwmDuty})");
+                break;
+            }
+
+            case BoxBlockKind.SetBuzzer:
+            {
+                int freq = int.TryParse(b.Parameter1, out int f) ? f : 1000;
+                sb.AppendLine($"{indent}buzzer.freq({freq})");
+                sb.AppendLine($"{indent}buzzer.duty_u16(32768)");
+                sb.AppendLine($"{indent}time.sleep_ms(200)");
+                sb.AppendLine($"{indent}buzzer.duty_u16(0)");
+                break;
+            }
+
+            case BoxBlockKind.PlayToneNote:
+            {
+                int hz = ParseMusicalNoteHz(b.Parameter1);
+                int durMs = int.TryParse(b.Parameter2, out int d) ? Math.Max(20, d) : 200;
+                sb.AppendLine($"{indent}buzzer.freq({hz})");
+                sb.AppendLine($"{indent}buzzer.duty_u16(32768)");
+                sb.AppendLine($"{indent}time.sleep_ms({durMs})");
+                sb.AppendLine($"{indent}buzzer.duty_u16(0)");
+                break;
+            }
+
+            case BoxBlockKind.SetRelay:
+            {
+                int relayVal = (b.Parameter1 ?? "HIGH").ToUpperInvariant().Contains("LOW") ? 0 : 1;
+                sb.AppendLine($"{indent}relay.value({relayVal})");
+                break;
+            }
+
+            case BoxBlockKind.LogicalAnd:
+            {
+                string pyAndVar1 = string.IsNullOrWhiteSpace(b.VariableName) ? "temp" : b.VariableName;
+                string pyAndOp1 = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
+                string pyAndVar2 = string.IsNullOrWhiteSpace(b.SecondaryVariableName) ? "hum" : b.SecondaryVariableName;
+                string pyAndOp2 = string.IsNullOrWhiteSpace(b.SecondaryConditionOperator) ? "<" : b.SecondaryConditionOperator;
+                sb.AppendLine($"{indent}if ({pyAndVar1} {pyAndOp1} {b.ConditionThreshold:0.0}) and ({pyAndVar2} {pyAndOp2} {b.SecondaryConditionThreshold:0.0}):");
+                sb.AppendLine($"{childIndent}print(\"==> Logical AND Condition MET\")");
+                break;
+            }
+
+            case BoxBlockKind.LogicalOr:
+            {
+                string pyOrVar1 = string.IsNullOrWhiteSpace(b.VariableName) ? "temp" : b.VariableName;
+                string pyOrOp1 = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
+                string pyOrVar2 = string.IsNullOrWhiteSpace(b.SecondaryVariableName) ? "hum" : b.SecondaryVariableName;
+                string pyOrOp2 = string.IsNullOrWhiteSpace(b.SecondaryConditionOperator) ? ">" : b.SecondaryConditionOperator;
+                sb.AppendLine($"{indent}if ({pyOrVar1} {pyOrOp1} {b.ConditionThreshold:0.0}) or ({pyOrVar2} {pyOrOp2} {b.SecondaryConditionThreshold:0.0}):");
+                sb.AppendLine($"{childIndent}print(\"==> Logical OR Condition MET\")");
+                break;
+            }
+
+            case BoxBlockKind.LcdInitI2c:
+                sb.AppendLine($"{indent}if lcd:");
+                sb.AppendLine($"{childIndent}lcd.clear()");
+                sb.AppendLine($"{childIndent}lcd.backlight_on()");
+                break;
+
+            case BoxBlockKind.LcdPrintText:
+            {
+                int upyRow = Math.Clamp(b.LcdRow, 0, 1);
+                int upyCol = Math.Clamp(b.LcdCol, 0, 15);
+                string upyTxt = string.IsNullOrWhiteSpace(b.Parameter1)
+                    ? (string.IsNullOrWhiteSpace(b.CustomMessage) ? "Hello World!" : b.CustomMessage)
+                    : b.Parameter1;
+                sb.AppendLine($"{indent}if lcd:");
+                sb.AppendLine($"{childIndent}lcd.move_to({upyCol}, {upyRow})");
+                sb.AppendLine($"{childIndent}lcd.putstr(\"{upyTxt.Replace("\"", "\\\"")}\")");
+                break;
+            }
+
+            case BoxBlockKind.LcdPrintSensor:
+            {
+                int upySRow = Math.Clamp(b.LcdRow, 0, 1);
+                int upySCol = Math.Clamp(b.LcdCol, 0, 15);
+                sb.AppendLine($"{indent}if lcd:");
+                sb.AppendLine($"{childIndent}lcd.move_to({upySCol}, {upySRow})");
+                if (hasDht)
+                    sb.AppendLine($"{childIndent}lcd.putstr(f\"Temp: {{temp}}C\")");
+                else if (blocks.Any(x => x.Kind is BoxBlockKind.ReadUltrasonic or BoxBlockKind.ReadUltrasonicCm))
+                    sb.AppendLine($"{childIndent}lcd.putstr(f\"Dist: {{distance_cm:.1f}}cm\")");
+                else
+                    sb.AppendLine($"{childIndent}lcd.putstr(\"Sensor Active\")");
+                break;
+            }
+
+            case BoxBlockKind.LcdClear:
+                sb.AppendLine($"{indent}if lcd: lcd.clear()");
+                break;
+
+            case BoxBlockKind.LcdBacklight:
+            {
+                bool upyBlOn = (b.Parameter1 ?? "ON").ToUpperInvariant().Contains("ON");
+                sb.AppendLine(upyBlOn ? $"{indent}if lcd: lcd.backlight_on()" : $"{indent}if lcd: lcd.backlight_off()");
+                break;
+            }
+
+            case BoxBlockKind.CompareCondition:
+            {
+                string upyCmpOp = string.IsNullOrWhiteSpace(b.ConditionOperator) ? ">" : b.ConditionOperator;
+                string upyCmpVar = ResolvePythonConditionVariable(b, blocks, hasDht, fallback: "sensor_val");
+                sb.AppendLine($"{indent}if {upyCmpVar} {upyCmpOp} {b.ConditionThreshold:0.0}:");
+                sb.AppendLine($"{childIndent}print(\"==> Comparison Threshold Reached!\")");
+                break;
+            }
+
+            case BoxBlockKind.SetVariable:
+            {
+                string upyVarName = SanitizeIdentifier(b.VariableName, "system_state");
+                string upyVarVal = string.IsNullOrWhiteSpace(b.Parameter1) ? "1" : b.Parameter1;
+                sb.AppendLine($"{indent}{upyVarName} = {upyVarVal}");
+                break;
+            }
+
+            case BoxBlockKind.MathOperation:
+            {
+                string pyTarget = SanitizeIdentifier(b.MathTargetVariable, "calc_result");
+                string pyOp1 = string.IsNullOrWhiteSpace(b.Operand1) ? "temp" : b.Operand1;
+                string pyMathOp = string.IsNullOrWhiteSpace(b.MathOperator) ? "+" : b.MathOperator;
+                string pyOp2 = string.IsNullOrWhiteSpace(b.Operand2) ? "1.0" : b.Operand2;
+                sb.AppendLine($"{indent}{pyTarget} = {pyOp1} {pyMathOp} {pyOp2}");
+                sb.AppendLine($"{indent}print(f\"[MATH] {pyTarget}: {{{pyTarget}}}\")");
+                break;
+            }
+
+            case BoxBlockKind.MapRange:
+            {
+                var (targetVar, inputExpr, inMin, inMax, outMin, outMax) = ParseMapRange(b, isPython: true);
+                sb.AppendLine($"{indent}{targetVar} = int(({inputExpr} - {inMin}) * ({outMax} - {outMin}) / max(1, ({inMax} - {inMin})) + {outMin})");
+                sb.AppendLine($"{indent}print(f\"[MAP] {targetVar}: {{{targetVar}}}\")");
+                break;
+            }
+
+            case BoxBlockKind.Delay:
+            {
+                int ms = int.TryParse(b.Parameter1, out int d) ? Math.Max(10, d) : 500;
+                sb.AppendLine($"{indent}time.sleep_ms({ms})");
+                break;
+            }
+
+            case BoxBlockKind.SerialPrint:
+            {
+                string msg = string.IsNullOrWhiteSpace(b.CustomMessage) ? "Telemetry heartbeat" : b.CustomMessage.Replace("\"", "\\\"");
+                sb.AppendLine($"{indent}print(\"{msg}\")");
+                break;
+            }
+        }
     }
 
     /// <summary>Generates default starter template blocks for a given board.</summary>
@@ -1358,6 +1898,763 @@ public static class BoxCodeGenerator
         });
 
         return list;
+    }
+
+    /// <summary>Returns the canonical catalog of Scratch-style palette block templates for the Box Coding Studio.</summary>
+    public static IReadOnlyList<BoxBlockItem> GetPaletteTemplates(
+        MicrocontrollerBoardType boardType = MicrocontrollerBoardType.ArduinoUnoR3R4)
+    {
+        var kinds = new[]
+        {
+            BoxBlockKind.WhenStarted,
+            BoxBlockKind.ForeverLoop,
+            BoxBlockKind.ReadUltrasonic,
+            BoxBlockKind.ReadUltrasonicCm,
+            BoxBlockKind.ReadDhtSensor,
+            BoxBlockKind.ReadLdrLight,
+            BoxBlockKind.ReadPotentiometer,
+            BoxBlockKind.ReadPirMotion,
+            BoxBlockKind.ReadButton,
+            BoxBlockKind.ReadGasSensor,
+            BoxBlockKind.ReadSoundSensor,
+            BoxBlockKind.ReadAnalogTemperature,
+            BoxBlockKind.ReadMpu6050,
+            BoxBlockKind.LcdInitI2c,
+            BoxBlockKind.LcdPrintText,
+            BoxBlockKind.LcdPrintSensor,
+            BoxBlockKind.LcdClear,
+            BoxBlockKind.LcdBacklight,
+            BoxBlockKind.DisplayOledI2c,
+            BoxBlockKind.SetLed,
+            BoxBlockKind.RgbLedColor,
+            BoxBlockKind.SetPwm,
+            BoxBlockKind.SetBuzzer,
+            BoxBlockKind.PlayToneNote,
+            BoxBlockKind.SetServo,
+            BoxBlockKind.SetRelay,
+            BoxBlockKind.IfCondition,
+            BoxBlockKind.IfElseCondition,
+            BoxBlockKind.RepeatTimes,
+            BoxBlockKind.WhileLoop,
+            BoxBlockKind.Delay,
+            BoxBlockKind.CompareCondition,
+            BoxBlockKind.LogicalAnd,
+            BoxBlockKind.LogicalOr,
+            BoxBlockKind.MathOperation,
+            BoxBlockKind.MapRange,
+            BoxBlockKind.SetVariable,
+            BoxBlockKind.SerialPrint
+        };
+
+        return kinds.Select(k => CreateConfiguredBlock(k, boardType)).ToList();
+    }
+
+    /// <summary>Creates a pre-configured BoxBlockItem with authentic pins and parameters for the given board.</summary>
+    public static BoxBlockItem CreateConfiguredBlock(
+        BoxBlockKind kind,
+        MicrocontrollerBoardType boardType = MicrocontrollerBoardType.ArduinoUnoR3R4)
+    {
+        bool isEsp = boardType is MicrocontrollerBoardType.Esp32DevKitV1 or MicrocontrollerBoardType.WemosEsp32S2Mini;
+        bool isStm = boardType == MicrocontrollerBoardType.Stm32BluePillF103C8;
+
+        string ledPin = isEsp ? "GPIO 2" : isStm ? "PC13" : "D13";
+        string trigPin = isEsp ? "GPIO 5" : isStm ? "PB6" : "D9";
+        string echoPin = isEsp ? "GPIO 18" : isStm ? "PB7" : "D10";
+        string dhtPin = isEsp ? "GPIO 4" : isStm ? "PA1" : "D2";
+        string analogPin = isEsp ? "GPIO 34" : isStm ? "PA0" : "A0";
+        string buzzerPin = isEsp ? "GPIO 19" : isStm ? "PB8" : "D8";
+        string pwmPin = isEsp ? "GPIO 25" : isStm ? "PA8" : "D6";
+        string buttonPin = isEsp ? "GPIO 14" : isStm ? "PB12" : "D4";
+        string pirPin = isEsp ? "GPIO 27" : isStm ? "PB13" : "D3";
+        string soundPin = isEsp ? "GPIO 23" : isStm ? "PB14" : "D5";
+        string relayPin = isEsp ? "GPIO 12" : isStm ? "PB15" : "D7";
+        string servoPin = isEsp ? "GPIO 13" : isStm ? "PA10" : "D11";
+        string rgbR = isEsp ? "GPIO 25" : isStm ? "PA8" : "D9";
+        string rgbG = isEsp ? "GPIO 26" : isStm ? "PA9" : "D10";
+        string rgbB = isEsp ? "GPIO 27" : isStm ? "PA10" : "D11";
+
+        return kind switch
+        {
+            BoxBlockKind.WhenStarted => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Events,
+                Title = "WHEN BOARD STARTS",
+                Icon = "🚀",
+                AccentHexColor = "#E67E22",
+                BackgroundHexColor = "#3E2723",
+                Description = "Initializes board peripherals and Serial @ 115200 baud."
+            },
+            BoxBlockKind.ForeverLoop => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Events,
+                Title = "FOREVER LOOP",
+                Icon = "🔁",
+                AccentHexColor = "#F39C12",
+                BackgroundHexColor = "#3E2723",
+                Description = "Repeats enclosed statements continuously."
+            },
+            BoxBlockKind.ReadUltrasonic => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Sensors,
+                Title = "READ ULTRASONIC (HC-SR04)",
+                ModelName = "HC-SR04",
+                Icon = "📡",
+                AccentHexColor = "#0288D1",
+                BackgroundHexColor = "#0C2D48",
+                Pin1 = trigPin,
+                Pin2 = echoPin,
+                Description = $"Reads distance in cm using {trigPin} (Trig) and {echoPin} (Echo)."
+            },
+            BoxBlockKind.ReadUltrasonicCm => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Sensors,
+                Title = "STORE ULTRASONIC CM INTO VAR",
+                ModelName = "HC-SR04",
+                Icon = "📏",
+                AccentHexColor = "#0288D1",
+                BackgroundHexColor = "#0C2D48",
+                Pin1 = trigPin,
+                Pin2 = echoPin,
+                VariableName = "distCm",
+                Description = $"Measures ultrasonic distance ({trigPin}/{echoPin}) and stores result in variable."
+            },
+            BoxBlockKind.ReadDhtSensor => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Sensors,
+                Title = "READ DHT11 TEMP & HUMIDITY",
+                ModelName = "DHT11",
+                Icon = "🌡️",
+                AccentHexColor = "#0288D1",
+                BackgroundHexColor = "#0C2D48",
+                Pin1 = dhtPin,
+                Description = $"Samples temperature & humidity on {dhtPin}."
+            },
+            BoxBlockKind.ReadLdrLight => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Sensors,
+                Title = "READ LDR LIGHT SENSOR",
+                ModelName = "LDR",
+                Icon = "☀️",
+                AccentHexColor = "#0288D1",
+                BackgroundHexColor = "#0C2D48",
+                Pin1 = analogPin,
+                Description = $"Reads ambient light level from {analogPin}."
+            },
+            BoxBlockKind.ReadPotentiometer => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Sensors,
+                Title = "READ POTENTIOMETER",
+                ModelName = "POT-10K",
+                Icon = "🎛️",
+                AccentHexColor = "#0288D1",
+                BackgroundHexColor = "#0C2D48",
+                Pin1 = analogPin,
+                Description = $"Reads analog dial value from {analogPin}."
+            },
+            BoxBlockKind.ReadPirMotion => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Sensors,
+                Title = "READ PIR MOTION",
+                ModelName = "HC-SR501",
+                Icon = "🚶",
+                AccentHexColor = "#0288D1",
+                BackgroundHexColor = "#0C2D48",
+                Pin1 = pirPin,
+                Description = $"Detects motion on {pirPin}."
+            },
+            BoxBlockKind.ReadButton => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Sensors,
+                Title = "READ PUSH BUTTON",
+                Icon = "🔘",
+                AccentHexColor = "#0288D1",
+                BackgroundHexColor = "#0C2D48",
+                Pin1 = buttonPin,
+                Description = $"Reads active-LOW tactile switch on {buttonPin}."
+            },
+            BoxBlockKind.ReadGasSensor => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Sensors,
+                Title = "READ GAS SENSOR (MQ-2)",
+                ModelName = "MQ-2",
+                Icon = "💨",
+                AccentHexColor = "#0288D1",
+                BackgroundHexColor = "#0C2D48",
+                Pin1 = analogPin,
+                Description = $"Reads gas concentration on {analogPin}."
+            },
+            BoxBlockKind.ReadSoundSensor => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Sensors,
+                Title = "READ SOUND SENSOR",
+                Icon = "🎙️",
+                AccentHexColor = "#0288D1",
+                BackgroundHexColor = "#0C2D48",
+                Pin1 = soundPin,
+                Description = $"Detects sound trigger on {soundPin}."
+            },
+            BoxBlockKind.ReadAnalogTemperature => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Sensors,
+                Title = "READ ANALOG TEMP (TMP36)",
+                ModelName = "TMP36",
+                Icon = "🌡️",
+                AccentHexColor = "#0288D1",
+                BackgroundHexColor = "#0C2D48",
+                Pin1 = analogPin,
+                Description = $"Computes Celsius reading from {analogPin}."
+            },
+            BoxBlockKind.ReadMpu6050 => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Sensors,
+                Title = "READ MPU-6050 IMU",
+                ModelName = "MPU-6050",
+                Icon = "🧭",
+                AccentHexColor = "#0288D1",
+                BackgroundHexColor = "#0C2D48",
+                Description = "Reads 3-axis accelerometer over I2C (0x68)."
+            },
+            BoxBlockKind.LcdInitI2c => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Displays,
+                Title = "INIT LCD 1602 I2C",
+                ModelName = "LCD1602 I2C",
+                Icon = "🖥️",
+                AccentHexColor = "#06B6D4",
+                BackgroundHexColor = "#083344",
+                LcdI2cAddress = "0x27",
+                Description = "Initializes 16x2 I2C character LCD and enables backlight."
+            },
+            BoxBlockKind.LcdPrintText => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Displays,
+                Title = "LCD PRINT TEXT",
+                ModelName = "LCD1602 I2C",
+                Icon = "📝",
+                AccentHexColor = "#06B6D4",
+                BackgroundHexColor = "#083344",
+                LcdRow = 0,
+                LcdCol = 0,
+                Parameter1 = "Hello World!",
+                Description = "Writes text to 16x2 LCD cursor location."
+            },
+            BoxBlockKind.LcdPrintSensor => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Displays,
+                Title = "LCD PRINT SENSOR",
+                ModelName = "LCD1602 I2C",
+                Icon = "📊",
+                AccentHexColor = "#06B6D4",
+                BackgroundHexColor = "#083344",
+                LcdRow = 1,
+                LcdCol = 0,
+                Parameter1 = "Temp: {temp}C",
+                Description = "Displays live sensor reading on LCD."
+            },
+            BoxBlockKind.LcdClear => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Displays,
+                Title = "LCD CLEAR SCREEN",
+                ModelName = "LCD1602 I2C",
+                Icon = "🧹",
+                AccentHexColor = "#06B6D4",
+                BackgroundHexColor = "#083344",
+                Description = "Clears characters from 16x2 LCD."
+            },
+            BoxBlockKind.LcdBacklight => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Displays,
+                Title = "LCD BACKLIGHT ON/OFF",
+                ModelName = "LCD1602 I2C",
+                Icon = "🔆",
+                AccentHexColor = "#06B6D4",
+                BackgroundHexColor = "#083344",
+                Parameter1 = "ON",
+                Description = "Toggles LCD backlight power."
+            },
+            BoxBlockKind.DisplayOledI2c => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Displays,
+                Title = "OLED SSD1306 PRINT",
+                ModelName = "SSD1306 128x64",
+                Icon = "📺",
+                AccentHexColor = "#06B6D4",
+                BackgroundHexColor = "#083344",
+                Parameter1 = "Telemetry OK",
+                Description = "Displays text on I2C OLED display."
+            },
+            BoxBlockKind.SetLed => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Actuators,
+                Title = "SET LED DIGITAL OUTPUT",
+                Icon = "💡",
+                AccentHexColor = "#E91E63",
+                BackgroundHexColor = "#4A102A",
+                Pin1 = ledPin,
+                Parameter1 = "HIGH",
+                Description = $"Sets {ledPin} HIGH or LOW."
+            },
+            BoxBlockKind.SetRgbLed or BoxBlockKind.RgbLedColor => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Actuators,
+                Title = "SET RGB LED (R,G,B)",
+                Icon = "🌈",
+                AccentHexColor = "#E91E63",
+                BackgroundHexColor = "#4A102A",
+                Pin1 = rgbR,
+                Pin2 = rgbG,
+                SecondaryVariableName = rgbB,
+                Parameter1 = "255,64,128",
+                Description = $"Drives RGB LED channels on {rgbR}/{rgbG}/{rgbB}."
+            },
+            BoxBlockKind.SetPwm => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Actuators,
+                Title = "SET PWM DUTY (0..255)",
+                Icon = "〰️",
+                AccentHexColor = "#E91E63",
+                BackgroundHexColor = "#4A102A",
+                Pin1 = pwmPin,
+                Parameter1 = "128",
+                Description = $"Outputs PWM signal on {pwmPin}."
+            },
+            BoxBlockKind.SetBuzzer => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Actuators,
+                Title = "BUZZER TONE (HZ)",
+                Icon = "🔊",
+                AccentHexColor = "#D81B60",
+                BackgroundHexColor = "#4A102A",
+                Pin1 = buzzerPin,
+                Parameter1 = "1000",
+                Parameter2 = "250",
+                Description = $"Generates tone frequency on {buzzerPin}."
+            },
+            BoxBlockKind.PlayToneNote => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Actuators,
+                Title = "PLAY MUSICAL NOTE",
+                Icon = "🎵",
+                AccentHexColor = "#D81B60",
+                BackgroundHexColor = "#4A102A",
+                Pin1 = buzzerPin,
+                Parameter1 = "C5",
+                Parameter2 = "200",
+                Description = $"Plays musical pitch (e.g., C5, A4) on {buzzerPin}."
+            },
+            BoxBlockKind.SetServo => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Actuators,
+                Title = "MOVE SERVO ANGLE",
+                Icon = "🦾",
+                AccentHexColor = "#D81B60",
+                BackgroundHexColor = "#4A102A",
+                Pin1 = servoPin,
+                Parameter1 = "90",
+                Description = $"Rotates hobby servo on {servoPin} to 0..180 deg."
+            },
+            BoxBlockKind.SetRelay => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Actuators,
+                Title = "SWITCH RELAY",
+                Icon = "🔌",
+                AccentHexColor = "#D81B60",
+                BackgroundHexColor = "#4A102A",
+                Pin1 = relayPin,
+                Parameter1 = "HIGH",
+                Description = $"Controls relay module on {relayPin}."
+            },
+            BoxBlockKind.IfCondition => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Control,
+                Title = "IF CONDITION",
+                Icon = "🔀",
+                AccentHexColor = "#8E24AA",
+                BackgroundHexColor = "#321445",
+                VariableName = "measuredDistanceCm",
+                ConditionOperator = "<",
+                ConditionThreshold = 20.0,
+                Description = "Executes indented child blocks when condition is true."
+            },
+            BoxBlockKind.IfElseCondition => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Control,
+                Title = "IF / ELSE CONDITION",
+                Icon = "⚖️",
+                AccentHexColor = "#8E24AA",
+                BackgroundHexColor = "#321445",
+                VariableName = "currentTemperature",
+                ConditionOperator = ">",
+                ConditionThreshold = 30.0,
+                Description = "Branches between IF indented children and ELSE fallback."
+            },
+            BoxBlockKind.RepeatTimes => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Control,
+                Title = "REPEAT N TIMES",
+                Icon = "🔄",
+                AccentHexColor = "#8E24AA",
+                BackgroundHexColor = "#321445",
+                RepeatCount = 5,
+                Description = "Repeats indented child blocks a fixed number of times."
+            },
+            BoxBlockKind.WhileLoop => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Control,
+                Title = "WHILE CONDITION LOOP",
+                Icon = "♾️",
+                AccentHexColor = "#8E24AA",
+                BackgroundHexColor = "#321445",
+                VariableName = "buttonPressed",
+                ConditionOperator = "==",
+                ConditionThreshold = 1.0,
+                Description = "Repeats indented child blocks while condition remains true."
+            },
+            BoxBlockKind.Delay => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Control,
+                Title = "WAIT / DELAY (MS)",
+                Icon = "⏱️",
+                AccentHexColor = "#607D8B",
+                BackgroundHexColor = "#263238",
+                Parameter1 = "500",
+                Description = "Pauses execution for specified milliseconds."
+            },
+            BoxBlockKind.CompareCondition => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Logic,
+                Title = "COMPARE THRESHOLD",
+                Icon = "🔍",
+                AccentHexColor = "#7C3AED",
+                BackgroundHexColor = "#2E1065",
+                VariableName = "currentTemperature",
+                ConditionOperator = ">=",
+                ConditionThreshold = 25.0,
+                Description = "Evaluates variable against threshold."
+            },
+            BoxBlockKind.LogicalAnd => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Logic,
+                Title = "LOGICAL AND (&&)",
+                Icon = "🔗",
+                AccentHexColor = "#7C3AED",
+                BackgroundHexColor = "#2E1065",
+                VariableName = "currentTemperature",
+                ConditionOperator = ">",
+                ConditionThreshold = 25.0,
+                SecondaryVariableName = "currentHumidity",
+                SecondaryConditionOperator = "<",
+                SecondaryConditionThreshold = 70.0,
+                Description = "Checks two conditions simultaneously."
+            },
+            BoxBlockKind.LogicalOr => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Logic,
+                Title = "LOGICAL OR (||)",
+                Icon = "⚡",
+                AccentHexColor = "#7C3AED",
+                BackgroundHexColor = "#2E1065",
+                VariableName = "currentTemperature",
+                ConditionOperator = ">",
+                ConditionThreshold = 40.0,
+                SecondaryVariableName = "gasLevelAnalog",
+                SecondaryConditionOperator = ">",
+                SecondaryConditionThreshold = 400.0,
+                Description = "Triggers if either condition holds."
+            },
+            BoxBlockKind.MathOperation => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Logic,
+                Title = "MATH OPERATION",
+                Icon = "🧮",
+                AccentHexColor = "#7C3AED",
+                BackgroundHexColor = "#2E1065",
+                MathTargetVariable = "calcResult",
+                Operand1 = "currentTemperature",
+                MathOperator = "*",
+                Operand2 = "1.8",
+                Description = "Computes arithmetic expression into target variable."
+            },
+            BoxBlockKind.MapRange => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Logic,
+                Title = "MAP VALUE RANGE",
+                Icon = "📐",
+                AccentHexColor = "#7C3AED",
+                BackgroundHexColor = "#2E1065",
+                VariableName = "mappedVal",
+                Operand1 = "potAnalogValue",
+                Parameter1 = "0,1023",
+                Parameter2 = "0,255",
+                Description = "Scales input value linearly from source range to target range."
+            },
+            BoxBlockKind.SetVariable => new BoxBlockItem
+            {
+                Kind = kind,
+                Category = BoxBlockCategory.Logic,
+                Title = "SET VARIABLE",
+                Icon = "📦",
+                AccentHexColor = "#7C3AED",
+                BackgroundHexColor = "#2E1065",
+                VariableName = "systemState",
+                Parameter1 = "1",
+                Description = "Assigns a numeric or state value to a named variable."
+            },
+            _ => new BoxBlockItem
+            {
+                Kind = BoxBlockKind.SerialPrint,
+                Category = BoxBlockCategory.Output,
+                Title = "SERIAL MONITOR PRINT",
+                Icon = "📟",
+                AccentHexColor = "#2E7D32",
+                BackgroundHexColor = "#1B3B1E",
+                CustomMessage = "Telemetry heartbeat",
+                Description = "Logs message to USB Serial Monitor."
+            }
+        };
+    }
+
+    private static string ResolveCppConditionVariable(
+        BoxBlockItem b,
+        IReadOnlyList<BoxBlockItem> blocks,
+        bool hasDht,
+        string? fallback = null)
+    {
+        if (!string.IsNullOrWhiteSpace(b.VariableName))
+            return SanitizeIdentifier(b.VariableName, "sensorVal");
+
+        if (b.Kind == BoxBlockKind.IfCondition)
+        {
+            var ultraCm = blocks.FirstOrDefault(x => x.Kind == BoxBlockKind.ReadUltrasonicCm);
+            if (ultraCm != null)
+                return GetUltrasonicVarName(ultraCm);
+            return "measuredDistanceCm";
+        }
+
+        if (hasDht) return "currentTemperature";
+        if (blocks.Any(x => x.Kind == BoxBlockKind.ReadUltrasonic)) return "measuredDistanceCm";
+        var uCm = blocks.FirstOrDefault(x => x.Kind == BoxBlockKind.ReadUltrasonicCm);
+        if (uCm != null) return GetUltrasonicVarName(uCm);
+        return fallback ?? "sensorVal";
+    }
+
+    private static string ResolvePythonConditionVariable(
+        BoxBlockItem b,
+        IReadOnlyList<BoxBlockItem> blocks,
+        bool hasDht,
+        string? fallback = null)
+    {
+        if (!string.IsNullOrWhiteSpace(b.VariableName))
+            return SanitizeIdentifier(b.VariableName, "sensor_val");
+
+        if (b.Kind == BoxBlockKind.IfCondition)
+        {
+            var ultraCm = blocks.FirstOrDefault(x => x.Kind == BoxBlockKind.ReadUltrasonicCm);
+            if (ultraCm != null)
+                return GetUltrasonicVarName(ultraCm);
+            return "distance_cm";
+        }
+
+        if (hasDht) return "temp";
+        if (blocks.Any(x => x.Kind == BoxBlockKind.ReadUltrasonic)) return "distance_cm";
+        var uCm = blocks.FirstOrDefault(x => x.Kind == BoxBlockKind.ReadUltrasonicCm);
+        if (uCm != null) return GetUltrasonicVarName(uCm);
+        return fallback ?? "sensor_val";
+    }
+
+    private static string GetUltrasonicVarName(BoxBlockItem b) =>
+        SanitizeIdentifier(b.VariableName, "distCm");
+
+    private static (string TargetVar, string InputExpr, string InMin, string InMax, string OutMin, string OutMax)
+        ParseMapRange(BoxBlockItem b, bool isPython)
+    {
+        string targetRaw = !string.IsNullOrWhiteSpace(b.VariableName) ? b.VariableName : b.MathTargetVariable;
+        string targetVar = SanitizeIdentifier(targetRaw, "mappedVal");
+        string inputExpr = string.IsNullOrWhiteSpace(b.Operand1)
+            ? (isPython ? "pot_val" : "potAnalogValue")
+            : b.Operand1.Trim();
+
+        var nums = new List<int>();
+        foreach (string rawSource in new[] { b.Parameter1, b.Parameter2, b.Operand2 })
+        {
+            if (string.IsNullOrWhiteSpace(rawSource)) continue;
+            var tokens = rawSource.Split(new[] { ',', ';', ' ', '\t', '|', '>' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var tok in tokens)
+            {
+                string clean = tok.Replace("..", " ").Trim();
+                if (int.TryParse(clean, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v))
+                    nums.Add(v);
+            }
+        }
+
+        string inMin = nums.Count >= 4 ? nums[0].ToString(CultureInfo.InvariantCulture) : "0";
+        string inMax = nums.Count >= 4 ? nums[1].ToString(CultureInfo.InvariantCulture) : "1023";
+        string outMin = nums.Count >= 4 ? nums[2].ToString(CultureInfo.InvariantCulture) : "0";
+        string outMax = nums.Count >= 4 ? nums[3].ToString(CultureInfo.InvariantCulture) : "255";
+        return (targetVar, inputExpr, inMin, inMax, outMin, outMax);
+    }
+
+    private static int ParseMusicalNoteHz(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return 523;
+
+        string s = raw.Trim().ToUpperInvariant();
+        if (int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out int numericHz))
+            return Math.Clamp(numericHz, 50, 12000);
+
+        return s switch
+        {
+            "C3" => 131,
+            "C#3" or "DB3" => 139,
+            "D3" => 147,
+            "D#3" or "EB3" => 156,
+            "E3" => 165,
+            "F3" => 175,
+            "F#3" or "GB3" => 185,
+            "G3" => 196,
+            "G#3" or "AB3" => 208,
+            "A3" => 220,
+            "A#3" or "BB3" => 233,
+            "B3" => 247,
+            "C4" => 262,
+            "C#4" or "DB4" => 277,
+            "D4" => 294,
+            "D#4" or "EB4" => 311,
+            "E4" => 330,
+            "F4" => 349,
+            "F#4" or "GB4" => 370,
+            "G4" => 392,
+            "G#4" or "AB4" => 415,
+            "A4" => 440,
+            "A#4" or "BB4" => 466,
+            "B4" => 494,
+            "C5" => 523,
+            "C#5" or "DB5" => 554,
+            "D5" => 587,
+            "D#5" or "EB5" => 622,
+            "E5" => 659,
+            "F5" => 698,
+            "F#5" or "GB5" => 740,
+            "G5" => 784,
+            "G#5" or "AB5" => 831,
+            "A5" => 880,
+            "A#5" or "BB5" => 932,
+            "B5" => 988,
+            "C6" => 1047,
+            _ => 523
+        };
+    }
+
+    private static (string RPin, string GPin, string BPin) ParseRgbPins(BoxBlockItem b, MicrocontrollerBoardType boardType)
+    {
+        bool isEsp = boardType is MicrocontrollerBoardType.Esp32DevKitV1 or MicrocontrollerBoardType.WemosEsp32S2Mini;
+        string defR = isEsp ? "25" : "9";
+        string defG = isEsp ? "26" : "10";
+        string defB = isEsp ? "27" : "11";
+
+        if (!string.IsNullOrWhiteSpace(b.Pin1) && b.Pin1.Contains(','))
+        {
+            var parts = b.Pin1.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            string r = parts.Length > 0 ? CleanPin(parts[0]) : defR;
+            string g = parts.Length > 1 ? CleanPin(parts[1]) : defG;
+            string bl = parts.Length > 2 ? CleanPin(parts[2]) : defB;
+            return (r, g, bl);
+        }
+
+        string rPin = string.IsNullOrWhiteSpace(b.Pin1) ? defR : CleanPin(b.Pin1);
+        string gPin = string.IsNullOrWhiteSpace(b.Pin2) ? defG : CleanPin(b.Pin2);
+        string bPin = string.IsNullOrWhiteSpace(b.SecondaryVariableName) ? defB : CleanPin(b.SecondaryVariableName);
+        return (rPin, gPin, bPin);
+    }
+
+    private static (int R, int G, int B) ParseRgbColors(BoxBlockItem b)
+    {
+        string raw = string.Join(",", new[] { b.Parameter1, b.Parameter2 }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        if (string.IsNullOrWhiteSpace(raw))
+            return (255, 64, 128);
+
+        string trimmed = raw.Trim();
+        if (trimmed.StartsWith('#') && trimmed.Length == 7 &&
+            int.TryParse(trimmed[1..3], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int hr) &&
+            int.TryParse(trimmed[3..5], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int hg) &&
+            int.TryParse(trimmed[5..7], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int hb))
+        {
+            return (hr, hg, hb);
+        }
+
+        var vals = new List<int>();
+        foreach (string tok in trimmed.Split(new[] { ',', ';', ' ', '|' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (int.TryParse(tok, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v))
+                vals.Add(Math.Clamp(v, 0, 255));
+        }
+
+        return vals.Count switch
+        {
+            >= 3 => (vals[0], vals[1], vals[2]),
+            2 => (vals[0], vals[1], 0),
+            1 => (vals[0], 0, 0),
+            _ => (255, 64, 128)
+        };
+    }
+
+    private static string SanitizeIdentifier(string? name, string fallback)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return fallback;
+
+        var chars = name.Trim().Where(c => char.IsLetterOrDigit(c) || c == '_').ToArray();
+        if (chars.Length == 0)
+            return fallback;
+
+        string cleaned = new string(chars);
+        if (char.IsDigit(cleaned[0]))
+            cleaned = "_" + cleaned;
+        return cleaned;
+    }
+
+    private static bool IsSimpleIdentifier(string? expr)
+    {
+        if (string.IsNullOrWhiteSpace(expr)) return false;
+        string s = expr.Trim();
+        return (char.IsLetter(s[0]) || s[0] == '_') && s.All(c => char.IsLetterOrDigit(c) || c == '_');
     }
 
     private static void AddPinDef(StringBuilder sb, HashSet<string> pinDefs, string macroName, string pinValue)

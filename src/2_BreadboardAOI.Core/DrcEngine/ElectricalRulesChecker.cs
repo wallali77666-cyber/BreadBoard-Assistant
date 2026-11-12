@@ -1134,7 +1134,14 @@ public sealed class ElectricalRulesChecker
     }
 
     private static bool IsPolarized(ComponentKind kind) =>
-        kind is ComponentKind.Led or ComponentKind.IntegratedCircuit or ComponentKind.Microcontroller;
+        kind is ComponentKind.Led
+            or ComponentKind.Diode
+            or ComponentKind.Battery
+            or ComponentKind.Transistor
+            or ComponentKind.VoltageRegulator
+            or ComponentKind.Sensor
+            or ComponentKind.IntegratedCircuit
+            or ComponentKind.Microcontroller;
 
     private void CheckLedCurrentLimitingResistors(IReadOnlyList<SnappedComponent> components, List<DrcViolation> violations)
     {
@@ -1168,43 +1175,46 @@ public sealed class ElectricalRulesChecker
                 continue;
             }
 
-            // Series resistor check:
+            bool pin1PowerRail = pin1Vcc || pin1Gnd || IsVccStrip(net1) || IsGndStrip(net1);
+            bool pin2PowerRail = pin2Vcc || pin2Gnd || IsVccStrip(net2) || IsGndStrip(net2);
+
+            // Series resistor check (matches both direct strip sharing and jumper-bridged root nets):
             for (int r = 0; r < components.Count; r++)
             {
                 SnappedComponent res = components[r];
                 if (res.RawDetection.Kind != ComponentKind.Resistor)
                     continue;
 
-                int sharedStrip = -1;
+                int resNet1 = FindRootNet(res.Pin1Hole.StripId);
+                int resNet2 = FindRootNet(res.Pin2Hole.StripId);
+                if (resNet1 == resNet2)
+                    continue;
+
                 int ledOtherStrip = -1;
                 int resOtherStrip = -1;
 
-                if (res.Pin1Hole.StripId == c.Pin1Hole.StripId)
+                if (!pin1PowerRail && resNet1 == net1)
                 {
-                    sharedStrip = c.Pin1Hole.StripId;
                     ledOtherStrip = c.Pin2Hole.StripId;
                     resOtherStrip = res.Pin2Hole.StripId;
                 }
-                else if (res.Pin2Hole.StripId == c.Pin1Hole.StripId)
+                else if (!pin1PowerRail && resNet2 == net1)
                 {
-                    sharedStrip = c.Pin1Hole.StripId;
                     ledOtherStrip = c.Pin2Hole.StripId;
                     resOtherStrip = res.Pin1Hole.StripId;
                 }
-                else if (res.Pin1Hole.StripId == c.Pin2Hole.StripId)
+                else if (!pin2PowerRail && resNet1 == net2)
                 {
-                    sharedStrip = c.Pin2Hole.StripId;
                     ledOtherStrip = c.Pin1Hole.StripId;
                     resOtherStrip = res.Pin2Hole.StripId;
                 }
-                else if (res.Pin2Hole.StripId == c.Pin2Hole.StripId)
+                else if (!pin2PowerRail && resNet2 == net2)
                 {
-                    sharedStrip = c.Pin2Hole.StripId;
                     ledOtherStrip = c.Pin1Hole.StripId;
                     resOtherStrip = res.Pin1Hole.StripId;
                 }
 
-                if (sharedStrip == -1)
+                if (ledOtherStrip == -1)
                     continue;
 
                 int ledOtherNet = FindRootNet(ledOtherStrip);

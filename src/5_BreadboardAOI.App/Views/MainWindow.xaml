@@ -441,6 +441,99 @@
                                                         Content="CLEAR WIRES"
                                                         ToolTip="Remove all jumper wires attached to the microcontroller" />
                                             </UniformGrid>
+                                            <!-- CABLES & HARDWARE PROGRAMMER SUB-CARD -->
+                                            <Border Background="{StaticResource PanelBackgroundBrush}"
+                                                    BorderBrush="{StaticResource BorderSubtleBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="4"
+                                                    Padding="6,5"
+                                                    Margin="0,5,0,3">
+                                                <StackPanel>
+                                                    <DockPanel LastChildFill="False" Margin="0,0,0,4">
+                                                        <TextBlock DockPanel.Dock="Left"
+                                                                   Text="CABLES &amp; HARDWARE PROGRAMMER"
+                                                                   Style="{StaticResource PanelHeaderTextStyle}"
+                                                                   FontSize="9"
+                                                                   Foreground="{StaticResource AccentCyanBrush}"
+                                                                   VerticalAlignment="Center" />
+                                                        <Border DockPanel.Dock="Right"
+                                                                Background="#0F172A"
+                                                                BorderBrush="{StaticResource AccentCyanBrush}"
+                                                                BorderThickness="1"
+                                                                CornerRadius="2"
+                                                                Padding="4,1">
+                                                            <TextBlock Text="{Binding SelectedCableBadgeText}"
+                                                                       FontFamily="{StaticResource MonoFontFamily}"
+                                                                       FontSize="8"
+                                                                       Foreground="{StaticResource AccentCyanBrush}" />
+                                                        </Border>
+                                                    </DockPanel>
+                                                    <UniformGrid Columns="3" Margin="0,0,0,3">
+                                                        <ToggleButton Style="{StaticResource ToolbarToggleButtonStyle}" Margin="1" Padding="4,4" FontSize="8.5"
+                                                                      Background="{StaticResource ToolbarSurfaceBrush}"
+                                                                      BorderBrush="{StaticResource BorderBrush}"
+                                                                      IsChecked="{Binding IsTypeCCableSelected, Mode=OneWay}"
+                                                                      Command="{Binding SelectUsbCableCommand}" CommandParameter="typec"
+                                                                      Content="USB TYPE-C"
+                                                                      ToolTip="USB Type-C 3.1 programmer cable (native Wemos S2 Mini)" />
+                                                        <ToggleButton Style="{StaticResource ToolbarToggleButtonStyle}" Margin="1" Padding="4,4" FontSize="8.5"
+                                                                      Background="{StaticResource ToolbarSurfaceBrush}"
+                                                                      BorderBrush="{StaticResource BorderBrush}"
+                                                                      IsChecked="{Binding IsTypeBCableSelected, Mode=OneWay}"
+                                                                      Command="{Binding SelectUsbCableCommand}" CommandParameter="usbb"
+                                                                      Content="USB TYPE-B"
+                                                                      ToolTip="Standard USB-B Printer/ISP cable (native Arduino Uno &amp; Mega)" />
+                                                        <ToggleButton Style="{StaticResource ToolbarToggleButtonStyle}" Margin="1" Padding="4,4" FontSize="8.5"
+                                                                      Background="{StaticResource ToolbarSurfaceBrush}"
+                                                                      BorderBrush="{StaticResource BorderBrush}"
+                                                                      IsChecked="{Binding IsMicroUsbCableSelected, Mode=OneWay}"
+                                                                      Command="{Binding SelectUsbCableCommand}" CommandParameter="micro"
+                                                                      Content="MICRO-USB"
+                                                                      ToolTip="Micro-USB high-speed UART cable (native ESP32 DevKit &amp; STM32)" />
+                                                    </UniformGrid>
+                                                    <Grid Margin="0,1,0,3">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <Button Grid.Column="0"
+                                                                Style="{StaticResource DockButtonStyle}"
+                                                                Margin="1"
+                                                                Command="{Binding ToggleUsbCableConnectionCommand}"
+                                                                Content="{Binding ConnectCableButtonLabel}"
+                                                                ToolTip="Plug or unplug the USB programmer cable on the 2D CAD canvas" />
+                                                        <Button Grid.Column="1"
+                                                                Style="{StaticResource DockButtonStyle}"
+                                                                Margin="3,1,1,1"
+                                                                Padding="8,4"
+                                                                Background="#004D40"
+                                                                BorderBrush="#00BFA5"
+                                                                Foreground="#A7FFEB"
+                                                                FontWeight="Bold"
+                                                                Visibility="{Binding IsProgrammerCableConnected, Converter={StaticResource BoolToVis}}"
+                                                                Command="{Binding OpenProgrammerUploadDialogCommand}"
+                                                                Content="⬆ UPLOAD TO BOARD"
+                                                                ToolTip="Analyze code and flash firmware onto the virtual/connected MCU" />
+                                                    </Grid>
+                                                    <TextBlock Text="{Binding ConnectedBoardSummary}"
+                                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                                               FontSize="8.2"
+                                                               TextWrapping="Wrap"
+                                                               Foreground="{StaticResource TextPrimaryBrush}" />
+                                                    <TextBlock Text="{Binding CableCompatibilityNote}"
+                                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                                               FontSize="8.2"
+                                                               Margin="0,1,0,0"
+                                                               TextWrapping="Wrap"
+                                                               Foreground="{StaticResource TextSecondaryBrush}" />
+                                                    <TextBlock Text="{Binding ProgrammerStatusText}"
+                                                               Style="{StaticResource MonoSecondaryTextStyle}"
+                                                               FontSize="8.2"
+                                                               Margin="0,2,0,0"
+                                                               TextWrapping="Wrap"
+                                                               Foreground="{StaticResource AccentCyanBrush}" />
+                                                </StackPanel>
+                                            </Border>
                                             <TextBlock Text="* Click any MCU pin socket on CAD canvas, then click a breadboard tie point to route jumper wires."
                                                        Style="{StaticResource MonoSecondaryTextStyle}" FontSize="8.5" Margin="0,3,0,0" TextWrapping="Wrap" Foreground="{StaticResource TextMutedBrush}" />
                                         </StackPanel>
@@ -1675,6 +1768,200 @@
                             </StackPanel>
                         </ScrollViewer>
                     </TabItem>
+
+                    <TabItem Header="LAB (EXP)" Style="{StaticResource DockTabItemStyle}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel Margin="10">
+                                <!-- EXPERIMENTAL LAB BANNER -->
+                                <Border Background="#161B26" BorderBrush="#2A364F" BorderThickness="1" Padding="8,6" Margin="0,0,0,8">
+                                    <StackPanel>
+                                        <TextBlock Text="EXPERIMENTAL WORKBENCH &amp; LIVE MCU LAB"
+                                                   Style="{StaticResource PanelHeaderTextStyle}"
+                                                   FontSize="9.5"
+                                                   Foreground="{StaticResource AccentCyanBrush}" />
+                                        <TextBlock Text="{Binding ExperimentalLabStatus}"
+                                                   Style="{StaticResource MonoSecondaryTextStyle}"
+                                                   FontSize="9"
+                                                   Margin="0,3,0,0"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- 1. CIRCUIT DRC AUTO-FIX -->
+                                <TextBlock Text="CIRCUIT DRC AUTO-FIX" Style="{StaticResource PanelHeaderTextStyle}" Margin="0,2,0,4" />
+                                <Button Style="{StaticResource DockButtonStyle}"
+                                        Command="{Binding AutoFixAllViolationsCommand}"
+                                        Background="#1B3B2B"
+                                        BorderBrush="#10B981"
+                                        Foreground="#A7F3D0"
+                                        FontWeight="Bold"
+                                        Padding="8,6"
+                                        Content="✨ AUTO-FIX ALL DRC VIOLATIONS"
+                                        ToolTip="Automatically resolve VCC-GND rail shorts, add 220R resistors on bare LEDs, fix reversed LED polarity, and align floating pins" />
+                                <TextBlock Text="Fixes rail shorts, inserts missing 220R LED limiters, flips reversed LED leads, and resolves floating junctions."
+                                           Style="{StaticResource MonoSecondaryTextStyle}"
+                                           FontSize="8.5"
+                                           Margin="0,3,0,8"
+                                           TextWrapping="Wrap"
+                                           Foreground="{StaticResource TextMutedBrush}" />
+
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                <!-- 2. AI PROMPT TO CIRCUIT SYNTHESIZER -->
+                                <TextBlock Text="NATURAL LANGUAGE CIRCUIT SYNTHESIZER" Style="{StaticResource PanelHeaderTextStyle}" Margin="0,6,0,4" />
+                                <TextBox Style="{StaticResource DockTextBoxStyle}"
+                                         Text="{Binding ExperimentalCircuitPrompt, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         Height="26"
+                                         Margin="0,0,0,4"
+                                         ToolTip="Describe a circuit e.g. 'LED blink with 220R resistor' or 'Ultrasonic distance radar with buzzer'" />
+                                <Button Style="{StaticResource DockButtonStyle}"
+                                        Command="{Binding GenerateCircuitFromPromptCommand}"
+                                        Background="#1E293B"
+                                        BorderBrush="{StaticResource AccentBlueBrush}"
+                                        Foreground="#E2E8F0"
+                                        FontWeight="SemiBold"
+                                        Padding="8,5"
+                                        Content="⚡ GENERATE CIRCUIT &amp; CODE" />
+                                <ItemsControl ItemsSource="{Binding PresetCircuitPrompts}" Margin="0,5,0,6">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel Orientation="Horizontal" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Content="{Binding}"
+                                                    Style="{StaticResource DockButtonStyle}"
+                                                    FontSize="8.5"
+                                                    Padding="6,3"
+                                                    Margin="0,0,4,4"
+                                                    Command="{Binding DataContext.GenerateCircuitFromPromptCommand, RelativeSource={RelativeSource AncestorType=TabControl}}"
+                                                    CommandParameter="{Binding}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                <!-- 3. THERMAL & CURRENT HEATMAP -->
+                                <TextBlock Text="THERMAL / CURRENT IR HEATMAP" Style="{StaticResource PanelHeaderTextStyle}" Margin="0,6,0,4" />
+                                <ToggleButton Style="{StaticResource ToolbarToggleButtonStyle}"
+                                              Background="{StaticResource ToolbarSurfaceBrush}"
+                                              BorderBrush="{StaticResource BorderBrush}"
+                                              IsChecked="{Binding ShowThermalHeatmap, Mode=TwoWay}"
+                                              Content="🔥 SHOW THERMAL HEATMAP OVERLAY"
+                                              ToolTip="Render calibrated power dissipation (mW / mA) heatmap halos across placed components" />
+                                <TextBlock Text="{Binding ThermalSummaryText}"
+                                           Style="{StaticResource MonoSecondaryTextStyle}"
+                                           FontSize="9"
+                                           Margin="0,4,0,8"
+                                           TextWrapping="Wrap"
+                                           Foreground="{StaticResource DrcWarningBrush}" />
+
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                <!-- 4. FIRMWARE SIMULATOR & SERIAL MONITOR -->
+                                <DockPanel LastChildFill="False" Margin="0,6,0,4">
+                                    <TextBlock DockPanel.Dock="Left"
+                                               Text="VIRTUAL FIRMWARE &amp; SERIAL (115200)"
+                                               Style="{StaticResource PanelHeaderTextStyle}"
+                                               VerticalAlignment="Center" />
+                                    <TextBlock DockPanel.Dock="Right"
+                                               Text="{Binding FirmwareStatusBadge}"
+                                               FontFamily="{StaticResource MonoFontFamily}"
+                                               FontSize="8.5"
+                                               Foreground="{StaticResource AccentCyanBrush}"
+                                               VerticalAlignment="Center" />
+                                </DockPanel>
+                                <CheckBox Content="Show 2D Hardware Programmer on CAD Canvas"
+                                          Style="{StaticResource LayerCheckBoxStyle}"
+                                          IsChecked="{Binding ShowHardwareProgrammer, Mode=TwoWay}"
+                                          Margin="0,0,0,4" />
+                                <UniformGrid Columns="3" Margin="0,0,0,6">
+                                    <Button Style="{StaticResource DockButtonStyle}" Margin="1" FontSize="8.5"
+                                            Command="{Binding ConnectUsbCableCommand}"
+                                            Content="🔌 CONNECT USB" />
+                                    <Button Style="{StaticResource DockButtonStyle}" Margin="1" FontSize="8.5"
+                                            Background="#004D40" BorderBrush="#00897B" Foreground="#A7FFEB"
+                                            Command="{Binding OpenProgrammerUploadDialogCommand}"
+                                            Content="⬆ UPLOAD FW" />
+                                    <Button Style="{StaticResource DockButtonStyle}" Margin="1" FontSize="8.5"
+                                            Command="{Binding StopVirtualFirmwareCommand}"
+                                            Content="⏹ STOP FW" />
+                                </UniformGrid>
+                                <TextBox Style="{StaticResource ConsoleTextBoxStyle}"
+                                         Text="{Binding VirtualSerialLog, Mode=OneWay}"
+                                         Height="116"
+                                         FontSize="9"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         Margin="0,0,0,4" />
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Grid.Column="0"
+                                             Style="{StaticResource DockTextBoxStyle}"
+                                             Text="{Binding SerialInputCommandText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Height="24"
+                                             ToolTip="Send simulated serial input command to firmware" />
+                                    <Button Grid.Column="1"
+                                            Style="{StaticResource DockButtonStyle}"
+                                            Margin="4,0,2,0"
+                                            Padding="8,2"
+                                            Command="{Binding SendSerialInputCommand}"
+                                            Content="SEND" />
+                                    <Button Grid.Column="2"
+                                            Style="{StaticResource DockButtonStyle}"
+                                            Margin="2,0,0,0"
+                                            Padding="6,2"
+                                            Command="{Binding ClearSerialMonitorCommand}"
+                                            Content="CLR" />
+                                </Grid>
+
+                                <Border Style="{StaticResource DockSeparatorStyle}" />
+
+                                <!-- 5. VIRTUAL LOGIC & PWM OSCILLOSCOPE -->
+                                <TextBlock Text="VIRTUAL LOGIC &amp; PWM OSCILLOSCOPE" Style="{StaticResource PanelHeaderTextStyle}" Margin="0,6,0,4" />
+                                <Border Background="#070B12" BorderBrush="#1E293B" BorderThickness="1" CornerRadius="3" Padding="4" Height="66">
+                                    <Viewbox Stretch="Fill">
+                                        <Canvas Width="220" Height="56" Background="#070B12">
+                                            <Line X1="0" Y1="28" X2="220" Y2="28" Stroke="#1E293B" StrokeThickness="0.7" StrokeDashArray="3 3" />
+                                            <Line X1="55" Y1="0" X2="55" Y2="56" Stroke="#1E293B" StrokeThickness="0.7" StrokeDashArray="2 3" />
+                                            <Line X1="110" Y1="0" X2="110" Y2="56" Stroke="#1E293B" StrokeThickness="0.7" StrokeDashArray="2 3" />
+                                            <Line X1="165" Y1="0" X2="165" Y2="56" Stroke="#1E293B" StrokeThickness="0.7" StrokeDashArray="2 3" />
+                                            <Polyline Points="{Binding OscilloscopeWaveformPoints}"
+                                                      Stroke="#00E5FF"
+                                                      StrokeThickness="1.8"
+                                                      StrokeLineJoin="Round" />
+                                        </Canvas>
+                                    </Viewbox>
+                                </Border>
+                                <ItemsControl ItemsSource="{Binding OscilloscopeSamples}" Margin="0,4,0,0" Height="18">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <UniformGrid Rows="1" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Background="#10B981" Margin="1,3" Opacity="0.75"
+                                                    ToolTip="{Binding ChannelName}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Text="{Binding OscilloscopeSummaryText}"
+                                           Style="{StaticResource MonoSecondaryTextStyle}"
+                                           FontSize="8.5"
+                                           Margin="0,3,0,2"
+                                           TextWrapping="Wrap"
+                                           Foreground="{StaticResource AccentCyanBrush}" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
                 </TabControl>
             </Border>
 
@@ -1703,6 +1990,7 @@
                                         PaintSurface="OnViewportPaintSurface"
                                         MouseMove="OnViewportMouseMove"
                                         MouseLeave="OnViewportMouseLeave"
+                                        MouseDown="OnViewportMouseDown"
                                         MouseLeftButtonDown="OnViewportMouseLeftButtonDown"
                                         MouseRightButtonDown="OnViewportMouseRightButtonDown"
                                         MouseUp="OnViewportMouseUp"

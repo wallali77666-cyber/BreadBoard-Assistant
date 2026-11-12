@@ -50,6 +50,26 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
     private string _selectedCategoryFilter = "ALL";
 
     [ObservableProperty]
+    private string _searchFilterText = string.Empty;
+
+    private bool _isInternalCodeUpdate;
+
+    [ObservableProperty]
+    private bool _isManualCodeEdit;
+
+    [ObservableProperty]
+    private BoxCodeAnalysisReport? _latestCodeAnalysis;
+
+    [ObservableProperty]
+    private string _codeErrorSummary = "✓ 0 Errors · 0 Warnings · Ready to Upload";
+
+    [ObservableProperty]
+    private bool _hasCodeErrors;
+
+    [ObservableProperty]
+    private bool _hasCodeWarnings;
+
+    [ObservableProperty]
     private bool _isLcdStimulated;
 
     [ObservableProperty]
@@ -65,11 +85,17 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
 
     public event Action<bool, string, string>? LcdSimulatedStateUpdated;
 
+    public event Action<string, TargetProgrammingLanguage, MicrocontrollerBoardType>? SendToProgrammerRequested;
+
+    public Action<string, TargetProgrammingLanguage, MicrocontrollerBoardType>? OnSendToProgrammer { get; set; }
+
     public ObservableCollection<BoxBlockItem> Blocks { get; } = new();
 
     public ObservableCollection<BoxBlockItem> PaletteBlocks { get; } = new();
 
     public ObservableCollection<BoxBlockItem> DisplayPaletteBlocks { get; } = new();
+
+    public ObservableCollection<BoxCodeDiagnostic> CodeDiagnostics { get; } = new();
 
     public ObservableCollection<string> BoardSuggestedDigitalPins { get; } = new();
 
@@ -203,6 +229,21 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             Pin1 = SelectedBoardType == MicrocontrollerBoardType.Esp32DevKitV1 ? "GPIO 5" : "D9",
             Pin2 = SelectedBoardType == MicrocontrollerBoardType.Esp32DevKitV1 ? "GPIO 18" : "D10",
             Description = "Measures distance (cm) via Trig & Echo pulses."
+        });
+        PaletteBlocks.Add(new BoxBlockItem
+        {
+            Kind = BoxBlockKind.ReadUltrasonicCm,
+            Category = BoxBlockCategory.Sensors,
+            Title = "Read Ultrasonic Distance (cm)",
+            ModelName = "HC-SR04",
+            Icon = "📏",
+            AccentHexColor = "#0288D1",
+            BackgroundHexColor = "#0D47A1",
+            IsCircuitMatched = circuitHasUltra,
+            Pin1 = SelectedBoardType == MicrocontrollerBoardType.Esp32DevKitV1 ? "GPIO 5" : "D9",
+            Pin2 = SelectedBoardType == MicrocontrollerBoardType.Esp32DevKitV1 ? "GPIO 18" : "D10",
+            VariableName = "distanceCm",
+            Description = "Reads HC-SR04 distance in cm into variable."
         });
         PaletteBlocks.Add(new BoxBlockItem
         {
@@ -344,6 +385,35 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             Parameter1 = "1000",
             Parameter2 = "250",
             Description = "Plays frequency tone (Hz) for given duration (ms)."
+        });
+        PaletteBlocks.Add(new BoxBlockItem
+        {
+            Kind = BoxBlockKind.PlayToneNote,
+            Category = BoxBlockCategory.Actuators,
+            Title = "Play Musical Note Tone",
+            Icon = "🎵",
+            AccentHexColor = "#EC4899",
+            BackgroundHexColor = "#831843",
+            IsCircuitMatched = circuitHasBuzzer,
+            Pin1 = defaultDigPin,
+            Parameter1 = "440",
+            Parameter2 = "300",
+            Description = "Plays musical note frequency (Hz) on piezo buzzer for duration (ms)."
+        });
+        PaletteBlocks.Add(new BoxBlockItem
+        {
+            Kind = BoxBlockKind.RgbLedColor,
+            Category = BoxBlockCategory.Actuators,
+            Title = "Set RGB LED Color",
+            Icon = "🌈",
+            AccentHexColor = "#14B8A6",
+            BackgroundHexColor = "#134E4A",
+            IsCircuitMatched = circuitHasLed,
+            Pin1 = defaultPwmPin,
+            Pin2 = SelectedBoardType == MicrocontrollerBoardType.Esp32DevKitV1 ? "GPIO 26" : "D10",
+            SecondaryVariableName = SelectedBoardType == MicrocontrollerBoardType.Esp32DevKitV1 ? "GPIO 27" : "D11",
+            Parameter1 = "255,0,128",
+            Description = "Drives RGB LED channels with R, G, B PWM values (0..255)."
         });
         PaletteBlocks.Add(new BoxBlockItem
         {
@@ -525,6 +595,21 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
         });
         PaletteBlocks.Add(new BoxBlockItem
         {
+            Kind = BoxBlockKind.MapRange,
+            Category = BoxBlockCategory.Logic,
+            Title = "Map Value Range",
+            Icon = "📐",
+            AccentHexColor = "#10B981",
+            BackgroundHexColor = "#064E3B",
+            MathTargetVariable = "mappedValue",
+            VariableName = "mappedValue",
+            Operand1 = "potValue",
+            Parameter1 = "0,1023",
+            Parameter2 = "0,255",
+            Description = "Maps an input variable from [inMin..inMax] to [outMin..outMax]."
+        });
+        PaletteBlocks.Add(new BoxBlockItem
+        {
             Kind = BoxBlockKind.SetVariable,
             Category = BoxBlockCategory.Logic,
             Title = "Set Variable Value",
@@ -637,12 +722,24 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             }
         }
 
+        if (!string.IsNullOrWhiteSpace(SearchFilterText))
+        {
+            string needle = SearchFilterText.Trim();
+            query = query.Where(b =>
+                (b.Title?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (b.Description?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (b.ModelName?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                b.Category.ToString().Contains(needle, StringComparison.OrdinalIgnoreCase));
+        }
+
         var items = query.OrderByDescending(b => b.IsCircuitMatched).ToList();
         foreach (var item in items)
             DisplayPaletteBlocks.Add(item);
     }
 
     partial void OnFilterCircuitOnlyChanged(bool value) => UpdateDisplayPalette();
+
+    partial void OnSearchFilterTextChanged(string value) => UpdateDisplayPalette();
 
     partial void OnSelectedBoardTypeChanged(MicrocontrollerBoardType value)
     {
@@ -656,15 +753,76 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
     [RelayCommand]
     public void RegenerateCode()
     {
-        GeneratedCode = BoxCodeGenerator.GenerateCode(Blocks, SelectedBoardType, SelectedLanguage);
-        StatusMessage = $"Code generated ({SelectedLanguage}) · {Blocks.Count} visual block(s)";
+        _isInternalCodeUpdate = true;
+        IsManualCodeEdit = false;
+        try
+        {
+            GeneratedCode = BoxCodeGenerator.GenerateCode(Blocks, SelectedBoardType, SelectedLanguage);
+        }
+        finally
+        {
+            _isInternalCodeUpdate = false;
+        }
+
+        RunCodeErrorAnalysis();
         UpdateLcdSimulatedText();
+        StatusMessage = $"Code generated ({SelectedLanguage}) · {Blocks.Count} visual block(s) · {CodeErrorSummary}";
+    }
+
+    partial void OnGeneratedCodeChanged(string value)
+    {
+        if (_isInternalCodeUpdate)
+            return;
+
+        IsManualCodeEdit = true;
+        RunCodeErrorAnalysis();
+        StatusMessage = HasCodeErrors
+            ? $"Code edited — {LatestCodeAnalysis?.ErrorCount ?? 0} error(s) found"
+            : "Code edited manually — 0 errors (Ready to Upload)";
+    }
+
+    public void RunCodeErrorAnalysis()
+    {
+        var report = BoxCodeErrorAnalyzer.Analyze(GeneratedCode, SelectedLanguage, SelectedBoardType);
+        LatestCodeAnalysis = report;
+        HasCodeErrors = report.ErrorCount > 0;
+        HasCodeWarnings = report.WarningCount > 0;
+        CodeErrorSummary = report.StatusSummary;
+
+        CodeDiagnostics.Clear();
+        foreach (var d in report.Diagnostics)
+            CodeDiagnostics.Add(d);
+    }
+
+    [RelayCommand]
+    public void CheckCodeErrors()
+    {
+        RunCodeErrorAnalysis();
+        StatusMessage = CodeErrorSummary;
+    }
+
+    [RelayCommand]
+    public void ResyncCodeFromBlocks()
+    {
+        RegenerateCode();
+        StatusMessage = "Resynced firmware source code from visual block stack.";
+    }
+
+    [RelayCommand]
+    public void SendToProgrammer()
+    {
+        RunCodeErrorAnalysis();
+        OnSendToProgrammer?.Invoke(GeneratedCode, SelectedLanguage, SelectedBoardType);
+        SendToProgrammerRequested?.Invoke(GeneratedCode, SelectedLanguage, SelectedBoardType);
+        StatusMessage = HasCodeErrors
+            ? $"⚠ Staged in Programmer with {LatestCodeAnalysis?.ErrorCount} error(s) — fix errors before upload!"
+            : $"⚡ Staged firmware for {SelectedBoardType} in Programmer!";
     }
 
     private void UpdateLcdSimulatedText()
     {
         bool hasDht = Blocks.Any(b => b.IsEnabled && b.Kind == BoxBlockKind.ReadDhtSensor);
-        bool hasUltra = Blocks.Any(b => b.IsEnabled && b.Kind == BoxBlockKind.ReadUltrasonic);
+        bool hasUltra = Blocks.Any(b => b.IsEnabled && (b.Kind == BoxBlockKind.ReadUltrasonic || b.Kind == BoxBlockKind.ReadUltrasonicCm));
 
         bool hasLcdCoded = Blocks.Any(b => b.IsEnabled && (
             b.Kind == BoxBlockKind.LcdInitI2c ||
@@ -776,10 +934,42 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
             return;
 
         var newBlock = paletteItem.Clone();
-        Blocks.Add(newBlock);
+        if (SelectedBlock != null && Blocks.IndexOf(SelectedBlock) is int selIdx && selIdx >= 0)
+        {
+            newBlock.IndentationLevel = SelectedBlock.IsContainerBlock
+                ? Math.Min(SelectedBlock.IndentationLevel + 1, 6)
+                : SelectedBlock.IndentationLevel;
+            Blocks.Insert(selIdx + 1, newBlock);
+        }
+        else
+        {
+            if (Blocks.Count > 0 && Blocks[^1].IsContainerBlock)
+                newBlock.IndentationLevel = Math.Min(Blocks[^1].IndentationLevel + 1, 6);
+            Blocks.Add(newBlock);
+        }
+
         SelectedBlock = newBlock;
         RegenerateCode();
         StatusMessage = $"Added block: {newBlock.Title}";
+    }
+
+    [RelayCommand]
+    public void DuplicateBlock(BoxBlockItem? block)
+    {
+        if (block == null)
+            return;
+
+        var copy = block.Clone();
+        copy.IndentationLevel = block.IndentationLevel;
+        int idx = Blocks.IndexOf(block);
+        if (idx >= 0)
+            Blocks.Insert(idx + 1, copy);
+        else
+            Blocks.Add(copy);
+
+        SelectedBlock = copy;
+        RegenerateCode();
+        StatusMessage = $"Duplicated block: {copy.Title}";
     }
 
     [RelayCommand]

@@ -25,6 +25,10 @@ public sealed class HandMotionGate : IDisposable
     public const double DefaultMotionPixelRatio = 0.0035; // 0.35 % of thumbnail pixels
     public const byte DefaultPixelDeltaThreshold = 18;
     public const int TargetWebpPayloadBytes = 22 * 1024; // ~22 KB target budget
+    public const double DefaultHandCoverageThreshold = 0.045; // 4.5% of thumbnail area covered by contiguous skin/hand blob
+
+    private const int MinHandBlobThumbnailWidth = 28;
+    private const int MinHandBlobThumbnailHeight = 28;
 
     private static readonly OpenCvSharp.Size ThumbnailSize = new(320, 160);
 
@@ -36,6 +40,14 @@ public sealed class HandMotionGate : IDisposable
     private readonly Mat _threshold = new();
     private readonly Mat _lockedFrame = new();
     private readonly Mat _webpScratch = new();
+    private readonly Mat _smallBgra = new();
+    private readonly Mat _smallBgr = new();
+    private readonly Mat _ycrcb = new();
+    private readonly Mat _hsv = new();
+    private readonly Mat _ycrcbMask = new();
+    private readonly Mat _hsvMask = new();
+    private readonly Mat _skinMask = new();
+    private readonly Mat _skinMorphKernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(3, 3));
 
     private readonly double _stableThresholdMs;
     private readonly double _motionPixelRatio;
@@ -70,6 +82,18 @@ public sealed class HandMotionGate : IDisposable
     /// <summary>True on the exact frame where the gate transitioned from moving to stable (rising edge).</summary>
     public bool JustSettled { get; private set; }
 
+    /// <summary>True when a physical hand/skin blob covering at least 4.5% of the board is detected.</summary>
+    public bool HasHandInFrame { get; private set; }
+
+    /// <summary>Fraction (0..1) of the 320 x 160 thumbnail covered by skin-tone hand pixels.</summary>
+    public double HandCoverageRatio { get; private set; }
+
+    /// <summary>Number of thumbnail pixels classified as skin tone after morphological filtering.</summary>
+    public int SkinPixelCount { get; private set; }
+
+    /// <summary>True only when the board has settled for 250 ms AND no hand is over the breadboard.</summary>
+    public bool IsHandFreeAndStable => IsBoardStable && !HasHandInFrame;
+
     /// <summary>Monotonically increasing counter incremented each time the hand leaves and the board settles.</summary>
     public long SettledEpoch => _settledEpoch;
 
@@ -95,11 +119,18 @@ public sealed class HandMotionGate : IDisposable
 
         if (warpedFrame.Empty())
         {
+            HasHandInFrame = false;
+            HandCoverageRatio = 0;
+            SkinPixelCount = 0;
             IsBoardStable = false;
             return false;
         }
 
-        if (warpedFrame.Channels() > 1)
+        EvaluateHandPresence(warpedFrame);
+
+        if (warpedFrame.Channels() == 4)
+            Cv2.CvtColor(warpedFrame, _gray, ColorConversionCodes.BGRA2GRAY);
+        else if (warpedFrame.Channels() == 3)
             Cv2.CvtColor(warpedFrame, _gray, ColorConversionCodes.BGR2GRAY);
         else
             warpedFrame.CopyTo(_gray);
@@ -129,7 +160,7 @@ public sealed class HandMotionGate : IDisposable
         double ratio = _motionPixels / (double)(_smallCurrent.Width * _smallCurrent.Height);
         long now = Stopwatch.GetTimestamp();
 
-        if (ratio > _motionPixelRatio)
+        if (HasHandInFrame || ratio > _motionPixelRatio)
         {
             IsBoardStable = false;
             _stableSinceTimestamp = now;
@@ -147,6 +178,73 @@ public sealed class HandMotionGate : IDisposable
 
         _normalizedCurrent.CopyTo(_normalizedPrevious);
         return IsBoardStable;
+    }
+
+    private void EvaluateHandPresence(Mat warpedFrame)
+    {
+        int channels = warpedFrame.Channels();
+        if (channels is not (3 or 4))
+        {
+            HasHandInFrame = false;
+            HandCoverageRatio = 0;
+            SkinPixelCount = 0;
+            return;
+        }
+
+        if (channels == 4)
+        {
+            Cv2.Resize(warpedFrame, _smallBgra, ThumbnailSize, 0, 0, InterpolationFlags.Area);
+            Cv2.CvtColor(_smallBgra, _smallBgr, ColorConversionCodes.BGRA2BGR);
+        }
+        else
+        {
+            Cv2.Resize(warpedFrame, _smallBgr, ThumbnailSize, 0, 0, InterpolationFlags.Area);
+        }
+
+        Cv2.CvtColor(_smallBgr, _ycrcb, ColorConversionCodes.BGR2YCrCb);
+        Cv2.CvtColor(_smallBgr, _hsv, ColorConversionCodes.BGR2HSV);
+
+        // Dual YCrCb + HSV skin-tone mask excludes neutral white/gray breadboard body (S < 30)
+        // and saturated red/blue power rail lines (S > 200 or H outside 0..25).
+        Cv2.InRange(_ycrcb, new Scalar(45, 135, 77), new Scalar(255, 173, 125), _ycrcbMask);
+        Cv2.InRange(_hsv, new Scalar(0, 48, 60), new Scalar(25, 195, 255), _hsvMask);
+        Cv2.BitwiseAnd(_ycrcbMask, _hsvMask, _skinMask);
+
+        Cv2.MorphologyEx(_skinMask, _skinMask, MorphTypes.Open, _skinMorphKernel);
+        Cv2.MorphologyEx(_skinMask, _skinMask, MorphTypes.Close, _skinMorphKernel);
+
+        int skinPixels = Cv2.CountNonZero(_skinMask);
+        double coverage = skinPixels / (double)(ThumbnailSize.Width * ThumbnailSize.Height);
+        SkinPixelCount = skinPixels;
+        HandCoverageRatio = coverage;
+
+        if (coverage < DefaultHandCoverageThreshold)
+        {
+            HasHandInFrame = false;
+            return;
+        }
+
+        Cv2.FindContours(
+            _skinMask,
+            out OpenCvSharp.Point[][] contours,
+            out _,
+            RetrievalModes.External,
+            ContourApproximationModes.ApproxSimple);
+
+        double maxArea = 0;
+        Rect largestBounds = default;
+        for (int i = 0; i < contours.Length; i++)
+        {
+            double area = Cv2.ContourArea(contours[i]);
+            if (area > maxArea)
+            {
+                maxArea = area;
+                largestBounds = Cv2.BoundingRect(contours[i]);
+            }
+        }
+
+        HasHandInFrame = largestBounds.Width >= MinHandBlobThumbnailWidth
+                         && largestBounds.Height >= MinHandBlobThumbnailHeight;
     }
 
     /// <summary>
@@ -239,6 +337,9 @@ public sealed class HandMotionGate : IDisposable
         _motionPixels = 0;
         IsBoardStable = false;
         JustSettled = false;
+        HasHandInFrame = false;
+        HandCoverageRatio = 0;
+        SkinPixelCount = 0;
         _lockedWebpBytes = Array.Empty<byte>();
         _stableSinceTimestamp = Stopwatch.GetTimestamp();
     }
@@ -257,5 +358,13 @@ public sealed class HandMotionGate : IDisposable
         _threshold.Dispose();
         _lockedFrame.Dispose();
         _webpScratch.Dispose();
+        _smallBgra.Dispose();
+        _smallBgr.Dispose();
+        _ycrcb.Dispose();
+        _hsv.Dispose();
+        _ycrcbMask.Dispose();
+        _hsvMask.Dispose();
+        _skinMask.Dispose();
+        _skinMorphKernel.Dispose();
     }
 }

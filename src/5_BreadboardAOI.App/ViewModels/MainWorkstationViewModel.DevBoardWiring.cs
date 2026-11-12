@@ -818,32 +818,6 @@ public sealed partial class MainWorkstationViewModel
     }
 
     /// <summary>
-    /// Splits a wire endpoint into the MCU-pin and breadboard-hole buckets the
-    /// rule engine expects. Handles both wire directions and both key formats.
-    /// </summary>
-    private void AddDevBoardEndpoint(
-        string key,
-        List<McuPinEndpoint> mcuEndpoints,
-        List<string> breadboardHoles)
-    {
-        if (string.IsNullOrWhiteSpace(key))
-            return;
-
-        string trimmed = key.Trim();
-        if (trimmed.StartsWith("MCU", StringComparison.OrdinalIgnoreCase))
-        {
-            int colon = trimmed.LastIndexOf(':');
-            if (colon >= 0 && colon < trimmed.Length - 1)
-                mcuEndpoints.Add(new McuPinEndpoint("MCU_1", SelectedDevBoardType, trimmed.Substring(colon + 1)));
-            return;
-        }
-
-        breadboardHoles.Add(trimmed.StartsWith("BB:", StringComparison.OrdinalIgnoreCase)
-            ? trimmed.Substring(3)
-            : trimmed);
-    }
-
-    /// <summary>
     /// Pushes connected and violating pin ids into the renderer so the sockets
     /// light up as soon as a jumper is added or a rule fires.
     /// </summary>
@@ -963,6 +937,7 @@ public sealed partial class MainWorkstationViewModel
         EvaluateDevBoardCircuit();
         OnPropertyChanged(nameof(SelectedDevBoardPins));
         OnPropertyChanged(nameof(ActiveDevBoardName));
+        OnDevBoardTypeChangedForProgrammer(SelectedDevBoardType);
         BuilderHint = IsDevBoardDocked
             ? $"Dev Board docked: {profile.DisplayName} outside breadboard. Pins labeled beside sockets."
             : $"Dev Board {profile.DisplayName} undocked from viewport.";

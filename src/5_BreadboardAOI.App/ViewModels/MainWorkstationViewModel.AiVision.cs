@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // FILE: src/5_BreadboardAOI.App/ViewModels/MainWorkstationViewModel.AiVision.cs
 // PURPOSE: Partial class for camera source cycling, still image/video loading,
 //          AI Live Studio inspection window, KiCad/SVG export, and datasheet lookups.
@@ -12,12 +12,14 @@ using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using BreadboardAOI.App.Orchestration;
+using BreadboardAOI.Intelligence;
 using BreadboardAOI.Vision;
 
 namespace BreadboardAOI.App.ViewModels;
 
 public sealed partial class MainWorkstationViewModel
 {
+    private AlldatasheetRangeFetcher? _datasheetFetcher;
     [RelayCommand]
     private void CycleCamera()
     {
@@ -235,10 +237,12 @@ public sealed partial class MainWorkstationViewModel
     }
 
     /// <summary>
-    /// Queries the datasheet for the currently selected part.
+    /// Queries the datasheet for the currently selected part via the 250 KB
+    /// SQLite-cached HTTP Range fetcher and Typical Application schematic cropper,
+    /// falling back to the browser search page if offline/unreachable.
     /// </summary>
     [RelayCommand]
-    private void LookupDatasheet()
+    private async Task LookupDatasheetAsync()
     {
         string? partName = SelectedDraftPart?.Part.Value;
         if (string.IsNullOrWhiteSpace(partName) || partName == "--")
@@ -246,33 +250,97 @@ public sealed partial class MainWorkstationViewModel
         if (string.IsNullOrWhiteSpace(partName))
             partName = SelectedPartOption?.Label ?? "Component";
 
-        BuilderHint = $"[DATASHEET] Querying '{partName}'... [ARGON-3: Local 250KB range fetcher pending integration]";
+        string cleanName = partName.Split('/', ' ', '(', ')', '_').FirstOrDefault(s => s.Length > 2) ?? partName;
+        BuilderHint = $"[DATASHEET] Querying '{cleanName}' via 250 KB Range fetcher & SQLite cache...";
+        StatusLine = $"Fetching datasheet prefix for {cleanName}...";
+
         try
         {
-            string cleanName = partName.Split('/', ' ', '(', ')', '_').FirstOrDefault(s => s.Length > 2) ?? partName;
-            string url = $"https://www.alldatasheet.com/view.jsp?Searchword={Uri.EscapeDataString(cleanName)}";
-            Process.Start(new ProcessStartInfo
+            _datasheetFetcher ??= new AlldatasheetRangeFetcher();
+            DatasheetFetchResult result = await _datasheetFetcher
+                .FetchOrGetCachedAsync(cleanName)
+                .ConfigureAwait(true);
+
+            if (_disposed)
+                return;
+
+            string sourceLabel = result.FromCache ? "local SQLite cache" : "250 KB HTTP Range download";
+            if (result.PdfPrefixBytes is { Length: > 0 } pdfBytes && result.CachedSchematicPng is null)
             {
-                FileName = url,
-                UseShellExecute = true
-            })?.Dispose();
-            StatusLine = $"Opened datasheet search for {cleanName}";
+                byte[]? croppedPng = await Task.Run(() =>
+                {
+                    var cropper = new PdfSchematicCropper();
+                    SchematicCropResult crop = cropper.CropTypicalApplication(pdfBytes);
+                    return crop.PngBytes is { Length: > 0 } ? crop.PngBytes : null;
+                }).ConfigureAwait(true);
+
+                if (croppedPng is { Length: > 0 })
+                {
+                    await _datasheetFetcher
+                        .SaveDerivedArtifactsAsync(cleanName, croppedPng, result.CachedNetlistJson)
+                        .ConfigureAwait(true);
+                }
+            }
+
+            BuilderHint = $"[DATASHEET] Ready for {cleanName} ({result.ByteCount / 1024.0:0.0} KB via {sourceLabel}).";
+            StatusLine = $"Datasheet ready for {cleanName} ({sourceLabel})";
+
+            if (!string.IsNullOrWhiteSpace(result.SourceUrl))
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = result.SourceUrl,
+                    UseShellExecute = true
+                })?.Dispose();
+            }
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            StatusLine = $"Datasheet lookup error: {ex.Message}";
+            BuilderHint = $"[DATASHEET] Range fetch fallback for '{cleanName}' ({ex.Message}); opening web search...";
+            try
+            {
+                string url = $"https://www.alldatasheet.com/view.jsp?Searchword={Uri.EscapeDataString(cleanName)}";
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = url,
+                    UseShellExecute = true
+                })?.Dispose();
+                StatusLine = $"Opened browser datasheet search for {cleanName}";
+            }
+            catch (Exception browserEx) when (browserEx is not OutOfMemoryException)
+            {
+                StatusLine = $"Datasheet lookup error: {browserEx.Message}";
+            }
         }
     }
 
     /// <summary>
-    /// Triggers OCR reading on selected component or camera crop.
+    /// Triggers OCR reading on the active pipeline frame via <see cref="InspectionPipelineCoordinator"/>.
     /// </summary>
     [RelayCommand]
     private void RunOcr()
     {
-        BuilderHint = "[OCR] Scanning component text... [ARGON-2: PaddleOCR engine pending integration]";
-        OcrResultText = "[ARGON-2] PaddleOCR not available in this build.";
-        StatusLine = "OCR: Engine pending Argon-2 vision integration.";
+        InspectionPipelineCoordinator? coordinator = _coordinator;
+        if (coordinator is null)
+        {
+            OcrResultText = "Pipeline is not running.";
+            StatusLine = "OCR: Start pipeline before scanning IC text.";
+            return;
+        }
+
+        string? recognized = coordinator.RunOcr() ?? coordinator.LatestOcrResult;
+        if (!string.IsNullOrWhiteSpace(recognized))
+        {
+            OcrResultText = recognized;
+            BuilderHint = $"[OCR] Detected IC marking: {recognized}";
+            StatusLine = $"OCR detected IC text: {recognized}";
+        }
+        else
+        {
+            OcrResultText = "No IC marking detected in current camera frame.";
+            BuilderHint = "[OCR] No IC marking detected in current frame.";
+            StatusLine = "OCR scan complete: no text recognized.";
+        }
     }
 
 }

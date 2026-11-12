@@ -349,7 +349,7 @@ public sealed partial class SkiaArOverlayRenderer
                 break;
 
             case ComponentKind.Led:
-                DrawLedBody(canvas, halfSpan, clearance, component.RawDetection.DecodedValueLabel);
+                DrawLedBody(canvas, halfSpan, clearance, component.RawDetection.DecodedValueLabel, GetLedFirmwareIntensity(in component));
                 break;
 
             case ComponentKind.Capacitor:
@@ -1373,7 +1373,90 @@ public sealed partial class SkiaArOverlayRenderer
         canvas.DrawLine(legEnd + 0.5f, -0.4f, halfSpan - 0.5f, -0.4f, shine);
     }
 
-    private void DrawLedBody(SKCanvas canvas, float halfSpan, float clearance, string? value)
+    private float? GetLedFirmwareIntensity(in SnappedComponent component)
+    {
+        BreadboardAOI.Core.BoxCoding.VirtualFirmwareRuntimeState? fw = ActiveFirmwareState;
+        if (fw is not { IsRunning: true })
+            return null;
+
+        var stripLevels = new Dictionary<int, float>();
+        foreach (OffBoardJumperWire wire in ActiveDevBoardWires)
+        {
+            if (!TryExtractMcuPinAndHole(wire, out string pinId, out string holeId))
+                continue;
+            if (!PinMatrixLookup.Shared.TryGetHole(holeId, out HoleCoord hole))
+                continue;
+
+            float? level = null;
+            if (fw.PwmPinValues.TryGetValue(pinId, out int pwm))
+                level = Math.Clamp(pwm / 255f, 0f, 1f);
+            else if (fw.DigitalPinStates.TryGetValue(pinId, out bool isHigh))
+                level = isHigh ? 1.0f : 0.0f;
+
+            if (level.HasValue)
+                stripLevels[hole.StripId] = MathF.Max(stripLevels.GetValueOrDefault(hole.StripId), level.Value);
+        }
+
+        if (stripLevels.Count == 0)
+            return null;
+
+        if (_lastRenderedState?.Components is { Count: > 0 } comps)
+        {
+            var propagated = new List<(int StripId, float Level)>();
+            foreach (SnappedComponent c in comps)
+            {
+                if (c.RawDetection.Kind != ComponentKind.Resistor && c.RawDetection.Kind != ComponentKind.JumperWire)
+                    continue;
+                if (stripLevels.TryGetValue(c.Pin1Hole.StripId, out float l1))
+                    propagated.Add((c.Pin2Hole.StripId, l1));
+                if (stripLevels.TryGetValue(c.Pin2Hole.StripId, out float l2))
+                    propagated.Add((c.Pin1Hole.StripId, l2));
+            }
+
+            foreach ((int stripId, float lvl) in propagated)
+                stripLevels[stripId] = MathF.Max(stripLevels.GetValueOrDefault(stripId), lvl);
+        }
+
+        if (stripLevels.TryGetValue(component.Pin1Hole.StripId, out float pin1Level))
+            return pin1Level;
+        if (stripLevels.TryGetValue(component.Pin2Hole.StripId, out float pin2Level))
+            return pin2Level;
+
+        return null;
+    }
+
+    private static bool TryExtractMcuPinAndHole(OffBoardJumperWire wire, out string pinId, out string holeId)
+    {
+        pinId = string.Empty;
+        holeId = string.Empty;
+
+        string src = wire.SourceEndpointKey ?? string.Empty;
+        string dst = wire.TargetEndpointKey ?? string.Empty;
+
+        string? mcu = src.StartsWith("MCU", StringComparison.OrdinalIgnoreCase)
+            ? src
+            : dst.StartsWith("MCU", StringComparison.OrdinalIgnoreCase)
+                ? dst
+                : null;
+        string? bb = src.StartsWith("BB:", StringComparison.OrdinalIgnoreCase)
+            ? src
+            : dst.StartsWith("BB:", StringComparison.OrdinalIgnoreCase)
+                ? dst
+                : null;
+
+        if (mcu is null || bb is null)
+            return false;
+
+        int colon = mcu.LastIndexOf(':');
+        if (colon < 0 || colon >= mcu.Length - 1)
+            return false;
+
+        pinId = mcu.Substring(colon + 1);
+        holeId = bb.Substring(3);
+        return !string.IsNullOrWhiteSpace(pinId) && !string.IsNullOrWhiteSpace(holeId);
+    }
+
+    private void DrawLedBody(SKCanvas canvas, float halfSpan, float clearance, string? value, float? firmwareIntensity = null)
     {
         float radius = MathF.Min(LedNominalRadius, MathF.Max(5.4f, halfSpan - clearance));
         float bodyCentre = MathF.Min(halfSpan - radius, radius * 0.35f);
@@ -1395,11 +1478,21 @@ public sealed partial class SkiaArOverlayRenderer
         };
         canvas.DrawCircle(bodyCentre + 1.2f, 1.8f, radius * 1.15f, shadowPaint);
 
-        // 2. Volumetric lens bloom / ambient radiant glow
+        // 2. Volumetric lens bloom / ambient radiant glow (modulated by live firmware GPIO/PWM state)
+        float bloomScale = firmwareIntensity is { } fwLvl
+            ? (fwLvl > 0.05f ? 2.8f + (fwLvl * 1.5f) : 1.3f)
+            : 2.8f;
+        byte bloomAlphaCore = firmwareIntensity is { } fwLvlA
+            ? (byte)Math.Clamp((int)(40 + (210 * fwLvlA)), 25, 255)
+            : (byte)170;
+        byte bloomAlphaMid = firmwareIntensity is { } fwLvlB
+            ? (byte)Math.Clamp((int)(10 + (115 * fwLvlB)), 5, 160)
+            : (byte)55;
+
         using var bloomShader = SKShader.CreateRadialGradient(
             new SKPoint(bodyCentre, 0f),
-            radius * 2.8f,
-            new[] { coreColor.WithAlpha(170), coreColor.WithAlpha(55), SKColors.Transparent },
+            radius * bloomScale,
+            new[] { coreColor.WithAlpha(bloomAlphaCore), coreColor.WithAlpha(bloomAlphaMid), SKColors.Transparent },
             new[] { 0f, 0.45f, 1f },
             SKShaderTileMode.Clamp);
         using var bloomPaint = new SKPaint
@@ -1408,7 +1501,7 @@ public sealed partial class SkiaArOverlayRenderer
             Style = SKPaintStyle.Fill,
             IsAntialias = true
         };
-        canvas.DrawCircle(bodyCentre, 0f, radius * 2.8f, bloomPaint);
+        canvas.DrawCircle(bodyCentre, 0f, radius * bloomScale, bloomPaint);
 
         // 3. Base flange (outer cylindrical rim of 5mm LED) with cathode flat notch
         float flangeRadius = radius * 1.15f;
@@ -1903,6 +1996,27 @@ public sealed partial class SkiaArOverlayRenderer
             string text = value?.Contains("PIEZO", StringComparison.OrdinalIgnoreCase) == true ? "PIEZO" : "BUZZ";
             float tw = _partPinNumberPaint.MeasureText(text);
             canvas.DrawText(text, -tw * 0.5f, radius * 0.75f, _partPinNumberPaint);
+        }
+
+        if (ActiveFirmwareState is { IsRunning: true, IsBuzzerActive: true } fw)
+        {
+            int phase = fw.TickCount % 3;
+            for (int w = 0; w < 3; w++)
+            {
+                float waveRadius = radius * (1.28f + (w * 0.36f) + (phase * 0.12f));
+                byte alpha = (byte)(185 - (w * 50));
+                using var wavePaint = new SKPaint
+                {
+                    Color = new SKColor(0x00, 0xE5, 0xFF, alpha),
+                    Style = SKPaintStyle.Stroke,
+                    StrokeWidth = 1.15f,
+                    IsAntialias = true
+                };
+                canvas.DrawCircle(0f, 0f, waveRadius, wavePaint);
+            }
+
+            if (fw.BuzzerFrequencyHz > 0)
+                DrawPinLabelPill(canvas, 0f, -radius - 6f, $"{fw.BuzzerFrequencyHz} Hz");
         }
     }
 

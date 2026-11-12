@@ -99,9 +99,12 @@ public sealed class InspectionPipelineCoordinator : IDisposable
 
     private readonly HomographyCalibrator _calibrator = new();
     private readonly HandMotionGate _motionGate = new();
+    private readonly WireInsertionTracker _wireTracker = new();
+    private PaddleIcPartNumberOcr? _icOcr;
     private readonly MicroCropExtractor _cropExtractor = new();
     private readonly VramBudgetMonitor _vramMonitor = new();
     private readonly List<DetectedComponent> _yoloDetections = new(32);
+    private readonly List<DetectedComponent> _reconciledDetections = new(32);
     private readonly OpenCvSharp.Mat _cameraFrame = new();
     private readonly OpenCvSharp.Mat _warpedFrame = new();
     private readonly SKBitmap _boardBitmap;
@@ -373,15 +376,111 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         return true;
     }
 
-    /// <summary>Status of the Argon-2 WireInsertionTracker (null-safe placeholder).</summary>
-    public bool IsWireTrackerAvailable => false;
+    private int _wireTrackerEnabled = 1;
+    private int _icOcrEnabled = 1;
+    private long _lastReconciledEpoch = -1;
+    private string? _latestOcrResult;
+    private IReadOnlyList<IcPartNumberResult> _latestIcOcrResults = Array.Empty<IcPartNumberResult>();
+    private IReadOnlyList<TrackedWirePair> _activeTrackedWires = Array.Empty<TrackedWirePair>();
 
-    /// <summary>Status of the Argon-2 PaddleOCR engine (null-safe placeholder).</summary>
-    public bool IsOcrAvailable => false;
+    /// <summary>Status of the WireInsertionTracker temporal + HSV wire pairing module.</summary>
+    public bool IsWireTrackerAvailable => true;
 
-    public string? LatestOcrResult => null;
+    /// <summary>Status of the PaddleOCR DIP IC part-number recognizer.</summary>
+    public bool IsOcrAvailable => true;
 
-    public string? RunOcr(byte[]? imageCrop = null) => null;
+    public bool IsWireTrackerEnabled
+    {
+        get => Volatile.Read(ref _wireTrackerEnabled) != 0;
+        set => Volatile.Write(ref _wireTrackerEnabled, value ? 1 : 0);
+    }
+
+    public bool IsIcOcrEnabled
+    {
+        get => Volatile.Read(ref _icOcrEnabled) != 0;
+        set => Volatile.Write(ref _icOcrEnabled, value ? 1 : 0);
+    }
+
+    public void SetWireTrackerEnabled(bool enabled)
+    {
+        IsWireTrackerEnabled = enabled;
+        if (!enabled)
+        {
+            _wireTracker.Reset();
+            _reconciledDetections.Clear();
+            _lastReconciledEpoch = -1;
+            Volatile.Write(ref _activeTrackedWires, Array.Empty<TrackedWirePair>());
+        }
+    }
+
+    public void SetIcOcrEnabled(bool enabled)
+    {
+        IsIcOcrEnabled = enabled;
+        if (!enabled)
+        {
+            _icOcr?.ClearCache();
+            Volatile.Write(ref _latestOcrResult, null);
+            Volatile.Write(ref _latestIcOcrResults, Array.Empty<IcPartNumberResult>());
+        }
+    }
+
+    public bool HasHandInFrame => _motionGate.HasHandInFrame;
+
+    public bool IsHandFreeAndStable => _motionGate.IsHandFreeAndStable;
+
+    public double HandCoverageRatio => _motionGate.HandCoverageRatio;
+
+    public double StableElapsedMs => _motionGate.StableElapsedMs;
+
+    public long SettledEpoch => _motionGate.SettledEpoch;
+
+    public bool IsMarkerlessCalibrationActive => _calibrator.IsMarkerlessFallbackActive;
+
+    public IReadOnlyList<TrackedWirePair> ActiveTrackedWires => Volatile.Read(ref _activeTrackedWires);
+
+    public IReadOnlyList<IcPartNumberResult> LatestIcOcrResults => Volatile.Read(ref _latestIcOcrResults);
+
+    public string? LatestOcrResult => Volatile.Read(ref _latestOcrResult);
+
+    public string? RunOcr(byte[]? imageCrop = null)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (!IsIcOcrEnabled)
+            return null;
+
+        if (imageCrop is { Length: > 0 })
+        {
+            using OpenCvSharp.Mat decoded = OpenCvSharp.Cv2.ImDecode(imageCrop, OpenCvSharp.ImreadModes.Color);
+            if (decoded.Empty())
+                return null;
+
+            var cropComponent = new DetectedComponent(
+                TrackId: 0,
+                Kind: ComponentKind.IntegratedCircuit,
+                Confidence: 1.0f,
+                BoxX: 0,
+                BoxY: 0,
+                BoxW: decoded.Width,
+                BoxH: decoded.Height,
+                Lead1Px: 0,
+                Lead1Py: 0,
+                Lead2Px: decoded.Width,
+                Lead2Py: decoded.Height);
+
+            if (GetOrCreateIcOcr().TryReadPartNumber(decoded, in cropComponent, isPin1Left: true, out IcPartNumberResult result)
+                && !string.IsNullOrWhiteSpace(result.CanonicalPartNumber))
+            {
+                Volatile.Write(ref _latestOcrResult, result.CanonicalPartNumber);
+                Volatile.Write(ref _latestIcOcrResults, [result]);
+                return result.CanonicalPartNumber;
+            }
+
+            return null;
+        }
+
+        return LatestOcrResult;
+    }
 
     /// <summary>Camera frame in 1000 x 500 BGRA for the optional preview pane.</summary>
     public SKBitmap BoardBitmap => _boardBitmap;
@@ -453,7 +552,8 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             return ActiveCameraSource switch
             {
                 CameraSource.Synthetic => true,
-                CameraSource.Camera0 or CameraSource.Camera1 or CameraSource.Camera2 or CameraSource.Camera3 or CameraSource.VideoFile => _calibrator.IsCalibrated,
+                CameraSource.Camera0 or CameraSource.Camera1 or CameraSource.Camera2 or CameraSource.Camera3 or CameraSource.VideoFile
+                    => _calibrator.IsCalibrated || _calibrator.IsMarkerlessFallbackActive,
                 _ => false
             };
         }
@@ -468,9 +568,11 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             {
                 CameraSource.Synthetic => "AR OVERLAYS ON · SYNTHETIC BOARD",
                 CameraSource.Camera0 or CameraSource.Camera1 or CameraSource.Camera2 or CameraSource.Camera3 or CameraSource.VideoFile when _calibrator.IsCalibrated
-                    => "AR OVERLAYS ON · BOARD LOCKED",
+                    => "AR OVERLAYS ON · BOARD LOCKED (ARUCO)",
+                CameraSource.Camera0 or CameraSource.Camera1 or CameraSource.Camera2 or CameraSource.Camera3 or CameraSource.VideoFile when _calibrator.IsMarkerlessFallbackActive
+                    => "AR OVERLAYS ON · MARKERLESS AUTO-RECTIFIED",
                 CameraSource.Camera0 or CameraSource.Camera1 or CameraSource.Camera2 or CameraSource.Camera3 or CameraSource.VideoFile
-                    => "AR OVERLAYS HELD · AIM AT ALL FOUR ARUCO MARKERS",
+                    => "AR OVERLAYS HELD · PLACE BREADBOARD CLEARLY IN FRAME",
                 CameraSource.ImageFile => "AR OVERLAYS OFF · STILL IMAGE REPLAY",
                 _ => "AR OVERLAYS OFF · NO BOARD LOCK"
             };
@@ -929,6 +1031,12 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     {
         _lastStateHash = int.MinValue;
         _motionGate.Reset();
+        _wireTracker.Reset();
+        _icOcr?.ClearCache();
+        _lastReconciledEpoch = -1;
+        Volatile.Write(ref _activeTrackedWires, Array.Empty<TrackedWirePair>());
+        Volatile.Write(ref _latestIcOcrResults, Array.Empty<IcPartNumberResult>());
+        Volatile.Write(ref _latestOcrResult, null);
         Volatile.Write(ref _latestSchematicResult, null);
         Volatile.Write(ref _latestRatsnest, Array.Empty<RatsnestVector>());
     }
@@ -1143,7 +1251,9 @@ public sealed class InspectionPipelineCoordinator : IDisposable
                     continue;
                 }
 
+                long prevEpoch = _motionGate.SettledEpoch;
                 bool stable = !IsHandGateEnabled || _motionGate.Update(_warpedFrame);
+                bool justSettled = !IsHandGateEnabled || _motionGate.SettledEpoch != prevEpoch || _lastReconciledEpoch < 0;
 
                 if (_options.EnableCameraPreviewBitmap && (frame & 1) == 0)
                     UpdateBoardBitmap();
@@ -1154,7 +1264,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
                     continue;
                 }
 
-                EvaluateFrame(frame);
+                EvaluateFrame(frame, justSettled);
 
                 await DelayRemainingAsync(frameStart, targetFrameMs, cancellationToken).ConfigureAwait(false);
 
@@ -1231,7 +1341,102 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         }
     }
 
-    private void EvaluateFrame(long frame)
+    private PaddleIcPartNumberOcr GetOrCreateIcOcr()
+    {
+        return LazyInitializer.EnsureInitialized(
+            ref _icOcr,
+            () => new PaddleIcPartNumberOcr(
+                initializeNativeRecognizer: _options.EnableCameraPreviewBitmap || _options.EnableCognitiveTutor))!;
+    }
+
+    internal void ReconcileSettledDetections(
+        OpenCvSharp.Mat? warpedFrame,
+        IReadOnlyList<DetectedComponent> rawDetections,
+        bool justSettled,
+        List<DetectedComponent> output)
+    {
+        ArgumentNullException.ThrowIfNull(rawDetections);
+        ArgumentNullException.ThrowIfNull(output);
+
+        output.Clear();
+
+        if (!IsWireTrackerEnabled || warpedFrame is null || warpedFrame.Empty())
+        {
+            for (int i = 0; i < rawDetections.Count; i++)
+                output.Add(rawDetections[i]);
+        }
+        else if (justSettled)
+        {
+            IReadOnlyList<TrackedWirePair> tracked = _wireTracker.UpdateFromPoseDetections(warpedFrame, rawDetections, output);
+            var snapshot = new TrackedWirePair[tracked.Count];
+            for (int i = 0; i < tracked.Count; i++)
+                snapshot[i] = tracked[i];
+            Volatile.Write(ref _activeTrackedWires, snapshot);
+            _lastReconciledEpoch = _motionGate.SettledEpoch;
+        }
+        else
+        {
+            IReadOnlyList<TrackedWirePair> active = Volatile.Read(ref _activeTrackedWires);
+
+            for (int i = 0; i < rawDetections.Count; i++)
+            {
+                if (rawDetections[i].Kind != ComponentKind.JumperWire)
+                    output.Add(rawDetections[i]);
+            }
+
+            for (int i = 0; i < active.Count; i++)
+            {
+                TrackedWirePair wire = active[i];
+                float minX = Math.Min(wire.End1Px, wire.End2Px);
+                float minY = Math.Min(wire.End1Py, wire.End2Py);
+                float maxX = Math.Max(wire.End1Px, wire.End2Px);
+                float maxY = Math.Max(wire.End1Py, wire.End2Py);
+
+                output.Add(new DetectedComponent(
+                    TrackId: 1000 + wire.WireId,
+                    Kind: ComponentKind.JumperWire,
+                    Confidence: wire.Confidence,
+                    BoxX: minX,
+                    BoxY: minY,
+                    BoxW: Math.Max(4f, maxX - minX),
+                    BoxH: Math.Max(4f, maxY - minY),
+                    Lead1Px: wire.End1Px,
+                    Lead1Py: wire.End1Py,
+                    Lead2Px: wire.End2Px,
+                    Lead2Py: wire.End2Py));
+            }
+        }
+
+        if (!IsIcOcrEnabled || !justSettled || warpedFrame is null || warpedFrame.Empty())
+            return;
+
+        List<IcPartNumberResult>? ocrResults = null;
+        PaddleIcPartNumberOcr ocr = GetOrCreateIcOcr();
+        for (int i = 0; i < output.Count; i++)
+        {
+            DetectedComponent component = output[i];
+            if (component.Kind != ComponentKind.IntegratedCircuit)
+                continue;
+
+            if (ocr.TryReadPartNumber(warpedFrame, in component, isPin1Left: true, out IcPartNumberResult result))
+            {
+                ocrResults ??= new List<IcPartNumberResult>(4);
+                ocrResults.Add(result);
+                if (!string.IsNullOrWhiteSpace(result.CanonicalPartNumber))
+                {
+                    output[i] = component with { DecodedValueLabel = result.CanonicalPartNumber };
+                }
+            }
+        }
+
+        if (ocrResults is { Count: > 0 })
+        {
+            Volatile.Write(ref _latestIcOcrResults, ocrResults.ToArray());
+            Volatile.Write(ref _latestOcrResult, ocrResults[0].CanonicalPartNumber);
+        }
+    }
+
+    private void EvaluateFrame(long frame, bool justSettled = false)
     {
         bool demo = DemoModeEnabled && ActiveCameraSource == CameraSource.Synthetic;
         bool manual = ManualCircuitEnabled;
@@ -1250,7 +1455,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             detections = DemoScenarioCatalog.GetDetections(scenario);
             yoloMs = 0d;
         }
-        else if (CameraCaptureService.IsPhysicalCamera(ActiveCameraSource) && !_calibrator.IsCalibrated)
+        else if (CameraCaptureService.IsPhysicalCamera(ActiveCameraSource) && !_calibrator.IsCalibrated && !_calibrator.IsMarkerlessFallbackActive)
         {
             _yoloDetections.Clear();
             detections = CollectionsMarshal.AsSpan(_yoloDetections);
@@ -1259,7 +1464,8 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         else if (_yolo is not null && IsYoloEnabled && !IsAiVisionModeActive)
         {
             _yolo.Infer(_warpedFrame, _yoloDetections, 1);
-            detections = CollectionsMarshal.AsSpan(_yoloDetections);
+            ReconcileSettledDetections(_warpedFrame, _yoloDetections, justSettled, _reconciledDetections);
+            detections = CollectionsMarshal.AsSpan(_reconciledDetections);
             yoloMs = _yolo.LastInferenceMs;
         }
         else
@@ -1714,6 +1920,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         camera?.Dispose();
         _calibrator.Dispose();
         _motionGate.Dispose();
+        _icOcr?.Dispose();
         _yolo?.Dispose();
         _cropExtractor.Dispose();
 

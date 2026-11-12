@@ -271,4 +271,151 @@ public sealed class CircuitDraftTests
         draft.TrySetValue(part.TrackId, "BLUE 3.2V").Should().BeTrue();
         draft.BuildDetections()[0].DecodedValueLabel.Should().Be("BLUE 3.2V");
     }
+
+    [Fact]
+    public void TryReplacePins_updates_part_in_place_without_duplicating_or_changing_track_id_and_supports_undo()
+    {
+        var draft = new CircuitDraft(Lookup);
+        draft.TryAdd(ComponentKind.Resistor, "A1", "A5", "4K7", out DraftPart resistor, out string? addErr)
+            .Should().BeTrue(addErr);
+        draft.TrySetSymbol(resistor.TrackId, "Device/R_Small").Should().BeTrue();
+        draft.TryAdd(ComponentKind.Led, "B10", "B15", "RED 2.0V", out DraftPart led, out string? ledErr)
+            .Should().BeTrue(ledErr);
+
+        draft.Count.Should().Be(2);
+        resistor.TrackId.Should().Be(1);
+        led.TrackId.Should().Be(2);
+
+        draft.TryReplacePins(resistor.TrackId, new[] { "C2", "C7" }, out string? replaceErr)
+            .Should().BeTrue(replaceErr);
+
+        // Must update in-place without duplicating parts or incrementing _nextTrackId.
+        draft.Count.Should().Be(2);
+        draft.Parts[0].TrackId.Should().Be(resistor.TrackId);
+        draft.Parts[0].Pins.Should().Equal("C2", "C7");
+        draft.Parts[0].Value.Should().Be("4K7");
+        draft.Parts[0].SymbolId.Should().Be("Device/R_Small");
+        draft.Parts[1].TrackId.Should().Be(led.TrackId);
+
+        draft.TryAdd(ComponentKind.Capacitor, "D1", "D4", "100nF", out DraftPart cap, out string? capErr)
+            .Should().BeTrue(capErr);
+        cap.TrackId.Should().Be(3);
+
+        // Invalid pin edits must fail cleanly without mutating the board.
+        draft.TryReplacePins(resistor.TrackId, new[] { "C2", "C2" }, out string? sameHoleErr).Should().BeFalse();
+        sameHoleErr.Should().Contain("C2");
+        draft.TryReplacePins(999, new[] { "E1", "E5" }, out string? missingErr).Should().BeFalse();
+        missingErr.Should().Contain("999");
+
+        // Undo Capacitor add -> Undo TryReplacePins -> Redo TryReplacePins.
+        draft.TryUndo().Should().BeTrue();
+        draft.Count.Should().Be(2);
+
+        draft.TryUndo().Should().BeTrue();
+        draft.Count.Should().Be(2);
+        draft.Parts[0].TrackId.Should().Be(resistor.TrackId);
+        draft.Parts[0].Pins.Should().Equal("A1", "A5");
+
+        draft.TryRedo().Should().BeTrue();
+        draft.Count.Should().Be(2);
+        draft.Parts[0].Pins.Should().Equal("C2", "C7");
+    }
+
+    [Fact]
+    public void TrySetValue_and_TrySetSymbol_record_undo_snapshots()
+    {
+        var draft = new CircuitDraft(Lookup);
+        draft.TryAdd(ComponentKind.Resistor, "A1", "A5", out DraftPart part, out string? error)
+            .Should().BeTrue(error);
+        part.Value.Should().Be("220R");
+        part.SymbolId.Should().BeNull();
+
+        draft.TrySetValue(part.TrackId, "4K7").Should().BeTrue();
+        draft.TrySetSymbol(part.TrackId, "Device/R_Small").Should().BeTrue();
+
+        // No-op edits with identical value/symbol must not pollute the undo stack.
+        draft.TrySetValue(part.TrackId, "4K7").Should().BeTrue();
+        draft.TrySetSymbol(part.TrackId, "Device/R_Small").Should().BeTrue();
+
+        // Undo symbol change.
+        draft.TryUndo().Should().BeTrue();
+        draft.Count.Should().Be(1);
+        draft.Parts[0].SymbolId.Should().BeNull();
+        draft.Parts[0].Value.Should().Be("4K7");
+
+        // Undo value change.
+        draft.TryUndo().Should().BeTrue();
+        draft.Count.Should().Be(1);
+        draft.Parts[0].Value.Should().Be("220R");
+        draft.Parts[0].SymbolId.Should().BeNull();
+
+        // Redo value & symbol changes.
+        draft.TryRedo().Should().BeTrue();
+        draft.Parts[0].Value.Should().Be("4K7");
+        draft.Parts[0].SymbolId.Should().BeNull();
+
+        draft.TryRedo().Should().BeTrue();
+        draft.Parts[0].Value.Should().Be("4K7");
+        draft.Parts[0].SymbolId.Should().Be("Device/R_Small");
+    }
+
+    [Fact]
+    public void TryImportDetections_records_single_atomic_undo_snapshot()
+    {
+        DetectedComponent MakeDetection(int id, ComponentKind kind, string h1, string h2, string val)
+        {
+            Lookup.TryGetHole(h1, out HoleCoord c1).Should().BeTrue();
+            Lookup.TryGetHole(h2, out HoleCoord c2).Should().BeTrue();
+            return new DetectedComponent(
+                TrackId: id,
+                Kind: kind,
+                Confidence: 0.99f,
+                BoxX: 0f,
+                BoxY: 0f,
+                BoxW: 20f,
+                BoxH: 20f,
+                Lead1Px: c1.Px,
+                Lead1Py: c1.Py,
+                Lead2Px: c2.Px,
+                Lead2Py: c2.Py,
+                DecodedValueLabel: val);
+        }
+
+        DetectedComponent[] batch =
+        {
+            MakeDetection(10, ComponentKind.Resistor, "C1", "C5", "220R"),
+            MakeDetection(11, ComponentKind.Led, "D5", "D9", "RED 2.0V"),
+            MakeDetection(12, ComponentKind.JumperWire, "E9", "E15", "WIRE")
+        };
+
+        // Case 1: Importing with replaceExisting=true over existing parts produces ONE undo step.
+        var draft = new CircuitDraft(Lookup);
+        draft.TryAdd(ComponentKind.Resistor, "A1", "A5", "1K", out _, out _).Should().BeTrue();
+        draft.TryAdd(ComponentKind.Capacitor, "B1", "B5", "10uF", out _, out _).Should().BeTrue();
+
+        int added = draft.TryImportDetections(batch, replaceExisting: true, out int skipped);
+        added.Should().Be(3);
+        skipped.Should().Be(0);
+        draft.Count.Should().Be(3);
+
+        draft.TryUndo().Should().BeTrue();
+        draft.Count.Should().Be(2);
+        draft.Parts[0].Value.Should().Be("1K");
+        draft.Parts[1].Value.Should().Be("10uF");
+
+        draft.TryRedo().Should().BeTrue();
+        draft.Count.Should().Be(3);
+
+        // Case 2: Importing into an empty draft with replaceExisting=false produces ONE undo step.
+        var emptyDraft = new CircuitDraft(Lookup);
+        emptyDraft.TryImportDetections(batch, replaceExisting: false, out _).Should().Be(3);
+        emptyDraft.Count.Should().Be(3);
+
+        emptyDraft.TryUndo().Should().BeTrue();
+        emptyDraft.Count.Should().Be(0);
+        emptyDraft.CanUndo.Should().BeFalse();
+
+        emptyDraft.TryRedo().Should().BeTrue();
+        emptyDraft.Count.Should().Be(3);
+    }
 }

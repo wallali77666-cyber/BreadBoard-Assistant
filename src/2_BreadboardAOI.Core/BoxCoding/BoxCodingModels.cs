@@ -20,6 +20,13 @@ public enum TargetProgrammingLanguage
     MicroPython
 }
 
+/// <summary>Canonical language selector shared across code generation, analysis, and virtual simulation.</summary>
+public enum BoxCodingLanguage
+{
+    ArduinoCpp = TargetProgrammingLanguage.ArduinoCpp,
+    MicroPython = TargetProgrammingLanguage.MicroPython
+}
+
 /// <summary>Visual category of the Scratch-style box coding block.</summary>
 public enum BoxBlockCategory
 {
@@ -69,7 +76,11 @@ public enum BoxBlockKind
     WhileLoop,
     SetVariable,
     Delay,
-    SerialPrint
+    SerialPrint,
+    MapRange,
+    PlayToneNote,
+    RgbLedColor,
+    ReadUltrasonicCm
 }
 
 /// <summary>A single Scratch-style visual block with pin assignments and execution parameters.</summary>
@@ -213,6 +224,12 @@ public sealed class BoxBlockItem : INotifyPropertyChanged
 
     /// <summary>Visual horizontal indent offset (pixels) for visual hierarchy.</summary>
     public double IndentationLeft => IndentationLevel * 18.0;
+
+    /// <summary>True when this block opens an indented child block scope (If, If/Else, Repeat, While).</summary>
+    public bool IsContainerBlock => Kind is BoxBlockKind.IfCondition
+        or BoxBlockKind.IfElseCondition
+        or BoxBlockKind.RepeatTimes
+        or BoxBlockKind.WhileLoop;
 
     private bool _isEnabled = true;
     /// <summary>Whether this block is included in code generation.</summary>

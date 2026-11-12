@@ -344,7 +344,103 @@ public sealed class ElectricalRulesCheckerTests
         NetlistReport.Format(packet).Should().Contain("NET_VCC");
     }
 
-    private static DetectedComponent Create(ComponentKind kind, HoleCoord lead1, HoleCoord lead2, int trackId = 1)
+    [Fact]
+    public void Reversing_diode_or_battery_changes_topology_state_hash()
+    {
+        Lookup.TryGetHole("A10", out var a10).Should().BeTrue();
+        Lookup.TryGetHole("A15", out var a15).Should().BeTrue();
+        var checker = new ElectricalRulesChecker(Lookup);
+
+        foreach (ComponentKind polarizedKind in new[]
+        {
+            ComponentKind.Diode,
+            ComponentKind.Battery,
+            ComponentKind.Transistor,
+            ComponentKind.VoltageRegulator,
+            ComponentKind.Sensor
+        })
+        {
+            var forward = checker.EvaluateBoard(1, 0, new[] { Create(polarizedKind, a10, a15, trackId: 1) });
+            var reversed = checker.EvaluateBoard(1, 0, new[] { Create(polarizedKind, a15, a10, trackId: 1) });
+
+            reversed.StateHash.Should().NotBe(
+                forward.StateHash,
+                $"reversing polarized 2-lead {polarizedKind} must alter StateHash");
+        }
+
+        // Unpolarized resistor remains orientation-invariant.
+        var rForward = checker.EvaluateBoard(1, 0, new[] { Create(ComponentKind.Resistor, a10, a15, trackId: 1) });
+        var rReversed = checker.EvaluateBoard(1, 0, new[] { Create(ComponentKind.Resistor, a15, a10, trackId: 1) });
+        rReversed.StateHash.Should().Be(rForward.StateHash);
+    }
+
+    [Fact]
+    public void Led_series_resistor_connected_via_jumper_wire_is_checked_for_current_limit_low_and_high()
+    {
+        Lookup.TryGetRailHole(BreadboardSpec.StripTopVcc, 5, out var vcc5).Should().BeTrue();
+        Lookup.TryGetHole("A5", out var a5).Should().BeTrue();
+        Lookup.TryGetHole("B5", out var b5).Should().BeTrue();
+        Lookup.TryGetHole("B12", out var b12).Should().BeTrue();
+        Lookup.TryGetHole("A12", out var a12).Should().BeTrue();
+        Lookup.TryGetRailHole(BreadboardSpec.StripTopGnd, 12, out var gnd12).Should().BeTrue();
+
+        var checker = new ElectricalRulesChecker(Lookup);
+
+        // Low resistor (<100R) connected in series with LED via jumper B5->B12
+        var lowPacket = checker.EvaluateBoard(1, 0, new[]
+        {
+            Create(ComponentKind.Resistor, vcc5, a5, trackId: 1, decodedValueLabel: "10R"),
+            Create(ComponentKind.JumperWire, b5, b12, trackId: 2),
+            Create(ComponentKind.Led, a12, gnd12, trackId: 3, decodedValueLabel: "RED 2.0V")
+        });
+
+        lowPacket.Violations.Should().Contain(v =>
+            v.Code == ViolationCode.ErcResistorCurrentLimitLow && v.Severity == DrcSeverity.Critical);
+
+        // High resistor (>100k) connected in series with LED via jumper B5->B12
+        var highPacket = checker.EvaluateBoard(2, 0, new[]
+        {
+            Create(ComponentKind.Resistor, vcc5, a5, trackId: 1, decodedValueLabel: "220K"),
+            Create(ComponentKind.JumperWire, b5, b12, trackId: 2),
+            Create(ComponentKind.Led, a12, gnd12, trackId: 3, decodedValueLabel: "RED 2.0V")
+        });
+
+        highPacket.Violations.Should().Contain(v =>
+            v.Code == ViolationCode.ErcResistorCurrentLimitHigh && v.Severity == DrcSeverity.Warning);
+
+        // Nominal 220R in series via jumper must pass with no current-limit violation.
+        var nominalPacket = checker.EvaluateBoard(3, 0, new[]
+        {
+            Create(ComponentKind.Resistor, vcc5, a5, trackId: 1, decodedValueLabel: "220R"),
+            Create(ComponentKind.JumperWire, b5, b12, trackId: 2),
+            Create(ComponentKind.Led, a12, gnd12, trackId: 3, decodedValueLabel: "RED 2.0V")
+        });
+
+        nominalPacket.Violations.Should().NotContain(v =>
+            v.Code == ViolationCode.ErcResistorCurrentLimitLow ||
+            v.Code == ViolationCode.ErcResistorCurrentLimitHigh);
+
+        // Unrelated parallel 10R across power rails (sharing VCC rail, not series node) must not trigger false LED limit error.
+        Lookup.TryGetRailHole(BreadboardSpec.StripTopVcc, 20, out var vcc20).Should().BeTrue();
+        Lookup.TryGetRailHole(BreadboardSpec.StripTopGnd, 20, out var gnd20).Should().BeTrue();
+        var parallelPacket = checker.EvaluateBoard(4, 0, new[]
+        {
+            Create(ComponentKind.Led, vcc5, a5, trackId: 1, decodedValueLabel: "RED 2.0V"),
+            Create(ComponentKind.Resistor, b5, gnd12, trackId: 2, decodedValueLabel: "220R"),
+            Create(ComponentKind.Resistor, vcc20, gnd20, trackId: 3, decodedValueLabel: "10R")
+        });
+
+        parallelPacket.Violations.Should().NotContain(v =>
+            v.Code == ViolationCode.ErcResistorCurrentLimitLow ||
+            v.Code == ViolationCode.ErcResistorCurrentLimitHigh);
+    }
+
+    private static DetectedComponent Create(
+        ComponentKind kind,
+        HoleCoord lead1,
+        HoleCoord lead2,
+        int trackId = 1,
+        string? decodedValueLabel = null)
     {
         float minX = MathF.Min(lead1.Px, lead2.Px) - 6f;
         float minY = MathF.Min(lead1.Py, lead2.Py) - 6f;
@@ -363,6 +459,6 @@ public sealed class ElectricalRulesCheckerTests
             Lead1Py: lead1.Py,
             Lead2Px: lead2.Px,
             Lead2Py: lead2.Py,
-            DecodedValueLabel: null);
+            DecodedValueLabel: decodedValueLabel);
     }
 }

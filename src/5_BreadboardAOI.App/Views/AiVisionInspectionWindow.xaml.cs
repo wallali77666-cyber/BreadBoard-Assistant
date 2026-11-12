@@ -84,6 +84,9 @@ public partial class AiVisionInspectionWindow : Window
     private int _liveTick;
     private int _tutorProbeBusy;
     private bool _voiceSelectionSilent = true;
+    private bool _autoCaptureWhenHandsFree;
+    private long _lastAutoCapturedEpoch = -1;
+    private bool _isAnalysisStreaming;
 
     /// <summary>
     /// Set by the workstation so LINK LM STUDIO uses the exact same connect,
@@ -274,6 +277,127 @@ public partial class AiVisionInspectionWindow : Window
 
         _liveTick++;
         RefreshLiveFrame(force: _liveTick % 3 == 0);
+        UpdateHandGateAndAutoCapture();
+    }
+
+    private void OnManualCaptureModeClick(object sender, RoutedEventArgs e)
+    {
+        _autoCaptureWhenHandsFree = false;
+        ManualCaptureModeButton.IsChecked = true;
+        AutoHandsFreeModeButton.IsChecked = false;
+        BottomStatusText.Text = "Manual capture mode active · click CAPTURE & ANALYZE NOW to inspect live frame.";
+    }
+
+    private void OnAutoHandsFreeModeClick(object sender, RoutedEventArgs e)
+    {
+        _autoCaptureWhenHandsFree = true;
+        _lastAutoCapturedEpoch = -1;
+        ManualCaptureModeButton.IsChecked = false;
+        AutoHandsFreeModeButton.IsChecked = true;
+        BottomStatusText.Text = "Auto hands-free mode active · waiting for hands off board & motion settle.";
+        UpdateHandGateAndAutoCapture();
+    }
+
+    private void OnCaptureAndAnalyzeLiveClick(object sender, RoutedEventArgs e)
+    {
+        if (!CaptureLiveSnapshotIntoPreview("LIVE SNAPSHOT", ensurePhotoVisible: true))
+        {
+            BottomStatusText.Text = "No live camera frame available to capture yet.";
+            return;
+        }
+
+        _ = RunAnalysisAsync(photo: true, autoSpeak: true);
+    }
+
+    private bool CaptureLiveSnapshotIntoPreview(string statusLabel, bool ensurePhotoVisible)
+    {
+        if (_coordinator is null)
+            return false;
+
+        byte[]? png = _coordinator.CaptureLiveWarpedPng() ?? _coordinator.CaptureLiveRawPng();
+        if (png is not { Length: > 0 })
+            return false;
+
+        if (ensurePhotoVisible && _viewMode == StudioViewMode.LiveOnly)
+            SetViewMode(StudioViewMode.Dual);
+
+        UpdateSnapshotPreviewFromBytes(png, statusLabel);
+        return true;
+    }
+
+    private void UpdateSnapshotPreviewFromBytes(byte[] png, string statusLabel)
+    {
+        BitmapImage snapshot = CreateBitmapImage(png);
+        _photoDisplay = snapshot;
+        _visionPng = png;
+        _hasPhoto = true;
+        _loadedPhotoPath = statusLabel;
+        _photoPacket = _coordinator?.LatestPacket;
+
+        PhotoFrameImage.Source = snapshot;
+        PhotoPlaceholder.Visibility = Visibility.Collapsed;
+        PhotoMetaText.Text = string.Create(
+            CultureInfo.InvariantCulture,
+            $"{snapshot.PixelWidth} × {snapshot.PixelHeight} · {statusLabel}");
+        PhotoStatusText.Text = statusLabel;
+        PhotoActionBadge.Text = "QWEN ANALYZING...";
+        PhotoActionBadge.Foreground = (Brush)FindResource("LedOnlineBrush");
+        PhotoViewportBorder.BorderBrush = (Brush)FindResource("LedOnlineBrush");
+
+        SetVisionInput(png, snapshot.PixelWidth, snapshot.PixelHeight);
+        RenderOverlays();
+    }
+
+    private void UpdateHandGateAndAutoCapture()
+    {
+        if (_isClosed || _coordinator is null)
+            return;
+
+        if (_coordinator.HasHandInFrame)
+        {
+            HandGateStatusText.Text = "🖐 HANDS ON BOARD · WAITING";
+            var warnBrush = (Brush)FindResource("DrcWarningBrush");
+            HandGateDot.Fill = warnBrush;
+            HandGateBadgeBorder.BorderBrush = warnBrush;
+            HandSettleProgressBar.Value = 0;
+            HandSettleProgressBar.Foreground = warnBrush;
+            return;
+        }
+
+        if (!_coordinator.IsHandFreeAndStable)
+        {
+            double pct = Math.Clamp(
+                (_coordinator.StableElapsedMs / HandMotionGate.DefaultStableThresholdMs) * 100.0,
+                0d,
+                99d);
+            HandGateStatusText.Text = "⏳ MOTION SETTLING...";
+            var accentBrush = (Brush)FindResource("AccentBlueBrush");
+            HandGateDot.Fill = accentBrush;
+            HandGateBadgeBorder.BorderBrush = accentBrush;
+            HandSettleProgressBar.Value = pct;
+            HandSettleProgressBar.Foreground = accentBrush;
+            return;
+        }
+
+        HandGateStatusText.Text = "✓ NO HANDS · BOARD STABLE";
+        var okBrush = (Brush)FindResource("LedOnlineBrush");
+        HandGateDot.Fill = okBrush;
+        HandGateBadgeBorder.BorderBrush = okBrush;
+        HandSettleProgressBar.Value = 100;
+        HandSettleProgressBar.Foreground = okBrush;
+
+        if (_autoCaptureWhenHandsFree && !_isAnalysisStreaming)
+        {
+            long epoch = _coordinator.SettledEpoch;
+            if (epoch > 0 && epoch != _lastAutoCapturedEpoch)
+            {
+                _lastAutoCapturedEpoch = epoch;
+                if (CaptureLiveSnapshotIntoPreview("AUTO CAPTURED · NO HANDS", ensurePhotoVisible: false))
+                {
+                    _ = RunAnalysisAsync(photo: true, autoSpeak: true);
+                }
+            }
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -353,6 +477,25 @@ public partial class AiVisionInspectionWindow : Window
 
         if (!_coordinator.CopyBoardBitmap(_boardPixels, out int stride))
         {
+            byte[]? fallbackPng = _coordinator.CaptureLiveWarpedPng() ?? _coordinator.CaptureLiveRawPng();
+            if (fallbackPng is { Length: > 0 })
+            {
+                LiveFrameImage.Source = CreateBitmapImage(fallbackPng);
+                LiveFrameImage.Stretch = Stretch.Uniform;
+                LivePlaceholder.Visibility = Visibility.Collapsed;
+                LiveMetaText.Text = "LIVE STREAM · FALLBACK";
+                LiveStatusText.Text = $"LIVE · {_coordinator.CameraStatus}";
+
+                if (force)
+                {
+                    _livePacket = _coordinator.LatestPacket;
+                    _ratsnest = _coordinator.LatestRatsnest;
+                    RenderOverlays();
+                }
+
+                return;
+            }
+
             LiveStatusText.Text = "WAITING FOR CAMERA FRAME";
             return;
         }
@@ -368,6 +511,10 @@ public partial class AiVisionInspectionWindow : Window
                 96,
                 PixelFormats.Bgra32,
                 null);
+            LiveFrameImage.Source = _boardWriteable;
+        }
+        else if (!ReferenceEquals(LiveFrameImage.Source, _boardWriteable))
+        {
             LiveFrameImage.Source = _boardWriteable;
         }
 
@@ -650,7 +797,7 @@ public partial class AiVisionInspectionWindow : Window
             if (liveCamPng is { Length: > 0 })
             {
                 visionBytes = liveCamPng;
-                SetVisionInput(visionBytes, 0, 0);
+                UpdateSnapshotPreviewFromBytes(visionBytes, "LIVE CAPTURE");
             }
             else
             {
@@ -683,6 +830,7 @@ public partial class AiVisionInspectionWindow : Window
         Stopwatch clock = Stopwatch.StartNew();
         int streamChunks = 0;
 
+        _isAnalysisStreaming = true;
         try
         {
             IAsyncEnumerable<QwenStreamEvent> stream = qwen.StreamImageDetailedAsync(
@@ -832,6 +980,9 @@ public partial class AiVisionInspectionWindow : Window
         }
         finally
         {
+            if (generation == _analysisGeneration)
+                _isAnalysisStreaming = false;
+
             if (!_isClosed && generation == _analysisGeneration)
             {
                 AnalyzeButton.IsEnabled = true;
@@ -1389,7 +1540,7 @@ public partial class AiVisionInspectionWindow : Window
         // Only the known synthetic board or a homography-locked real board may
         // carry board geometry. An uncalibrated camera frame is just an image.
         bool isPhysicalOrMedia = _coordinator is not null && _coordinator.ActiveCameraSource != CameraSource.Synthetic;
-        bool isBoardCalibrated = _coordinator?.IsBoardCalibrated == true;
+        bool isBoardCalibrated = _coordinator?.IsBoardCalibrated == true || _coordinator?.IsMarkerlessCalibrationActive == true;
 
         bool liveOverlayAllowed = _coordinator?.SupportsLiveOverlay == true;
         if (isPhysicalOrMedia && !isBoardCalibrated)
@@ -1827,15 +1978,6 @@ public partial class AiVisionInspectionWindow : Window
                 ElevenLabsConfigRow.Visibility = (currentPref == VoiceEnginePreference.ElevenLabs || currentPref == VoiceEnginePreference.Auto)
                     ? Visibility.Visible
                     : Visibility.Collapsed;
-            }
-
-            if (ElevenLabsApiKeyBox is not null && saved.HasKey)
-            {
-                ElevenLabsApiKeyBox.Password = saved.ApiKey;
-            }
-            if (ElevenLabsKeyHintText is not null)
-            {
-                ElevenLabsKeyHintText.Visibility = saved.HasKey ? Visibility.Collapsed : Visibility.Visible;
             }
 
             if (ElevenLabsApiKeyBox is not null && saved.HasKey)

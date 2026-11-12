@@ -279,6 +279,7 @@
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="26" />
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                                 <RowDefinition Height="24" />
                             </Grid.RowDefinitions>
@@ -323,7 +324,86 @@
                                 </DockPanel>
                             </Border>
 
-                            <Viewbox Grid.Row="1" Stretch="Uniform" StretchDirection="Both" Margin="4"
+                            <Border Grid.Row="1"
+                                    Background="{StaticResource PanelBackgroundBrush}"
+                                    BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="0,0,0,1"
+                                    Padding="8,4">
+                                <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Border Background="{StaticResource EditorBackgroundBrush}"
+                                            BorderBrush="{StaticResource BorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="2"
+                                            Padding="2"
+                                            Margin="0,1,6,1">
+                                        <StackPanel Orientation="Horizontal">
+                                            <ToggleButton x:Name="ManualCaptureModeButton"
+                                                          Content="MANUAL CAPTURE"
+                                                          Style="{StaticResource ToolbarToggleButtonStyle}"
+                                                          Padding="7,2"
+                                                          FontSize="8.5"
+                                                          Margin="0,0,2,0"
+                                                          IsChecked="True"
+                                                          Click="OnManualCaptureModeClick"
+                                                          ToolTip="Manual mode: live stream runs continuously; click CAPTURE &amp; ANALYZE NOW to inspect a settled frame." />
+                                            <ToggleButton x:Name="AutoHandsFreeModeButton"
+                                                          Content="AUTO (NO HANDS ON BOARD)"
+                                                          Style="{StaticResource ToolbarToggleButtonStyle}"
+                                                          Padding="7,2"
+                                                          FontSize="8.5"
+                                                          Click="OnAutoHandsFreeModeClick"
+                                                          ToolTip="Auto hands-free mode: waits until your hands leave the breadboard and motion stabilizes, then snaps and sends to Qwen." />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Button x:Name="CaptureAnalyzeNowButton"
+                                            Content="&#x1F4F8; CAPTURE &amp; ANALYZE NOW"
+                                            Style="{StaticResource StudioAccentButtonStyle}"
+                                            Padding="8,3"
+                                            FontSize="8.5"
+                                            Margin="0,1,6,1"
+                                            Click="OnCaptureAndAnalyzeLiveClick"
+                                            ToolTip="Capture the current live camera frame into the snapshot panel and inspect it with Qwen Vision now." />
+
+                                    <Border x:Name="HandGateBadgeBorder"
+                                            Background="{StaticResource EditorBackgroundBrush}"
+                                            BorderBrush="{StaticResource LedOnlineBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="2"
+                                            Padding="6,2"
+                                            Margin="0,1,4,1"
+                                            ToolTip="Real-time Hand Motion Gate status (skin + frame-motion gating).">
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Ellipse x:Name="HandGateDot"
+                                                     Width="6"
+                                                     Height="6"
+                                                     Margin="0,0,5,0"
+                                                     Fill="{StaticResource LedOnlineBrush}" />
+                                            <TextBlock x:Name="HandGateStatusText"
+                                                       Text="&#x2713; NO HANDS &#x00B7; BOARD STABLE"
+                                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                                       FontFamily="{StaticResource MonoFontFamily}"
+                                                       FontSize="8.5"
+                                                       VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <ProgressBar x:Name="HandSettleProgressBar"
+                                                 Width="70"
+                                                 Height="6"
+                                                 Minimum="0"
+                                                 Maximum="100"
+                                                 Value="100"
+                                                 VerticalAlignment="Center"
+                                                 Margin="2,1,0,1"
+                                                 Foreground="{StaticResource LedOnlineBrush}"
+                                                 Background="{StaticResource EditorBackgroundBrush}"
+                                                 BorderBrush="{StaticResource BorderBrush}"
+                                                 BorderThickness="1" />
+                                </WrapPanel>
+                            </Border>
+
+                            <Viewbox Grid.Row="2" Stretch="Uniform" StretchDirection="Both" Margin="4"
                                      MouseWheel="OnLiveViewportMouseWheel"
                                      MouseDown="OnLiveViewportMouseDown"
                                      MouseMove="OnLiveViewportMouseMove"
@@ -370,7 +450,7 @@
                                 </Grid>
                             </Viewbox>
 
-                            <Border Grid.Row="2"
+                            <Border Grid.Row="3"
                                     Background="{StaticResource PanelBackgroundBrush}"
                                     BorderBrush="{StaticResource BorderBrush}"
                                     BorderThickness="0,1,0,0"

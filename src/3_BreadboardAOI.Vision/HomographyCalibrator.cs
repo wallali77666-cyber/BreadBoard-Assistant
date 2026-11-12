@@ -8,6 +8,7 @@
 // ============================================================================
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using BreadboardAOI.Core.Contracts;
 using BreadboardAOI.Core.Geometry;
@@ -22,16 +23,38 @@ public sealed class HomographyCalibrator : IDisposable
     public const int WarpedWidth = BreadboardSpec.CanvasWidth;   // 1000
     public const int WarpedHeight = BreadboardSpec.CanvasHeight; // 500
     public const float TargetMargin = 20f;
+    private const int MarkerlessRefreshIntervalFrames = 30;
+
+    private static readonly Point2f[] MarkerlessDestination =
+    [
+        new(0f, 0f),
+        new(WarpedWidth, 0f),
+        new(WarpedWidth, WarpedHeight),
+        new(0f, WarpedHeight)
+    ];
 
     private readonly Dictionary _dictionary;
     private readonly DetectorParameters _detectorParameters;
     private readonly Mat _gray = new();
     private readonly Mat _undistorted = new();
+    private readonly Mat _markerlessBgr = new();
+    private readonly Mat _markerlessHsv = new();
+    private readonly Mat _markerlessMask = new();
+    private readonly Mat _markerlessGray = new();
+    private readonly Mat _markerlessEdges = new();
+    private readonly Mat _markerlessCloseKernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(9, 9));
+    private readonly Mat _markerlessOpenKernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(5, 5));
+    private readonly Mat _markerlessEdgeKernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(7, 7));
 
     private Mat _homography = new(3, 3, MatType.CV_64FC1);
     private Mat? _fallbackHomography;
     private int _fallbackWidth;
     private int _fallbackHeight;
+    private Mat? _markerlessHomography;
+    private int _markerlessWidth;
+    private int _markerlessHeight;
+    private int _markerlessFramesSinceRefresh;
+    private long _transformVersion;
 
     private Mat? _cameraMatrix;
     private Mat? _distortionCoefficients;
@@ -46,6 +69,7 @@ public sealed class HomographyCalibrator : IDisposable
     private int _warpLutSourceWidth;
     private int _warpLutSourceHeight;
     private bool _warpLutUsesCalibratedHomography;
+    private long _warpLutTransformVersion = -1;
 
     private bool _disposed;
 
@@ -62,6 +86,9 @@ public sealed class HomographyCalibrator : IDisposable
     }
 
     public bool IsCalibrated { get; private set; }
+
+    /// <summary>True when markerless breadboard contour homography is active in place of ArUco calibration.</summary>
+    public bool IsMarkerlessFallbackActive { get; private set; }
 
     public int LastMarkerCount { get; private set; }
 
@@ -178,6 +205,21 @@ public sealed class HomographyCalibrator : IDisposable
         _warpLutSourceWidth = 0;
         _warpLutSourceHeight = 0;
         _warpLutUsesCalibratedHomography = false;
+        _warpLutTransformVersion = -1;
+    }
+
+    private void ClearMarkerlessHomography()
+    {
+        if (_markerlessHomography is not null)
+        {
+            _markerlessHomography.Dispose();
+            _markerlessHomography = null;
+            _markerlessWidth = 0;
+            _markerlessHeight = 0;
+            _transformVersion++;
+        }
+
+        IsMarkerlessFallbackActive = false;
     }
 
     /// <summary>Applies the pre-computed rectification maps when intrinsics are set.</summary>
@@ -312,7 +354,9 @@ public sealed class HomographyCalibrator : IDisposable
             previous.Dispose();
 
             IsCalibrated = true;
+            IsMarkerlessFallbackActive = false;
             LastError = null;
+            _transformVersion++;
 
             // Pre-build the fixed-point LUT right away so the very next Warp() runs in <2.5 ms.
             RebuildWarpLut(cameraFrame.Width, cameraFrame.Height, _homography, calibrated: true);
@@ -325,10 +369,226 @@ public sealed class HomographyCalibrator : IDisposable
     }
 
     /// <summary>
+    /// Attempts markerless breadboard contour detection when ArUco corner markers are not present.
+    /// Locates bright low-saturation rectangular regions (or Otsu/Canny contours) covering 18%..92%
+    /// of the frame with a breadboard-compatible aspect ratio (1.3..2.8), returning corners ordered
+    /// as [TopLeft, TopRight, BottomRight, BottomLeft].
+    /// </summary>
+    public bool TryDetectBreadboardQuadFallback(Mat source, out Point2f[] quad)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(source);
+
+        quad = Array.Empty<Point2f>();
+        if (source.Empty() || source.Width < 32 || source.Height < 32)
+            return false;
+
+        double frameArea = (double)source.Width * source.Height;
+        int channels = source.Channels();
+
+        if (channels == 4)
+        {
+            Cv2.CvtColor(source, _markerlessBgr, ColorConversionCodes.BGRA2BGR);
+            Cv2.CvtColor(_markerlessBgr, _markerlessHsv, ColorConversionCodes.BGR2HSV);
+            Cv2.InRange(_markerlessHsv, new Scalar(0, 0, 145), new Scalar(180, 65, 255), _markerlessMask);
+        }
+        else if (channels == 3)
+        {
+            Cv2.CvtColor(source, _markerlessHsv, ColorConversionCodes.BGR2HSV);
+            Cv2.InRange(_markerlessHsv, new Scalar(0, 0, 145), new Scalar(180, 65, 255), _markerlessMask);
+        }
+        else
+        {
+            Cv2.Threshold(source, _markerlessMask, 145, 255, ThresholdTypes.Binary);
+        }
+
+        Cv2.MorphologyEx(_markerlessMask, _markerlessMask, MorphTypes.Close, _markerlessCloseKernel);
+        Cv2.MorphologyEx(_markerlessMask, _markerlessMask, MorphTypes.Open, _markerlessOpenKernel);
+
+        if (TryExtractBestBreadboardQuad(_markerlessMask, frameArea, out quad))
+            return true;
+
+        // Secondary fallback via Otsu threshold & Canny contour extraction for dimmer lighting.
+        if (channels == 4)
+            Cv2.CvtColor(source, _markerlessGray, ColorConversionCodes.BGRA2GRAY);
+        else if (channels == 3)
+            Cv2.CvtColor(source, _markerlessGray, ColorConversionCodes.BGR2GRAY);
+        else
+            source.CopyTo(_markerlessGray);
+
+        Cv2.GaussianBlur(_markerlessGray, _markerlessGray, new OpenCvSharp.Size(5, 5), 0);
+
+        Cv2.Threshold(_markerlessGray, _markerlessMask, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+        Cv2.MorphologyEx(_markerlessMask, _markerlessMask, MorphTypes.Close, _markerlessCloseKernel);
+        Cv2.MorphologyEx(_markerlessMask, _markerlessMask, MorphTypes.Open, _markerlessOpenKernel);
+
+        if (TryExtractBestBreadboardQuad(_markerlessMask, frameArea, out quad))
+            return true;
+
+        Cv2.Canny(_markerlessGray, _markerlessEdges, 50, 150);
+        Cv2.MorphologyEx(_markerlessEdges, _markerlessEdges, MorphTypes.Close, _markerlessEdgeKernel);
+
+        return TryExtractBestBreadboardQuad(_markerlessEdges, frameArea, out quad);
+    }
+
+    private static bool TryExtractBestBreadboardQuad(Mat binaryMask, double frameArea, out Point2f[] quad)
+    {
+        quad = Array.Empty<Point2f>();
+        Cv2.FindContours(
+            binaryMask,
+            out OpenCvSharp.Point[][] contours,
+            out _,
+            RetrievalModes.External,
+            ContourApproximationModes.ApproxSimple);
+
+        if (contours.Length == 0)
+            return false;
+
+        var candidates = new (int Index, double Area)[contours.Length];
+        int candidateCount = 0;
+        double minArea = frameArea * 0.18;
+        double maxArea = frameArea * 0.92;
+
+        for (int i = 0; i < contours.Length; i++)
+        {
+            double area = Cv2.ContourArea(contours[i]);
+            if (area >= minArea && area <= maxArea)
+                candidates[candidateCount++] = (i, area);
+        }
+
+        if (candidateCount == 0)
+            return false;
+
+        Array.Sort(candidates, 0, candidateCount, Comparer<(int Index, double Area)>.Create(
+            (a, b) => b.Area.CompareTo(a.Area)));
+
+        for (int c = 0; c < candidateCount; c++)
+        {
+            OpenCvSharp.Point[] contour = contours[candidates[c].Index];
+            double contourArea = candidates[c].Area;
+            double perimeter = Cv2.ArcLength(contour, closed: true);
+            if (perimeter <= 0)
+                continue;
+
+            Point2f[]? rawCorners = null;
+            OpenCvSharp.Point[] approx = Cv2.ApproxPolyDP(contour, 0.02 * perimeter, closed: true);
+            if (approx.Length != 4)
+                approx = Cv2.ApproxPolyDP(contour, 0.035 * perimeter, closed: true);
+
+            if (approx.Length != 4)
+            {
+                OpenCvSharp.Point[] hull = Cv2.ConvexHull(contour);
+                double hullPerim = Cv2.ArcLength(hull, closed: true);
+                if (hullPerim > 0)
+                {
+                    OpenCvSharp.Point[] hullApprox = Cv2.ApproxPolyDP(hull, 0.025 * hullPerim, closed: true);
+                    if (hullApprox.Length == 4)
+                        approx = hullApprox;
+                }
+            }
+
+            if (approx.Length == 4)
+            {
+                rawCorners =
+                [
+                    new(approx[0].X, approx[0].Y),
+                    new(approx[1].X, approx[1].Y),
+                    new(approx[2].X, approx[2].Y),
+                    new(approx[3].X, approx[3].Y)
+                ];
+            }
+            else
+            {
+                RotatedRect minRect = Cv2.MinAreaRect(contour);
+                double rectArea = (double)minRect.Size.Width * minRect.Size.Height;
+                if (rectArea <= 0 || contourArea / rectArea < 0.65)
+                    continue;
+
+                rawCorners = minRect.Points();
+            }
+
+            if (rawCorners is null || rawCorners.Length != 4)
+                continue;
+
+            Point2f[] ordered = OrderQuadTopLeftClockwise(rawCorners);
+            float topW = Distance(ordered[0], ordered[1]);
+            float botW = Distance(ordered[3], ordered[2]);
+            float leftH = Distance(ordered[0], ordered[3]);
+            float rightH = Distance(ordered[1], ordered[2]);
+
+            float avgW = (topW + botW) * 0.5f;
+            float avgH = (leftH + rightH) * 0.5f;
+            if (avgW < 40f || avgH < 20f)
+                continue;
+
+            if (Math.Min(topW, botW) / Math.Max(topW, botW) < 0.45f
+                || Math.Min(leftH, rightH) / Math.Max(leftH, rightH) < 0.45f)
+            {
+                continue;
+            }
+
+            float aspect = avgW / avgH;
+            if (aspect is < 1.3f or > 2.8f)
+                continue;
+
+            using Mat transform = Cv2.GetPerspectiveTransform(ordered, MarkerlessDestination);
+            if (!IsFinite(transform) || !HasUsableDeterminant(transform))
+                continue;
+
+            quad = ordered;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static Point2f[] OrderQuadTopLeftClockwise(Point2f[] points)
+    {
+        float cx = (points[0].X + points[1].X + points[2].X + points[3].X) * 0.25f;
+        float cy = (points[0].Y + points[1].Y + points[2].Y + points[3].Y) * 0.25f;
+
+        var sorted = new Point2f[4];
+        Array.Copy(points, sorted, 4);
+        Array.Sort(sorted, (a, b) =>
+        {
+            double angleA = Math.Atan2(a.Y - cy, a.X - cx);
+            double angleB = Math.Atan2(b.Y - cy, b.X - cx);
+            return angleA.CompareTo(angleB);
+        });
+
+        int tlIndex = 0;
+        float minSum = sorted[0].X + sorted[0].Y;
+        for (int i = 1; i < 4; i++)
+        {
+            float sum = sorted[i].X + sorted[i].Y;
+            if (sum < minSum)
+            {
+                minSum = sum;
+                tlIndex = i;
+            }
+        }
+
+        return
+        [
+            sorted[tlIndex],
+            sorted[(tlIndex + 1) % 4],
+            sorted[(tlIndex + 2) % 4],
+            sorted[(tlIndex + 3) % 4]
+        ];
+    }
+
+    private static float Distance(Point2f a, Point2f b)
+    {
+        float dx = b.X - a.X;
+        float dy = b.Y - a.Y;
+        return MathF.Sqrt(dx * dx + dy * dy);
+    }
+
+    /// <summary>
     /// Warps <paramref name="source"/> into <paramref name="destination"/> at 1000 x 500 in &lt;2.5 ms
     /// using precomputed fixed-point <c>CV_16SC2</c> / <c>CV_16UC1</c> remap tables.
-    /// Before calibration a non-uniform fallback stretch is used so the pipeline keeps
-    /// producing frames instead of freezing the UI.
+    /// Before calibration, uses markerless breadboard contour homography when detected, or
+    /// falls back to a non-uniform stretch so the pipeline keeps producing frames.
     /// </summary>
     public bool Warp(Mat source, Mat destination)
     {
@@ -345,9 +605,60 @@ public sealed class HomographyCalibrator : IDisposable
         {
             Mat prepared = PrepareSource(source);
 
-            Mat transform = IsCalibrated
-                ? _homography
-                : GetFallbackHomography(prepared.Width, prepared.Height);
+            Mat transform;
+            if (IsCalibrated)
+            {
+                IsMarkerlessFallbackActive = false;
+                transform = _homography;
+            }
+            else
+            {
+                bool needsRefresh = _markerlessHomography is null
+                                    || _markerlessWidth != prepared.Width
+                                    || _markerlessHeight != prepared.Height
+                                    || _markerlessFramesSinceRefresh >= MarkerlessRefreshIntervalFrames;
+
+                if (needsRefresh)
+                {
+                    _markerlessFramesSinceRefresh = 0;
+                    if (TryDetectBreadboardQuadFallback(prepared, out Point2f[] detectedQuad))
+                    {
+                        Mat candidate = Cv2.GetPerspectiveTransform(detectedQuad, MarkerlessDestination);
+                        if (IsFinite(candidate) && HasUsableDeterminant(candidate))
+                        {
+                            _markerlessHomography?.Dispose();
+                            _markerlessHomography = candidate;
+                            _markerlessWidth = prepared.Width;
+                            _markerlessHeight = prepared.Height;
+                            _transformVersion++;
+                        }
+                        else
+                        {
+                            candidate.Dispose();
+                            ClearMarkerlessHomography();
+                        }
+                    }
+                    else
+                    {
+                        ClearMarkerlessHomography();
+                    }
+                }
+                else
+                {
+                    _markerlessFramesSinceRefresh++;
+                }
+
+                if (_markerlessHomography is not null)
+                {
+                    IsMarkerlessFallbackActive = true;
+                    transform = _markerlessHomography;
+                }
+                else
+                {
+                    IsMarkerlessFallbackActive = false;
+                    transform = GetFallbackHomography(prepared.Width, prepared.Height);
+                }
+            }
 
             EnsureWarpLut(prepared.Width, prepared.Height, transform, IsCalibrated);
 
@@ -388,7 +699,8 @@ public sealed class HomographyCalibrator : IDisposable
             && _warpLutMap2 is not null
             && _warpLutSourceWidth == sourceWidth
             && _warpLutSourceHeight == sourceHeight
-            && _warpLutUsesCalibratedHomography == calibrated)
+            && _warpLutUsesCalibratedHomography == calibrated
+            && _warpLutTransformVersion == _transformVersion)
         {
             return;
         }
@@ -442,12 +754,16 @@ public sealed class HomographyCalibrator : IDisposable
         _warpLutSourceWidth = sourceWidth;
         _warpLutSourceHeight = sourceHeight;
         _warpLutUsesCalibratedHomography = calibrated;
+        _warpLutTransformVersion = _transformVersion;
     }
 
     public void ResetCalibration()
     {
         IsCalibrated = false;
         LastMarkerCount = 0;
+        _markerlessFramesSinceRefresh = 0;
+        ClearMarkerlessHomography();
+        _transformVersion++;
         ReleaseWarpLut();
     }
 
@@ -481,6 +797,7 @@ public sealed class HomographyCalibrator : IDisposable
         _fallbackHomography = Cv2.GetPerspectiveTransform(source, destination);
         _fallbackWidth = sourceWidth;
         _fallbackHeight = sourceHeight;
+        _transformVersion++;
         return _fallbackHomography;
     }
 
@@ -637,8 +954,17 @@ public sealed class HomographyCalibrator : IDisposable
         _dictionary.Dispose();
         _gray.Dispose();
         _undistorted.Dispose();
+        _markerlessBgr.Dispose();
+        _markerlessHsv.Dispose();
+        _markerlessMask.Dispose();
+        _markerlessGray.Dispose();
+        _markerlessEdges.Dispose();
+        _markerlessCloseKernel.Dispose();
+        _markerlessOpenKernel.Dispose();
+        _markerlessEdgeKernel.Dispose();
         _homography.Dispose();
         _fallbackHomography?.Dispose();
+        _markerlessHomography?.Dispose();
         _cameraMatrix?.Dispose();
         _distortionCoefficients?.Dispose();
         ReleaseUndistortMaps();

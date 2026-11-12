@@ -1,8 +1,11 @@
+using BreadboardAOI.Core.BoxCoding;
 using BreadboardAOI.Core.Contracts;
+using BreadboardAOI.Core.Design;
 using BreadboardAOI.Core.Geometry;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using BreadboardAOI.Core.DrcEngine;
 using SkiaSharp;
@@ -87,6 +90,40 @@ public sealed partial class SkiaArOverlayRenderer
 
     /// <summary>Currently hovered off-board microcontroller pin socket, if any.</summary>
     public DevBoardPinHit? HoveredDevBoardPin { get; private set; }
+
+    /// <summary>Selected external USB cable type attached to the hardware programmer.</summary>
+    public UsbCableKind ActiveUsbCableKind { get; set; } = UsbCableKind.UsbB;
+
+    /// <summary>True when the USB programmer cable is actively linked to the docked dev board.</summary>
+    public bool IsProgrammerConnected { get; set; }
+
+    /// <summary>True while a firmware compile/flash sequence is animated along the USB cable.</summary>
+    public bool IsProgrammerUploading { get; set; }
+
+    /// <summary>Normalized 0..1 firmware flash progress rendered inside the CAD programmer box.</summary>
+    public float ProgrammerUploadProgress { get; set; }
+
+    /// <summary>Live virtual firmware runtime telemetry (LED/LCD/Buzzer/TX-RX states).</summary>
+    public VirtualFirmwareRuntimeState? ActiveFirmwareState { get; set; }
+
+    /// <summary>Active thermal hotspots rendered as IR overlays in board coordinates.</summary>
+    public IReadOnlyList<ThermalHotspot> ActiveThermalHotspots { get; set; } = Array.Empty<ThermalHotspot>();
+
+    /// <summary>Screen-space bounding box of the CAD [UPLOAD FIRMWARE] button for viewport click hit-testing.</summary>
+    public SKRect LastProgrammerUploadButtonRect { get; private set; } = SKRect.Empty;
+
+    /// <summary>Screen-space bounding box of the external hardware programmer chassis.</summary>
+    public SKRect LastProgrammerBodyRect { get; private set; } = SKRect.Empty;
+
+    /// <summary>Returns true when viewport click coordinates land on the CAD Upload Firmware button.</summary>
+    public bool TryHitTestProgrammerUploadButton(float canvasX, float canvasY)
+        => !LastProgrammerUploadButtonRect.IsEmpty && LastProgrammerUploadButtonRect.Contains(canvasX, canvasY);
+
+    internal void ClearProgrammerHitRects()
+    {
+        LastProgrammerUploadButtonRect = SKRect.Empty;
+        LastProgrammerBodyRect = SKRect.Empty;
+    }
 
     public bool TryHitTestDevBoardPin(float canvasX, float canvasY, out DevBoardPinHit? hit)
     {
@@ -1153,5 +1190,561 @@ public sealed partial class SkiaArOverlayRenderer
         canvas.DrawRoundRect(hudRect, 0.8f * pxPerMm, 0.8f * pxPerMm, bgPaint);
         canvas.DrawRoundRect(hudRect, 0.8f * pxPerMm, 0.8f * pxPerMm, borderPaint);
         canvas.DrawText(summary, hudRect.Left + (2.0f * pxPerMm), hudRect.MidY + (0.55f * pxPerMm), textPaint);
+    }
+
+    private void DrawHardwareProgrammerAndUsbCable(
+        SKCanvas canvas,
+        SKRect breadboardRect,
+        IReadOnlyList<RenderedMicrocontrollerLayout> mcuLayouts,
+        float pxPerMm)
+    {
+        if (pxPerMm <= 0.01f)
+        {
+            ClearProgrammerHitRects();
+            return;
+        }
+
+        float rightAnchor = breadboardRect.Right;
+        for (int i = 0; i < mcuLayouts.Count; i++)
+        {
+            SKRect bounds = mcuLayouts[i].BoardBoundsCanvas;
+            if (bounds.Right > rightAnchor && bounds.Left > breadboardRect.Right - (2.0f * pxPerMm))
+                rightAnchor = bounds.Right;
+        }
+
+        float progLeft = rightAnchor + (12.0f * pxPerMm);
+        float progWidth = 28.0f * pxPerMm;
+        float progHeight = Math.Clamp(breadboardRect.Height * 0.72f, 24.0f * pxPerMm, 42.0f * pxPerMm);
+        float progTop = breadboardRect.Top + ((breadboardRect.Height - progHeight) * 0.5f);
+        var progRect = new SKRect(progLeft, progTop, progLeft + progWidth, progTop + progHeight);
+        LastProgrammerBodyRect = progRect;
+
+        UsbCableSpec cableSpec = ProgrammerCatalog.GetCableSpec(ActiveUsbCableKind);
+        SKColor accentColor = TryParseColor(cableSpec.AccentHex, new SKColor(0x00, 0xBC, 0xD4));
+        SKColor jacketColor = TryParseColor(cableSpec.JacketHex, new SKColor(0x00, 0x83, 0x8F));
+        bool connected = IsProgrammerConnected;
+        bool firmwareLive = ActiveFirmwareState is { IsRunning: true };
+        long tickMs = Environment.TickCount64;
+        float pulse01 = 0.5f + (0.5f * MathF.Sin((tickMs % 2000L) * (MathF.PI * 2f / 2000f)));
+
+        // 1. Determine USB cable endpoints (Programmer left port -> Docked MCU USB connector)
+        var progPortAnchor = new SKPoint(progRect.Left, progRect.Top + (progRect.Height * 0.36f));
+        RenderedMicrocontrollerLayout? targetMcu = mcuLayouts.Count > 0 ? mcuLayouts[0] : null;
+        SKPoint targetAnchor;
+        SKPoint ctrl1;
+        SKPoint ctrl2;
+
+        if (targetMcu is not null)
+        {
+            SKRect mr = targetMcu.BoardBoundsCanvas;
+            targetAnchor = targetMcu.BoardType switch
+            {
+                MicrocontrollerBoardType.ArduinoUnoR3R4 or MicrocontrollerBoardType.ArduinoMega2560
+                    => new SKPoint(mr.Left + (2.0f * pxPerMm), mr.Top + (15.25f * pxPerMm)),
+                MicrocontrollerBoardType.WemosEsp32S2Mini
+                    => new SKPoint(mr.MidX, mr.Bottom - (0.8f * pxPerMm)),
+                _ => new SKPoint(mr.Left + (1.2f * pxPerMm), mr.MidY)
+            };
+
+            if (!connected)
+            {
+                // Unplugged cable stops slightly short of the MCU USB receptacle so visual detachment is obvious.
+                targetAnchor = new SKPoint(targetAnchor.X - (5.5f * pxPerMm), targetAnchor.Y + (4.5f * pxPerMm));
+            }
+
+            float midX = (progPortAnchor.X + targetAnchor.X) * 0.5f;
+            float sag = MathF.Max(12.0f * pxPerMm, MathF.Abs(progPortAnchor.Y - targetAnchor.Y) * 0.45f);
+            ctrl1 = new SKPoint(progPortAnchor.X - (14.0f * pxPerMm), progPortAnchor.Y + (sag * 0.35f));
+            ctrl2 = new SKPoint(midX - (6.0f * pxPerMm), MathF.Max(progPortAnchor.Y, targetAnchor.Y) + (sag * 0.72f));
+        }
+        else
+        {
+            targetAnchor = new SKPoint(progRect.Left - (9.0f * pxPerMm), progRect.Bottom - (3.0f * pxPerMm));
+            ctrl1 = new SKPoint(progPortAnchor.X - (11.0f * pxPerMm), progPortAnchor.Y + (4.0f * pxPerMm));
+            ctrl2 = new SKPoint(targetAnchor.X - (4.0f * pxPerMm), targetAnchor.Y + (6.0f * pxPerMm));
+        }
+
+        // Draw realistic 3D Bezier USB cable & photon pulses underneath the programmer housing
+        using (var cablePath = new SKPath())
+        {
+            cablePath.MoveTo(progPortAnchor);
+            cablePath.CubicTo(ctrl1, ctrl2, targetAnchor);
+
+            using var cableShadowBlur = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 1.4f * pxPerMm);
+            using var cableShadowPaint = new SKPaint
+            {
+                Color = new SKColor(0, 0, 0, 95),
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 2.4f * pxPerMm,
+                StrokeCap = SKStrokeCap.Round,
+                IsAntialias = true,
+                MaskFilter = cableShadowBlur
+            };
+            canvas.Save();
+            canvas.Translate(0f, 1.0f * pxPerMm);
+            canvas.DrawPath(cablePath, cableShadowPaint);
+            canvas.Restore();
+
+            if (connected)
+            {
+                using var cableGlowBlur = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 1.2f * pxPerMm);
+                using var cableGlowPaint = new SKPaint
+                {
+                    Color = accentColor.WithAlpha((byte)(70 + (60 * pulse01))),
+                    Style = SKPaintStyle.Stroke,
+                    StrokeWidth = 3.2f * pxPerMm,
+                    StrokeCap = SKStrokeCap.Round,
+                    IsAntialias = true,
+                    MaskFilter = cableGlowBlur
+                };
+                canvas.DrawPath(cablePath, cableGlowPaint);
+            }
+
+            using var jacketPaint = new SKPaint
+            {
+                Color = connected ? jacketColor : new SKColor(0x37, 0x41, 0x51),
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 1.65f * pxPerMm,
+                StrokeCap = SKStrokeCap.Round,
+                IsAntialias = true
+            };
+            canvas.DrawPath(cablePath, jacketPaint);
+
+            using var highlightPaint = new SKPaint
+            {
+                Color = new SKColor(255, 255, 255, connected ? (byte)75 : (byte)35),
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 0.45f * pxPerMm,
+                StrokeCap = SKStrokeCap.Round,
+                IsAntialias = true
+            };
+            canvas.DrawPath(cablePath, highlightPaint);
+
+            // Flowing telemetry photon packets when USB is linked (faster amber pulses during upload)
+            if (connected)
+            {
+                using var pathMeasure = new SKPathMeasure(cablePath, forceClosed: false);
+                float totalLen = pathMeasure.Length;
+                if (totalLen > 1f)
+                {
+                    double speedPeriodMs = IsProgrammerUploading ? 650.0 : 1400.0;
+                    float phase = (float)((tickMs % (long)speedPeriodMs) / speedPeriodMs);
+                    SKColor packetColor = IsProgrammerUploading ? new SKColor(0xFB, 0xBF, 0x24) : new SKColor(0x00, 0xE5, 0xFF);
+                    using var packetHaloBlur = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 1.1f * pxPerMm);
+                    using var packetHalo = new SKPaint
+                    {
+                        Color = packetColor.WithAlpha(135),
+                        Style = SKPaintStyle.Fill,
+                        IsAntialias = true,
+                        MaskFilter = packetHaloBlur
+                    };
+                    using var packetCore = new SKPaint
+                    {
+                        Color = SKColors.White,
+                        Style = SKPaintStyle.Fill,
+                        IsAntialias = true
+                    };
+
+                    const int packetCount = 4;
+                    for (int p = 0; p < packetCount; p++)
+                    {
+                        float dist = ((phase + (p / (float)packetCount)) % 1.0f) * totalLen;
+                        if (pathMeasure.GetPosition(dist, out SKPoint pt))
+                        {
+                            canvas.DrawCircle(pt, 1.25f * pxPerMm, packetHalo);
+                            canvas.DrawCircle(pt, 0.58f * pxPerMm, packetCore);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Glow aura ring on docked MCU's USB receptacle when linked
+        if (connected && targetMcu is not null)
+        {
+            using var portAuraBlur = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 0.8f * pxPerMm);
+            using var portAuraPaint = new SKPaint
+            {
+                Color = accentColor.WithAlpha((byte)(110 + (85 * pulse01))),
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 0.85f * pxPerMm,
+                IsAntialias = true,
+                MaskFilter = portAuraBlur
+            };
+            canvas.DrawCircle(targetAnchor, 3.2f * pxPerMm, portAuraPaint);
+        }
+
+        // Molded connector boots at both ends of USB cable
+        DrawUsbConnectorBoot(canvas, progPortAnchor, ActiveUsbCableKind, pxPerMm, connected, accentColor);
+        DrawUsbConnectorBoot(canvas, targetAnchor, ActiveUsbCableKind, pxPerMm, connected, accentColor);
+
+        // 2. Hardware Programmer Chassis
+        using var chassisShadowBlur = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 2.0f * pxPerMm);
+        using var chassisShadow = new SKPaint
+        {
+            Color = new SKColor(0, 0, 0, 125),
+            Style = SKPaintStyle.Fill,
+            IsAntialias = true,
+            MaskFilter = chassisShadowBlur
+        };
+        canvas.DrawRoundRect(
+            new SKRect(progRect.Left + (0.9f * pxPerMm), progRect.Top + (1.3f * pxPerMm), progRect.Right + (0.9f * pxPerMm), progRect.Bottom + (1.3f * pxPerMm)),
+            1.6f * pxPerMm,
+            1.6f * pxPerMm,
+            chassisShadow);
+
+        if (connected)
+        {
+            using var boxAuraBlur = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 1.4f * pxPerMm);
+            using var boxAuraPaint = new SKPaint
+            {
+                Color = (firmwareLive ? new SKColor(0x10, 0xB9, 0x81) : accentColor).WithAlpha((byte)(85 + (65 * pulse01))),
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 1.3f * pxPerMm,
+                IsAntialias = true,
+                MaskFilter = boxAuraBlur
+            };
+            canvas.DrawRoundRect(progRect, 1.6f * pxPerMm, 1.6f * pxPerMm, boxAuraPaint);
+        }
+
+        using var bodyShader = SKShader.CreateLinearGradient(
+            new SKPoint(progRect.Left, progRect.Top),
+            new SKPoint(progRect.Left, progRect.Bottom),
+            new[] { SKColor.Parse("#1F2937"), SKColor.Parse("#111827"), SKColor.Parse("#0B0F19") },
+            new[] { 0f, 0.55f, 1f },
+            SKShaderTileMode.Clamp);
+        using var bodyPaint = new SKPaint { Shader = bodyShader, Style = SKPaintStyle.Fill, IsAntialias = true };
+        canvas.DrawRoundRect(progRect, 1.4f * pxPerMm, 1.4f * pxPerMm, bodyPaint);
+
+        using var bezelPaint = new SKPaint
+        {
+            Color = connected ? accentColor : SKColor.Parse("#334155"),
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 0.45f * pxPerMm,
+            IsAntialias = true
+        };
+        canvas.DrawRoundRect(progRect, 1.4f * pxPerMm, 1.4f * pxPerMm, bezelPaint);
+
+        // Corner chassis screws
+        float screwInset = 1.4f * pxPerMm;
+        using var screwPaint = new SKPaint { Color = SKColor.Parse("#64748B"), Style = SKPaintStyle.Fill, IsAntialias = true };
+        canvas.DrawCircle(progRect.Left + screwInset, progRect.Top + screwInset, 0.45f * pxPerMm, screwPaint);
+        canvas.DrawCircle(progRect.Right - screwInset, progRect.Top + screwInset, 0.45f * pxPerMm, screwPaint);
+        canvas.DrawCircle(progRect.Left + screwInset, progRect.Bottom - screwInset, 0.45f * pxPerMm, screwPaint);
+        canvas.DrawCircle(progRect.Right - screwInset, progRect.Bottom - screwInset, 0.45f * pxPerMm, screwPaint);
+
+        // Header Silkscreen
+        using var titlePaint = new SKPaint
+        {
+            Color = SKColor.Parse("#E2E8F0"),
+            TextSize = Math.Max(7.0f, 1.45f * pxPerMm),
+            Typeface = _uiBoldTypeface,
+            TextAlign = SKTextAlign.Center,
+            IsAntialias = true
+        };
+        canvas.DrawText("USB-ISP / UART", progRect.MidX, progRect.Top + (3.2f * pxPerMm), titlePaint);
+
+        using var subPaint = new SKPaint
+        {
+            Color = SKColor.Parse("#94A3B8"),
+            TextSize = Math.Max(6.0f, 1.05f * pxPerMm),
+            Typeface = _monoTypeface,
+            TextAlign = SKTextAlign.Center,
+            IsAntialias = true
+        };
+        canvas.DrawText("HARDWARE PROG", progRect.MidX, progRect.Top + (5.1f * pxPerMm), subPaint);
+
+        // Status LED Array: PWR, LINK, TX, RX
+        float ledRowY = progRect.Top + (8.0f * pxPerMm);
+        float ledSpacing = progWidth * 0.20f;
+        float ledStartX = progRect.MidX - (1.5f * ledSpacing);
+        bool txActive = IsProgrammerUploading || (firmwareLive && ((ActiveFirmwareState!.TickCount % 2) == 0));
+        bool rxActive = firmwareLive && ((ActiveFirmwareState!.TickCount % 3) == 1);
+
+        DrawProgrammerLed(canvas, new SKPoint(ledStartX, ledRowY), "PWR", true, new SKColor(0x10, 0xB9, 0x81), pxPerMm);
+        DrawProgrammerLed(canvas, new SKPoint(ledStartX + ledSpacing, ledRowY), "LINK", connected, new SKColor(0x00, 0xE5, 0xFF), pxPerMm);
+        DrawProgrammerLed(canvas, new SKPoint(ledStartX + (ledSpacing * 2f), ledRowY), "TX", txActive, new SKColor(0xF5, 0x9E, 0x0B), pxPerMm);
+        DrawProgrammerLed(canvas, new SKPoint(ledStartX + (ledSpacing * 3f), ledRowY), "RX", rxActive, new SKColor(0x34, 0xD3, 0x99), pxPerMm);
+
+        // Active USB Cable Pill
+        float pillTop = progRect.Top + (11.2f * pxPerMm);
+        float pillH = 3.8f * pxPerMm;
+        var cablePill = new SKRect(progRect.Left + (2.0f * pxPerMm), pillTop, progRect.Right - (2.0f * pxPerMm), pillTop + pillH);
+        using var pillBg = new SKPaint { Color = SKColor.Parse("#0F172A"), Style = SKPaintStyle.Fill, IsAntialias = true };
+        using var pillBorder = new SKPaint { Color = accentColor.WithAlpha(185), Style = SKPaintStyle.Stroke, StrokeWidth = 0.35f * pxPerMm, IsAntialias = true };
+        canvas.DrawRoundRect(cablePill, 0.7f * pxPerMm, 0.7f * pxPerMm, pillBg);
+        canvas.DrawRoundRect(cablePill, 0.7f * pxPerMm, 0.7f * pxPerMm, pillBorder);
+
+        using var pillText = new SKPaint
+        {
+            Color = accentColor,
+            TextSize = Math.Max(6.5f, 1.15f * pxPerMm),
+            Typeface = _monoTypeface,
+            TextAlign = SKTextAlign.Center,
+            IsAntialias = true
+        };
+        string cableBadgeLabel = $"{cableSpec.ShortTag} · {(connected ? "LINKED" : "IDLE")}";
+        canvas.DrawText(cableBadgeLabel, cablePill.MidX, cablePill.MidY + (0.42f * pxPerMm), pillText);
+
+        // Flash progress bar inside programmer box (visible while uploading or live)
+        float barTop = cablePill.Bottom + (1.6f * pxPerMm);
+        var barTrack = new SKRect(progRect.Left + (2.0f * pxPerMm), barTop, progRect.Right - (2.0f * pxPerMm), barTop + (1.8f * pxPerMm));
+        using var barTrackPaint = new SKPaint { Color = SKColor.Parse("#1E293B"), Style = SKPaintStyle.Fill, IsAntialias = true };
+        canvas.DrawRoundRect(barTrack, 0.5f * pxPerMm, 0.5f * pxPerMm, barTrackPaint);
+
+        float fillFraction = IsProgrammerUploading
+            ? Math.Clamp(ProgrammerUploadProgress, 0.05f, 1.0f)
+            : firmwareLive ? 1.0f : 0f;
+
+        if (fillFraction > 0f)
+        {
+            var barFill = new SKRect(barTrack.Left, barTrack.Top, barTrack.Left + (barTrack.Width * fillFraction), barTrack.Bottom);
+            using var barFillPaint = new SKPaint
+            {
+                Color = IsProgrammerUploading ? new SKColor(0xF5, 0x9E, 0x0B) : new SKColor(0x10, 0xB9, 0x81),
+                Style = SKPaintStyle.Fill,
+                IsAntialias = true
+            };
+            canvas.DrawRoundRect(barFill, 0.5f * pxPerMm, 0.5f * pxPerMm, barFillPaint);
+        }
+
+        // Clickable [ ⬆ UPLOAD FIRMWARE ] Button at bottom of programmer chassis (only when connected)
+        float pad = 1.9f * pxPerMm;
+        float btnH = Math.Max(14.0f, 4.8f * pxPerMm);
+        var btnRect = new SKRect(progRect.Left + pad, progRect.Bottom - btnH - pad, progRect.Right - pad, progRect.Bottom - pad);
+
+        LastProgrammerUploadButtonRect = connected ? btnRect : SKRect.Empty;
+
+        SKColor btnFillColor = !connected
+            ? SKColor.Parse("#0F172A")
+            : IsProgrammerUploading
+                ? SKColor.Parse("#78350F")
+                : SKColor.Parse("#065F46");
+        SKColor btnBorderColor = !connected
+            ? SKColor.Parse("#334155")
+            : IsProgrammerUploading
+                ? SKColor.Parse("#FBBF24")
+                : SKColor.Parse("#00E5FF");
+        SKColor btnTextColor = connected ? SKColors.White : SKColor.Parse("#64748B");
+        float btnStrokeWidth = (connected ? 0.45f : 0.35f) * pxPerMm;
+        float btnTextSize = connected ? Math.Max(7.0f, 1.15f * pxPerMm) : Math.Max(6.0f, 0.88f * pxPerMm);
+        SKTypeface? btnTypeface = connected ? _uiBoldTypeface : _monoTypeface;
+        string btnCaption = !connected
+            ? "CONNECT CABLE TO UPLOAD"
+            : IsProgrammerUploading
+                ? $"FLASHING {Math.Round(ProgrammerUploadProgress * 100):0}%"
+                : firmwareLive
+                    ? "⬆ RE-UPLOAD FW"
+                    : "⬆ UPLOAD FIRMWARE";
+
+        using var btnFill = new SKPaint { Color = btnFillColor, Style = SKPaintStyle.Fill, IsAntialias = true };
+        using var btnBorder = new SKPaint
+        {
+            Color = btnBorderColor,
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = btnStrokeWidth,
+            IsAntialias = true
+        };
+        canvas.DrawRoundRect(btnRect, 0.9f * pxPerMm, 0.9f * pxPerMm, btnFill);
+        canvas.DrawRoundRect(btnRect, 0.9f * pxPerMm, 0.9f * pxPerMm, btnBorder);
+
+        using var btnLabelPaint = new SKPaint
+        {
+            Color = btnTextColor,
+            TextSize = btnTextSize,
+            Typeface = btnTypeface,
+            TextAlign = SKTextAlign.Center,
+            IsAntialias = true
+        };
+        float baselineOffset = connected ? (0.42f * pxPerMm) : (0.35f * pxPerMm);
+        canvas.DrawText(btnCaption, btnRect.MidX, btnRect.MidY + baselineOffset, btnLabelPaint);
+    }
+
+    private void DrawProgrammerLed(
+        SKCanvas canvas,
+        SKPoint center,
+        string label,
+        bool isOn,
+        SKColor onColor,
+        float pxPerMm)
+    {
+        float r = 0.65f * pxPerMm;
+        if (isOn)
+        {
+            using var haloBlur = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 0.9f * pxPerMm);
+            using var haloPaint = new SKPaint
+            {
+                Color = onColor.WithAlpha(155),
+                Style = SKPaintStyle.Fill,
+                IsAntialias = true,
+                MaskFilter = haloBlur
+            };
+            canvas.DrawCircle(center, r * 2.1f, haloPaint);
+        }
+
+        using var ledPaint = new SKPaint
+        {
+            Color = isOn ? onColor : SKColor.Parse("#334155"),
+            Style = SKPaintStyle.Fill,
+            IsAntialias = true
+        };
+        canvas.DrawCircle(center, r, ledPaint);
+
+        using var textPaint = new SKPaint
+        {
+            Color = isOn ? SKColor.Parse("#E2E8F0") : SKColor.Parse("#64748B"),
+            TextSize = Math.Max(5.5f, 0.82f * pxPerMm),
+            Typeface = _monoTypeface,
+            TextAlign = SKTextAlign.Center,
+            IsAntialias = true
+        };
+        canvas.DrawText(label, center.X, center.Y + (1.75f * pxPerMm), textPaint);
+    }
+
+    private static void DrawUsbConnectorBoot(
+        SKCanvas canvas,
+        SKPoint anchor,
+        UsbCableKind cableKind,
+        float pxPerMm,
+        bool connected,
+        SKColor accent)
+    {
+        float halfW = cableKind == UsbCableKind.UsbB ? 1.5f * pxPerMm : 1.15f * pxPerMm;
+        float halfH = cableKind == UsbCableKind.MicroUsb ? 0.85f * pxPerMm : 1.25f * pxPerMm;
+        var bootRect = new SKRect(anchor.X - halfW, anchor.Y - halfH, anchor.X + halfW, anchor.Y + halfH);
+
+        using var bootFill = new SKPaint
+        {
+            Color = SKColor.Parse("#1E293B"),
+            Style = SKPaintStyle.Fill,
+            IsAntialias = true
+        };
+        using var bootStroke = new SKPaint
+        {
+            Color = connected ? accent : SKColor.Parse("#64748B"),
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 0.35f * pxPerMm,
+            IsAntialias = true
+        };
+        float radius = cableKind == UsbCableKind.UsbB ? 0.25f * pxPerMm : 0.65f * pxPerMm;
+        canvas.DrawRoundRect(bootRect, radius, radius, bootFill);
+        canvas.DrawRoundRect(bootRect, radius, radius, bootStroke);
+    }
+
+    private void DrawThermalHeatmapOverlay(SKCanvas canvas)
+    {
+        float invScale = 1f / MathF.Max(_scale, 0.05f);
+
+        foreach (ThermalHotspot hotspot in ActiveThermalHotspots)
+        {
+            float t = Math.Clamp(hotspot.NormalizedHeat01, 0f, 1f);
+            SKColor heatColor = t < 0.5f
+                ? LerpColor(new SKColor(0x00, 0xE6, 0x76), new SKColor(0xFF, 0xEA, 0x00), t * 2f)
+                : LerpColor(new SKColor(0xFF, 0xEA, 0x00), new SKColor(0xFF, 0x17, 0x44), (t - 0.5f) * 2f);
+
+            float radius = 24f + (t * 28f);
+            var center = new SKPoint(hotspot.CenterPx, hotspot.CenterPy);
+
+            using var shader = SKShader.CreateRadialGradient(
+                center,
+                radius,
+                new[]
+                {
+                    heatColor.WithAlpha((byte)(110 + (115 * t))),
+                    heatColor.WithAlpha(85),
+                    SKColors.Transparent
+                },
+                new[] { 0f, 0.45f, 1f },
+                SKShaderTileMode.Clamp);
+            using var heatPaint = new SKPaint
+            {
+                Shader = shader,
+                Style = SKPaintStyle.Fill,
+                IsAntialias = true
+            };
+            canvas.DrawCircle(center, radius, heatPaint);
+
+            if (hotspot.IsOverloaded)
+            {
+                using var ringDash = SKPathEffect.CreateDash(new[] { 4f * invScale, 3f * invScale }, 0f);
+                using var ringPaint = new SKPaint
+                {
+                    Color = new SKColor(0xFF, 0x17, 0x44, 225),
+                    Style = SKPaintStyle.Stroke,
+                    StrokeWidth = 1.5f * invScale,
+                    PathEffect = ringDash,
+                    IsAntialias = true
+                };
+                canvas.DrawCircle(center, radius * 0.78f, ringPaint);
+            }
+
+            if (_scale >= 0.45f)
+            {
+                string pillText = hotspot.IsOverloaded
+                    ? string.Create(CultureInfo.InvariantCulture, $"! {hotspot.EstimatedCurrentMa:0.#}mA {hotspot.PowerMilliwatts:0.#}mW")
+                    : string.Create(CultureInfo.InvariantCulture, $"{hotspot.EstimatedCurrentMa:0.#}mA · {hotspot.PowerMilliwatts:0.#}mW");
+
+                using var txtPaint = new SKPaint
+                {
+                    Color = SKColors.White,
+                    TextSize = 8.5f * invScale,
+                    Typeface = _monoTypeface,
+                    TextAlign = SKTextAlign.Center,
+                    IsAntialias = true
+                };
+                float txtW = txtPaint.MeasureText(pillText);
+                float padX = 5f * invScale;
+                float pillH = 13f * invScale;
+                float pillCy = hotspot.CenterPy - (16f + (t * 6f));
+                var pillRect = new SKRect(
+                    hotspot.CenterPx - (txtW * 0.5f) - padX,
+                    pillCy - (pillH * 0.5f),
+                    hotspot.CenterPx + (txtW * 0.5f) + padX,
+                    pillCy + (pillH * 0.5f));
+
+                using var bgPaint = new SKPaint
+                {
+                    Color = hotspot.IsOverloaded ? new SKColor(0x7F, 0x1D, 0x1D, 232) : new SKColor(0x11, 0x18, 0x27, 225),
+                    Style = SKPaintStyle.Fill,
+                    IsAntialias = true
+                };
+                using var borderPaint = new SKPaint
+                {
+                    Color = heatColor,
+                    Style = SKPaintStyle.Stroke,
+                    StrokeWidth = 0.9f * invScale,
+                    IsAntialias = true
+                };
+
+                canvas.DrawRoundRect(pillRect, 3f * invScale, 3f * invScale, bgPaint);
+                canvas.DrawRoundRect(pillRect, 3f * invScale, 3f * invScale, borderPaint);
+                canvas.DrawText(pillText, pillRect.MidX, pillRect.MidY + (3f * invScale), txtPaint);
+            }
+        }
+    }
+
+    private static SKColor LerpColor(SKColor a, SKColor b, float t)
+    {
+        float clamped = Math.Clamp(t, 0f, 1f);
+        return new SKColor(
+            (byte)(a.Red + ((b.Red - a.Red) * clamped)),
+            (byte)(a.Green + ((b.Green - a.Green) * clamped)),
+            (byte)(a.Blue + ((b.Blue - a.Blue) * clamped)),
+            (byte)(a.Alpha + ((b.Alpha - a.Alpha) * clamped)));
+    }
+
+    private static SKColor TryParseColor(string? hex, SKColor fallback)
+    {
+        if (string.IsNullOrWhiteSpace(hex))
+            return fallback;
+
+        try
+        {
+            return SKColor.Parse(hex);
+        }
+        catch
+        {
+            return fallback;
+        }
     }
 }
