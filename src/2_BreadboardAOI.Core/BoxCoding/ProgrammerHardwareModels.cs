@@ -22,7 +22,8 @@ public sealed record UsbCableSpec(
     string AccentHex,
     string JacketHex,
     string Description,
-    IReadOnlyList<MicrocontrollerBoardType> NativeBoards);
+    IReadOnlyList<MicrocontrollerBoardType> NativeBoards,
+    string ShellStyleId = "standard");
 
 public sealed record WaveformSample(
     double TimeMs,
@@ -53,7 +54,7 @@ public sealed record ProgrammerUploadResult(
     string TargetPort,
     bool UsedHardwareCli,
     string LogOutput,
-    BoxCodeAnalysisReport CodeAnalysis,
+    BoxCodeAnalysisReport? CodeAnalysis,
     VirtualFirmwareRuntimeState? InitialRuntimeState);
 
 /// <summary>Catalog of supported USB programmer cables, connector specs, and board port mappings.</summary>
@@ -66,30 +67,33 @@ public static class ProgrammerCatalog
         "Disconnected",
         "#64748B",
         "#0F172A",
-        "Attach a virtual or physical USB cable to begin flashing firmware.",
-        Array.Empty<MicrocontrollerBoardType>());
+        "Attach a USB Type-B, Anker 100W USB-C, or Micro-USB cable on the 2.5D rack to begin.",
+        Array.Empty<MicrocontrollerBoardType>(),
+        "none");
 
     public static IReadOnlyList<UsbCableSpec> AllCables { get; } = new[]
     {
         new UsbCableSpec(
             UsbCableKind.UsbTypeC,
-            "USB Type-C Cable",
-            "TYPE-C",
-            "USB-C 24-Pin Reversible",
-            "#00E5FF",
-            "#1E293B",
-            "High-speed reversible USB-C data & 5V power cable native to ESP32-S2 Mini and Type-C adapters.",
-            new[] { MicrocontrollerBoardType.WemosEsp32S2Mini }),
+            "Anker 100W USB-C (Diamond Braided)",
+            "USB-C 100W",
+            "Anker 100W Braided USB-C 24-Pin",
+            "#00F0FF",
+            "#1E222A",
+            "Anker 100W black-and-silver diamond-braided nylon USB-C to USB-C cable with metallic charcoal ANKER barrels & stepped 100W boots (native ESP32-S2 Mini).",
+            new[] { MicrocontrollerBoardType.WemosEsp32S2Mini },
+            "anker_100w_braided"),
 
         new UsbCableSpec(
             UsbCableKind.UsbB,
-            "USB Type-B (Standard-B) Cable",
-            "USB-B",
-            "USB-B Square Printer/Uno Jack",
-            "#00E676",
-            "#263238",
-            "Full-size shielded USB-B data cable native to Arduino Uno R3/R4 and Arduino Mega 2560.",
-            new[] { MicrocontrollerBoardType.ArduinoUnoR3R4, MicrocontrollerBoardType.ArduinoMega2560 }),
+            "USB Type-A → B (Orange-Emblem Shielded)",
+            "USB-A→B",
+            "Type-A to Type-B Molded (Orange Emblem)",
+            "#FF6D00",
+            "#14161B",
+            "Glossy black shielded USB Type-A to Type-B cable with charcoal molded barrels, bright orange oval USB emblems & 3-ribbed relief boots (native Arduino Uno & Mega 2560).",
+            new[] { MicrocontrollerBoardType.ArduinoUnoR3R4, MicrocontrollerBoardType.ArduinoMega2560 },
+            "black_orange_emblem"),
 
         new UsbCableSpec(
             UsbCableKind.MicroUsb,
@@ -99,7 +103,8 @@ public static class ProgrammerCatalog
             "#FF9100",
             "#1C2430",
             "Data-sync Micro-USB cable native to ESP32 DevKit v1 (CP2102/CH340) and STM32 Blue Pill.",
-            new[] { MicrocontrollerBoardType.Esp32DevKitV1, MicrocontrollerBoardType.Stm32BluePillF103C8 })
+            new[] { MicrocontrollerBoardType.Esp32DevKitV1, MicrocontrollerBoardType.Stm32BluePillF103C8 },
+            "micro_shielded")
     };
 
     public static UsbCableKind GetRecommendedCable(MicrocontrollerBoardType board) => board switch
@@ -124,16 +129,32 @@ public static class ProgrammerCatalog
         return DisconnectedSpec;
     }
 
+    public static bool RequiresAdapter(UsbCableKind cable, MicrocontrollerBoardType board)
+    {
+        if (cable == UsbCableKind.None || board == MicrocontrollerBoardType.None)
+            return false;
+
+        return !GetCableSpec(cable).NativeBoards.Contains(board);
+    }
+
     public static bool IsCableCompatible(
         UsbCableKind cable,
         MicrocontrollerBoardType board,
+        out bool isNativeMatch,
+        out string compatibilityNote)
+        => IsCableCompatible(cable, board, adapterModeEnabled: true, out isNativeMatch, out compatibilityNote);
+
+    public static bool IsCableCompatible(
+        UsbCableKind cable,
+        MicrocontrollerBoardType board,
+        bool adapterModeEnabled,
         out bool isNativeMatch,
         out string compatibilityNote)
     {
         if (cable == UsbCableKind.None)
         {
             isNativeMatch = false;
-            compatibilityNote = "No USB cable connected. Select USB-B, Micro-USB, or USB Type-C.";
+            compatibilityNote = "No USB cable connected. Drag or click a cable from the 2.5D Cable Rack to the dev board.";
             return false;
         }
 
@@ -147,6 +168,12 @@ public static class ProgrammerCatalog
         }
 
         UsbCableSpec recommended = GetCableSpec(GetRecommendedCable(board));
+        if (!adapterModeEnabled)
+        {
+            compatibilityNote = $"Plug mismatch: {spec.ShortTag} does not fit {FormatBoardShortName(board)}'s {recommended.ShortTag} jack. Switch cable or enable USB Adapter.";
+            return false;
+        }
+
         compatibilityNote = $"Connected via USB OTG/Type-C adapter ({spec.ShortTag} -> {recommended.ShortTag}).";
         return true;
     }

@@ -8,7 +8,7 @@
 //          generated in memory (44.1 kHz, 16-bit PCM RIFF) so the critical-short
 //          reflex never depends on a binary asset.
 //
-// NOTE: Only the Qwen answer is ever synthesized. DRC / rule-based repair text
+// NOTE: Only the vision-model answer is ever synthesized. DRC repair text
 //       stays on screen; the coordinator decides that, not this engine.
 // ============================================================================
 

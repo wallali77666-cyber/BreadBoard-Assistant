@@ -804,4 +804,409 @@ public class BoxCodingAndProgrammerTests
     }
 
     #endregion
+
+    #region 4. IDE Options, Semantic Analyzer Fixes & VS Code Debugger
+
+    [Fact]
+    public void ProgrammerCatalog_PhysicalCableStyles_And_StrictAdapterMismatchMode()
+    {
+        var typeC = ProgrammerCatalog.GetCableSpec(UsbCableKind.UsbTypeC);
+        var typeB = ProgrammerCatalog.GetCableSpec(UsbCableKind.UsbB);
+
+        typeC.ShellStyleId.Should().Be("anker_100w_braided");
+        typeC.DisplayName.Should().Contain("Anker 100W");
+        typeB.ShellStyleId.Should().Be("black_orange_emblem");
+        typeB.DisplayName.Should().Contain("Orange");
+
+        ProgrammerCatalog.RequiresAdapter(UsbCableKind.UsbTypeC, MicrocontrollerBoardType.ArduinoUnoR3R4).Should().BeTrue();
+        ProgrammerCatalog.RequiresAdapter(UsbCableKind.UsbB, MicrocontrollerBoardType.ArduinoUnoR3R4).Should().BeFalse();
+
+        // Adapter OFF -> plug mismatch blocked cleanly
+        ProgrammerCatalog.IsCableCompatible(
+            UsbCableKind.UsbTypeC,
+            MicrocontrollerBoardType.ArduinoUnoR3R4,
+            adapterModeEnabled: false,
+            out bool isNativeOff,
+            out string noteOff).Should().BeFalse();
+        isNativeOff.Should().BeFalse();
+        noteOff.Should().Contain("Plug mismatch");
+
+        // Adapter ON -> non-native cable allowed with explicit OTG/adapter notice
+        ProgrammerCatalog.IsCableCompatible(
+            UsbCableKind.UsbTypeC,
+            MicrocontrollerBoardType.ArduinoUnoR3R4,
+            adapterModeEnabled: true,
+            out bool isNativeOn,
+            out string noteOn).Should().BeTrue();
+        isNativeOn.Should().BeFalse();
+        noteOn.Should().Contain("adapter");
+    }
+
+    [Fact]
+    public void ProgrammerIdeCatalog_ExtractsComPort_BuildsFqbn_And_ParsesCompilerOutput()
+    {
+        ProgrammerIdeCatalog.ExtractRawComPort("COM7 (USB-SERIAL CH340)").Should().Be("COM7");
+        ProgrammerIdeCatalog.ExtractRawComPort("COM14").Should().Be("COM14");
+        ProgrammerIdeCatalog.ExtractRawComPort("VIRTUAL-SIM (Live Breadboard Execution)").Should().BeNull();
+        ProgrammerIdeCatalog.IsVirtualPort("VIRTUAL-SIM (Live Breadboard Execution)").Should().BeTrue();
+        ProgrammerIdeCatalog.IsVirtualPort("COM7 (USB-UART)").Should().BeFalse();
+
+        var s2Opts = new ArduinoUploadOptions(
+            BoardType: MicrocontrollerBoardType.WemosEsp32S2Mini,
+            BoardVariantId: "lolin_s2_mini",
+            CustomFqbnOverride: null,
+            UploadSpeedBaud: 921600,
+            FlashMode: "qio",
+            FlashSize: "4M",
+            PartitionScheme: "huge_app",
+            CpuFrequencyMHz: 240,
+            UsbCdcOnBoot: true,
+            ProgrammerToolId: "esptool",
+            VerifyOnly: false,
+            UploadUsingProgrammer: false,
+            VerboseOutput: true);
+
+        string s2Fqbn = ProgrammerIdeCatalog.BuildEffectiveFqbn(MicrocontrollerBoardType.WemosEsp32S2Mini, s2Opts);
+        s2Fqbn.Should().Contain("esp32:esp32:lolin_s2_mini");
+        s2Fqbn.Should().Contain("UploadSpeed=921600");
+        s2Fqbn.Should().Contain("FlashMode=qio");
+        s2Fqbn.Should().Contain("CDCOnBoot=cdc");
+
+        string[] compileArgs = ProgrammerIdeCatalog.BuildCompileArguments(s2Fqbn, @"C:\tmp\sketch", s2Opts.VerboseOutput);
+        compileArgs.Should().Contain("compile").And.Contain("--fqbn").And.Contain("-v");
+
+        string? rawCom = ProgrammerIdeCatalog.ExtractRawComPort("COM7 (ESP32-S2)");
+        string[] uploadArgs = ProgrammerIdeCatalog.BuildUploadArguments(s2Fqbn, @"C:\tmp\sketch", rawCom, s2Opts);
+        uploadArgs.Should().Contain("-p").And.Contain("COM7").And.NotContain(a => a.Contains("ESP32-S2"));
+
+        var mpyOpts = s2Opts with { MicroPythonTool = "mpremote" };
+        var (exe, mpyArgs) = ProgrammerIdeCatalog.BuildMicroPythonTransferCommand(
+            mpyOpts.MicroPythonTool,
+            ProgrammerIdeCatalog.ExtractRawComPort("COM12 (MicroPython)")!,
+            @"C:\tmp\main.py",
+            115200);
+        exe.Should().Be("mpremote");
+        mpyArgs.Should().Contain("connect").And.Contain("COM12").And.Contain("cp");
+
+        var cliDiags = ProgrammerIdeCatalog.ParseArduinoCliDiagnostics(
+            @"C:\tmp\sketch\sketch.ino:14:5: error: 'myUnkVar' was not declared in this scope");
+        cliDiags.Should().ContainSingle(d => d.Line == 14 && d.Column == 5 && d.Severity == BoxCodeDiagnosticSeverity.Error);
+
+        var pyDiags = ProgrammerIdeCatalog.ParsePythonSyntaxDiagnostics(
+            "  File \"main.py\", line 7\nSyntaxError: invalid syntax");
+        pyDiags.Should().ContainSingle(d => d.Line == 7 && d.Severity == BoxCodeDiagnosticSeverity.Error);
+    }
+
+    [Fact]
+    public void Analyzer_S2MiniGpio6To11Valid_LogicErrorsDetected_And_QuickFixesApplyCleanly()
+    {
+        // Wemos ESP32-S2 Mini GPIO 6-11 are valid general/USB/ADC pins (must NOT trigger BC031 SPI flash false positive)
+        const string s2Code = """
+            void setup() {
+                Serial.begin(115200);
+                pinMode(7, OUTPUT);
+                pinMode(11, OUTPUT);
+            }
+            void loop() {
+                digitalWrite(7, HIGH);
+                digitalWrite(11, LOW);
+                delay(200);
+            }
+            """;
+
+        var s2Report = BoxCodeErrorAnalyzer.Analyze(s2Code, BoxCodingLanguage.ArduinoCpp, MicrocontrollerBoardType.WemosEsp32S2Mini);
+        s2Report.Diagnostics.Should().NotContain(d => d.Code == "BC031");
+
+        // Classic ESP32 DevKit V1 MUST still flag GPIO 6-11 as flash-bus hazard BC031
+        var devKitReport = BoxCodeErrorAnalyzer.Analyze(s2Code, BoxCodingLanguage.ArduinoCpp, MicrocontrollerBoardType.Esp32DevKitV1);
+        devKitReport.Diagnostics.Should().Contain(d => d.Code == "BC031");
+
+        // Semantic & logic error catalog: assignment-in-condition, Serial w/o Serial.begin, div by zero,
+        // non-PWM analogWrite, delay in ISR, unreachable code after return, empty while(true)
+        const string buggyCpp = """
+            void onTick() {
+                delay(50);
+            }
+            int testFn() {
+                int x = 1;
+                if (x = 5) {
+                    int y = 10 / 0;
+                    Serial.println(y);
+                }
+                analogWrite(2, 128);
+                return x;
+                digitalWrite(13, HIGH);
+            }
+            void setup() {
+                attachInterrupt(0, onTick, RISING);
+                pinMode(2, OUTPUT);
+                pinMode(13, OUTPUT);
+            }
+            void loop() {
+                while (true) { }
+            }
+            """;
+
+        var report = BoxCodeErrorAnalyzer.Analyze(buggyCpp, BoxCodingLanguage.ArduinoCpp, MicrocontrollerBoardType.ArduinoUnoR3R4);
+        report.Diagnostics.Should().Contain(d => d.Code == "BC040" && d.HasQuickFix, "if (x = 5) assignment in condition");
+        report.Diagnostics.Should().Contain(d => d.Code == "BC041", "division by zero");
+        report.Diagnostics.Should().Contain(d => d.Code == "BC042", "unreachable digitalWrite after return");
+        report.Diagnostics.Should().Contain(d => d.Code == "BC043", "empty while(true) lockup");
+        report.Diagnostics.Should().Contain(d => d.Code == "BC045", "delay() inside ISR");
+        report.Diagnostics.Should().Contain(d => d.Code == "BC046", "Serial.println without Serial.begin");
+        report.Diagnostics.Should().Contain(d => d.Code == "BC035", "non-PWM pin 2 on Uno analogWrite");
+
+        // Apply Quick Fix on BC040 (if (x = 5) -> if (x == 5))
+        var bc040 = report.Diagnostics.First(d => d.Code == "BC040" && d.QuickFix is not null);
+        string fixedCode = BoxCodeErrorAnalyzer.ApplyQuickFix(buggyCpp, bc040.QuickFix!);
+        fixedCode.Should().Contain("if (x == 5)");
+        BoxCodeErrorAnalyzer.Analyze(fixedCode, BoxCodingLanguage.ArduinoCpp, MicrocontrollerBoardType.ArduinoUnoR3R4)
+            .Diagnostics.Should().NotContain(d => d.Code == "BC040");
+    }
+
+    [Fact]
+    public void FirmwareDebuggerSession_Breakpoints_StepInto_StepOver_WatchAndPinInjection_Work()
+    {
+        const string debugSketch = """
+            int counter = 0;
+            void helperStep() {
+                counter = counter + 5;
+            }
+            void setup() {
+                Serial.begin(115200);
+                pinMode(13, OUTPUT);
+                pinMode(2, INPUT);
+            }
+            void loop() {
+                int btn = digitalRead(2);
+                helperStep();
+                digitalWrite(13, btn);
+                Serial.println(counter);
+                delay(100);
+            }
+            """;
+
+        var session = new FirmwareDebuggerSession();
+        session.LoadCode(debugSketch, BoxCodingLanguage.ArduinoCpp, MicrocontrollerBoardType.ArduinoUnoR3R4);
+        session.SetSimulatedPinInput("2", isHigh: true);
+
+        int helperLine = debugSketch.Split('\n').ToList().FindIndex(l => l.Contains("counter = counter + 5")) + 1;
+        session.ToggleBreakpoint(helperLine).Should().BeTrue();
+
+        FirmwareDebugSnapshot snap = session.Continue();
+        snap.HitBreakpointLine.Should().Be(helperLine);
+        snap.CallStack.Should().Contain(f => f.FunctionName.StartsWith("helperStep"));
+        snap.CallStack.Should().Contain(f => f.FunctionName.StartsWith("loop"));
+
+        // Step over inside helperStep increments counter and returns to loop
+        snap = session.StepOver();
+        snap = session.StepOver();
+        snap.Variables.Should().Contain(v => v.Name == "counter" && v.Value == "5");
+
+        // Step past digitalWrite(13, btn) and Serial.println(counter)
+        snap = session.StepOver();
+        snap = session.StepOver();
+        snap.PinStates.Should().Contain(p => p.PinName == "13" && p.IsHigh);
+        snap.SerialLines.Should().Contain("5");
+
+        // Reset clears counters & restores initial frame
+        FirmwareDebugSnapshot resetSnap = session.Reset();
+        resetSnap.StepCount.Should().Be(0);
+    }
+
+    [Fact]
+    public void SemanticAnalyzer_WhileSemicolonQuickFix_ForHeaderUndeclared_And_TypeMismatches_Detected()
+    {
+        const string code = """
+            void setup() {
+                Serial.begin("115200");
+                int badNum = "text";
+                String okText = "hello";
+                char okChar = 'A';
+                pinMode(13, OUTPUT);
+            }
+            void loop() {
+                delay("500");
+                digitalWrite(13, "HIGH");
+                for (int k = 0; k < undeclaredMax; k++) {
+                    delay(10);
+                }
+                while (true);
+            }
+            """;
+
+        var report = BoxCodeErrorAnalyzer.Analyze(code, BoxCodingLanguage.ArduinoCpp, MicrocontrollerBoardType.ArduinoUnoR3R4);
+
+        report.Diagnostics.Should().Contain(d => d.Code == "BC052" && d.Message.Contains("Serial.begin"));
+        report.Diagnostics.Should().Contain(d => d.Code == "BC052" && d.Message.Contains("badNum"));
+        report.Diagnostics.Should().Contain(d => d.Code == "BC052" && d.Message.Contains("delay"));
+        report.Diagnostics.Should().Contain(d => d.Code == "BC052" && d.Message.Contains("digitalWrite"));
+        report.Diagnostics.Should().NotContain(d => d.Code == "BC052" && d.Message.Contains("okText"));
+        report.Diagnostics.Should().NotContain(d => d.Code == "BC052" && d.Message.Contains("okChar"));
+
+        report.Diagnostics.Should().Contain(d => d.Code == "BC048" && d.Message.Contains("undeclaredMax"));
+
+        var bc043 = report.Diagnostics.First(d => d.Code == "BC043" && d.QuickFix is not null);
+        string fixedLoop = BoxCodeErrorAnalyzer.ApplyQuickFix(code, bc043.QuickFix!);
+        fixedLoop.Should().Contain("while (true) { delay(10); }");
+        fixedLoop.Should().NotContain("while (true);");
+        BoxCodeErrorAnalyzer.Analyze(fixedLoop, BoxCodingLanguage.ArduinoCpp, MicrocontrollerBoardType.ArduinoUnoR3R4)
+            .Diagnostics.Should().NotContain(d => d.Code == "BC043");
+    }
+
+    [Fact]
+    public void ProgrammerIdeCatalog_NormalizesFlashSizeMb_And_ProvidesProgrammerFallbackForIsp()
+    {
+        var opts = new ArduinoUploadOptions(
+            BoardType: MicrocontrollerBoardType.WemosEsp32S2Mini,
+            BoardVariantId: "esp32_s2_mini",
+            CustomFqbnOverride: null,
+            UploadSpeedBaud: 921600,
+            FlashMode: "qio",
+            FlashSize: "4MB",
+            PartitionScheme: "default",
+            CpuFrequencyMHz: 240,
+            UsbCdcOnBoot: true,
+            ProgrammerToolId: "default",
+            VerifyOnly: false,
+            UploadUsingProgrammer: true,
+            VerboseOutput: false);
+
+        string fqbn = ProgrammerIdeCatalog.BuildEffectiveFqbn(MicrocontrollerBoardType.WemosEsp32S2Mini, opts);
+        fqbn.Should().Contain("FlashSize=4M").And.NotContain("FlashSize=4MB");
+
+        string[] unoIspArgs = ProgrammerIdeCatalog.BuildUploadArguments(
+            "arduino:avr:uno",
+            @"C:\tmp\sketch",
+            "COM4",
+            opts with { BoardType = MicrocontrollerBoardType.ArduinoUnoR3R4 });
+        unoIspArgs.Should().Contain("-P").And.Contain("avrispmkii");
+    }
+
+    [Fact]
+    public void FirmwareDebuggerSession_EvaluatesIfElseBranches_And_ForLoops_Accurately()
+    {
+        const string branchSketch = """
+            void setup() {
+                pinMode(13, OUTPUT);
+                pinMode(2, INPUT);
+            }
+            void loop() {
+                int total = 0;
+                int btn = digitalRead(2);
+                if (btn == 1) {
+                    digitalWrite(13, HIGH);
+                } else {
+                    digitalWrite(13, LOW);
+                }
+                for (int idx = 0; idx < 3; idx++) {
+                    total = total + 10;
+                }
+            }
+            """;
+
+        var session = new FirmwareDebuggerSession();
+        session.LoadCode(branchSketch, BoxCodingLanguage.ArduinoCpp, MicrocontrollerBoardType.ArduinoUnoR3R4);
+
+        // Case 1: btn == 0 -> must skip HIGH branch and execute LOW branch, then run for-loop 3 times (total == 30)
+        session.SetSimulatedPinInput("2", isHigh: false);
+        int afterForLine = branchSketch.Split('\n').Length;
+        for (int s = 0; s < 25; s++)
+        {
+            FirmwareDebugSnapshot snap = session.StepOver();
+            snap.CurrentLine.Should().NotBe(9, "LOW input must skip the 'if (btn == 1)' body at line 9");
+            if (snap.Variables.Any(v => v.Name == "total" && v.Value == "30"))
+            {
+                snap.PinStates.Should().Contain(p => p.PinName == "13" && !p.IsHigh);
+                break;
+            }
+        }
+        session.Reset();
+
+        // Case 2: btn == 1 -> must take HIGH branch and skip else LOW branch
+        session.SetSimulatedPinInput("2", isHigh: true);
+        bool sawHigh = false;
+        for (int s = 0; s < 25; s++)
+        {
+            FirmwareDebugSnapshot snap = session.StepOver();
+            snap.CurrentLine.Should().NotBe(11, "HIGH input must skip the 'else' body at line 11");
+            if (snap.PinStates.Any(p => p.PinName == "13" && p.IsHigh))
+                sawHigh = true;
+            if (snap.Variables.Any(v => v.Name == "total" && v.Value == "30"))
+                break;
+        }
+        sawHigh.Should().BeTrue();
+    }
+
+    [Fact]
+    public void SemanticAnalyzer_MicroPythonPlainAndCommaImports_NoFalseUndefinedOrEmptyKey()
+    {
+        const string code = """
+            import custom_sensor
+            import custom_driver, board_bus as bus_alias
+            import pkg_alpha.submod
+
+            def run_step():
+                a = custom_sensor
+                b = custom_driver
+                c = bus_alias
+                d = pkg_alpha
+                e = truly_missing_var
+                return (a, b, c, d, e)
+            """;
+
+        BoxCodeAnalysisReport report = BoxCodeErrorAnalyzer.Analyze(
+            code,
+            BoxCodingLanguage.MicroPython,
+            MicrocontrollerBoardType.WemosEsp32S2Mini);
+
+        report.Diagnostics.Should().NotContain(d => d.Code == "BC048" && d.Message.Contains("''", StringComparison.Ordinal));
+        report.Diagnostics.Should().NotContain(d =>
+            d.Code == "BC048" &&
+            (d.Message.Contains("custom_sensor", StringComparison.Ordinal) ||
+             d.Message.Contains("custom_driver", StringComparison.Ordinal) ||
+             d.Message.Contains("bus_alias", StringComparison.Ordinal) ||
+             d.Message.Contains("pkg_alpha", StringComparison.Ordinal)));
+        report.Diagnostics.Should().Contain(d =>
+            d.Code == "BC048" && d.Message.Contains("truly_missing_var", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void SemanticAnalyzer_MicroPythonMultilineFromImports_And_Comprehensions_NoFalseUndefined()
+    {
+        const string code = """
+            from custom_pkg import (
+                sym_one,
+                sym_two as alias_two
+            )
+            import raw_mod
+
+            def tick():
+                vals = [idx * 2 for idx in range(3)]
+                val = sym_one + alias_two + raw_mod.x + vals[0]
+                return val
+
+            def leak_check():
+                return idx
+            """;
+
+        BoxCodeAnalysisReport report = BoxCodeErrorAnalyzer.Analyze(
+            code,
+            BoxCodingLanguage.MicroPython,
+            MicrocontrollerBoardType.WemosEsp32S2Mini);
+
+        report.Diagnostics.Should().NotContain(d =>
+            d.Code == "BC048" &&
+            (d.Message.Contains("sym_one", StringComparison.Ordinal) ||
+             d.Message.Contains("sym_two", StringComparison.Ordinal) ||
+             d.Message.Contains("alias_two", StringComparison.Ordinal)));
+
+        // Comprehension variable 'idx' is valid inside the list comprehension line (L8),
+        // but must still be flagged as undefined if referenced outside in leak_check() (L13).
+        report.Diagnostics.Should().NotContain(d => d.Code == "BC048" && d.Line == 8);
+        report.Diagnostics.Should().Contain(d =>
+            d.Code == "BC048" && d.Line == 13 && d.Message.Contains("'idx'", StringComparison.Ordinal));
+    }
+
+    #endregion
 }

@@ -164,7 +164,16 @@ public static class BoxCodeGenerator
 
         sb.AppendLine("// --- Global Variables ---");
         var declaredVars = new HashSet<string>(StringComparer.Ordinal);
-        if (hasDht)
+        bool needsTempGlobals = hasDht || blocks.Any(b =>
+        {
+            if (b.Kind != BoxBlockKind.LcdPrintSensor) return false;
+            string fmt = string.IsNullOrWhiteSpace(b.CustomMessage)
+                ? (string.IsNullOrWhiteSpace(b.Parameter1) ? "Temp: {temp}C" : b.Parameter1)
+                : b.CustomMessage;
+            return fmt.Contains("{temp}", StringComparison.OrdinalIgnoreCase) ||
+                   fmt.Contains("{hum}", StringComparison.OrdinalIgnoreCase);
+        });
+        if (needsTempGlobals)
         {
             sb.AppendLine("float currentTemperature = 0.0;");
             sb.AppendLine("float currentHumidity = 0.0;");

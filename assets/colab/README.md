@@ -106,7 +106,7 @@ screen. `403 accessNotConfigured` means the Drive API is not enabled in that Clo
 
 The workstation polls Drive every 15 seconds (or on **REFRESH ENDPOINT**), probes `/health`, and
 only then swaps the tutor. If the tunnel dies, the next diagnosis silently falls back to local
-`llama-server`, then to the offline rule-based tutor.
+`llama-server`, then to an explicit offline notice (no fabricated advice).
 
 ## 3. Weights and server binaries come from GitHub
 

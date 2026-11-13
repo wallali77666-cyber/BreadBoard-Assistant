@@ -1,9 +1,9 @@
 # Model drop folder
 
 The repository intentionally does **not** commit model weights, and **no model is required
-to launch the workstation**: Demo Mode, the synthetic board and the rule-based offline tutor
-are the default path. Missing files are reported in the Hardware dock and the affected
-feature degrades (CPU ONNX / rule-based tutor / Windows SAPI voice).
+to launch the workstation**: Demo Mode and the synthetic board are the default
+path. Missing files are reported in the Hardware dock and the affected
+feature degrades (CPU ONNX / explicit offline notice / Windows SAPI voice).
 
 | File | Used by | Notes |
 | :--- | :--- | :--- |

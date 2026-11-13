@@ -1,13 +1,12 @@
 // ============================================================================
 // FILE: src/4_BreadboardAOI.Intelligence/DiagnosticPromptBuilder.cs
-// PURPOSE: Clean vision prompt for Qwen. The image is the source of truth:
-//          no OpenCV or YOLO integration, no dumb prompts. When the packet carries
-//          no image at all, the known fault is appended as plain sentences so
-//          headless/unit tests can still verify text-only evaluation.
+// PURPOSE: The vision tutor receives exactly two things: this instruction and
+//          the raw camera image. No YOLO detections, no DRC violations and no
+//          crop are injected, so the model judges the same picture a human
+//          would paste into a chat client.
 // ============================================================================
 
 using System;
-using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using BreadboardAOI.Core.Contracts;
@@ -17,56 +16,19 @@ namespace BreadboardAOI.Intelligence;
 public static class DiagnosticPromptBuilder
 {
     /// <summary>
-    /// Clean vision prompt for Qwen: detects the error in a humanized way,
-    /// explains what is wrong, and provides repair instructions in no more than 5 sentences.
-    /// Pure vision directly on the image with no OpenCV or YOLO integration.
+    /// The only prompt sent to the vision model. The image is the sole input.
     /// </summary>
     public const string TutorInstruction =
-        "Look at this breadboard image. First, identify whether the circuit is correct or wrong: start your response with 'CIRCUIT VERDICT: CORRECT' or 'CIRCUIT VERDICT: WRONG'. " +
-        "Then, in no more than 5 sentences, explain why: name the error first, then say exactly what to move, change or replace.";
+        "Look at this breadboard image. First, decide whether the circuit is correct or wrong based only on the connections visible in the image. " +
+        "Start your response with 'CIRCUIT VERDICT: CORRECT' or 'CIRCUIT VERDICT: WRONG'. " +
+        "If a component is not connected to a complete powered path, the verdict is WRONG; do not assume wires or connections that are not visible. " +
+        "Then, in no more than 5 sentences, explain what is visibly wrong and give simple instructions on how to solve it.";
 
-    /// <summary>Prompt sent to Qwen with the board image. The image alone is the input.</summary>
-    public static string Build(DrcStatePacket state) => Build(state, maxFaults: 4);
-
-    public static string Build(DrcStatePacket state, int maxFaults)
+    /// <summary>The prompt is constant; the packet is accepted for call-site compatibility.</summary>
+    public static string Build(DrcStatePacket state)
     {
         ArgumentNullException.ThrowIfNull(state);
-        if (maxFaults < 0)
-            throw new ArgumentOutOfRangeException(nameof(maxFaults));
-
-        if (HasImage(state))
-            return TutorInstruction;
-
-        var builder = new StringBuilder(TutorInstruction, TutorInstruction.Length + 256);
-        builder.AppendLine();
-        builder.AppendLine();
-        builder.AppendLine("The detector reports:");
-
-        int emitted = 0;
-        foreach (DrcViolation violation in state.Violations)
-        {
-            if (emitted++ >= maxFaults)
-                break;
-
-            builder.Append("- ");
-            builder.Append(violation.ComponentId);
-            builder.Append(" (");
-            builder.Append(violation.Code);
-            builder.Append("): ");
-            builder.Append(violation.TechnicalMessage);
-
-            string target = HoleLabel(violation.SuggestedTargetHole, 0);
-            if (!string.Equals(target, "n/a", StringComparison.Ordinal))
-            {
-                builder.Append(" Move to ");
-                builder.Append(target);
-                builder.Append('.');
-            }
-
-            builder.AppendLine();
-        }
-
-        return builder.ToString().TrimEnd();
+        return TutorInstruction;
     }
 
     /// <summary>Uploaded-photo path. The photo is the only input.</summary>
@@ -75,10 +37,7 @@ public static class DiagnosticPromptBuilder
     /// <summary>Live-camera path. The direct camera frame is the only input.</summary>
     public static string BuildLiveVisionInspection() => TutorInstruction;
 
-    private static bool HasImage(DrcStatePacket state) =>
-        state.FullBoardPngBytes is { Length: > 0 } || state.MicroCropPngBytes is { Length: > 0 };
-
-    /// <summary>Human-readable DRC summary for the inspector dock (no JSON brackets).</summary>
+    /// <summary>Human-readable DRC summary for the inspector dock (never sent to the model).</summary>
     public static string BuildInspectorSummary(DrcStatePacket state)
     {
         ArgumentNullException.ThrowIfNull(state);
@@ -115,9 +74,4 @@ public static class DiagnosticPromptBuilder
 
         return builder.ToString();
     }
-
-    private static string HoleLabel(HoleCoord hole, int fallbackStripId) =>
-        string.IsNullOrWhiteSpace(hole.HoleId)
-            ? fallbackStripId > 0 ? $"strip-{fallbackStripId}" : "n/a"
-            : hole.HoleId;
 }

@@ -324,7 +324,7 @@ public enum RemoteTutorRoute
     /// <summary>Stream from the Colab tunnel.</summary>
     Remote = 0,
 
-    /// <summary>Stream from a local llama-server (or its rule-based fallback).</summary>
+    /// <summary>Stream from the active vision endpoint.</summary>
     Local = 1,
 
     /// <summary>No tutor at all.</summary>

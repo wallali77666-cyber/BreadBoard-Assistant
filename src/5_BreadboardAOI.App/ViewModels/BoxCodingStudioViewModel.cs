@@ -10,8 +10,11 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -27,6 +30,10 @@ namespace BreadboardAOI.App.ViewModels;
 public sealed partial class BoxCodingStudioViewModel : ObservableObject
 {
     private readonly IReadOnlyList<DraftPart> _initialDraftParts;
+    private IReadOnlyCollection<string>? _wiredMcuPins;
+    private readonly FirmwareDebuggerSession _debugger = new();
+    private readonly List<BoxCodeDiagnostic> _externalCliDiagnostics = new();
+    private string _debugLoadedCodeSnapshot = string.Empty;
 
     [ObservableProperty]
     private MicrocontrollerBoardType _selectedBoardType = MicrocontrollerBoardType.ArduinoUnoR3R4;
@@ -70,6 +77,30 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
     private bool _hasCodeWarnings;
 
     [ObservableProperty]
+    private bool _isProgrammerCableConnected;
+
+    [ObservableProperty]
+    private bool _isCableMismatchWarning;
+
+    [ObservableProperty]
+    private string _globalConnectionBadgeText = "DISCONNECTED";
+
+    [ObservableProperty]
+    private int _debugCurrentLine;
+
+    [ObservableProperty]
+    private bool _isDebuggingActive;
+
+    [ObservableProperty]
+    private bool _isDebuggingPaused;
+
+    [ObservableProperty]
+    private string _debugStatusText = "Debugger ready — click gutter line # to toggle breakpoint";
+
+    [ObservableProperty]
+    private string _debugSimulatedPinName = "13";
+
+    [ObservableProperty]
     private bool _isLcdStimulated;
 
     [ObservableProperty]
@@ -87,6 +118,8 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
 
     public event Action<string, TargetProgrammingLanguage, MicrocontrollerBoardType>? SendToProgrammerRequested;
 
+    public event Action<int, int>? EditorCaretJumpRequested;
+
     public Action<string, TargetProgrammingLanguage, MicrocontrollerBoardType>? OnSendToProgrammer { get; set; }
 
     public ObservableCollection<BoxBlockItem> Blocks { get; } = new();
@@ -96,6 +129,16 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
     public ObservableCollection<BoxBlockItem> DisplayPaletteBlocks { get; } = new();
 
     public ObservableCollection<BoxCodeDiagnostic> CodeDiagnostics { get; } = new();
+
+    public ObservableCollection<int> DebugBreakpoints { get; } = new();
+
+    public ObservableCollection<DebugStackFrame> DebugCallStack { get; } = new();
+
+    public ObservableCollection<DebugVariableWatch> DebugWatchVariables { get; } = new();
+
+    public ObservableCollection<DebugPinWatchState> DebugWatchPins { get; } = new();
+
+    public ObservableCollection<string> DebugSerialLines { get; } = new();
 
     public ObservableCollection<string> BoardSuggestedDigitalPins { get; } = new();
 
@@ -112,9 +155,11 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
 
     public BoxCodingStudioViewModel(
         IReadOnlyList<DraftPart>? draftParts = null,
-        MicrocontrollerBoardType initialBoard = MicrocontrollerBoardType.ArduinoUnoR3R4)
+        MicrocontrollerBoardType initialBoard = MicrocontrollerBoardType.ArduinoUnoR3R4,
+        IReadOnlyCollection<string>? wiredMcuPins = null)
     {
         _initialDraftParts = draftParts ?? Array.Empty<DraftPart>();
+        _wiredMcuPins = wiredMcuPins;
         if (initialBoard != MicrocontrollerBoardType.None)
             SelectedBoardType = initialBoard;
 
@@ -769,12 +814,28 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
         StatusMessage = $"Code generated ({SelectedLanguage}) · {Blocks.Count} visual block(s) · {CodeErrorSummary}";
     }
 
+    public void UpdateWiredMcuPins(IReadOnlyCollection<string>? wiredMcuPins)
+    {
+        _wiredMcuPins = wiredMcuPins;
+        RunCodeErrorAnalysis();
+    }
+
+    public void UpdateProgrammerConnectionState(bool isConnected, string? badgeText = null, bool isMismatchWarning = false)
+    {
+        IsProgrammerCableConnected = isConnected;
+        IsCableMismatchWarning = !isConnected && isMismatchWarning;
+        GlobalConnectionBadgeText = string.IsNullOrWhiteSpace(badgeText)
+            ? (isConnected ? "CONNECTED" : isMismatchWarning ? "PLUG MISMATCH" : "DISCONNECTED")
+            : badgeText;
+    }
+
     partial void OnGeneratedCodeChanged(string value)
     {
         if (_isInternalCodeUpdate)
             return;
 
         IsManualCodeEdit = true;
+        _externalCliDiagnostics.Clear();
         RunCodeErrorAnalysis();
         StatusMessage = HasCodeErrors
             ? $"Code edited — {LatestCodeAnalysis?.ErrorCount ?? 0} error(s) found"
@@ -783,14 +844,25 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
 
     public void RunCodeErrorAnalysis()
     {
-        var report = BoxCodeErrorAnalyzer.Analyze(GeneratedCode, SelectedLanguage, SelectedBoardType);
-        LatestCodeAnalysis = report;
-        HasCodeErrors = report.ErrorCount > 0;
-        HasCodeWarnings = report.WarningCount > 0;
-        CodeErrorSummary = report.StatusSummary;
+        var report = BoxCodeErrorAnalyzer.Analyze(GeneratedCode, SelectedLanguage, SelectedBoardType, _wiredMcuPins);
+        var merged = report.Diagnostics.ToList();
+        if (_externalCliDiagnostics.Count > 0)
+            merged.AddRange(_externalCliDiagnostics);
+
+        int errCount = merged.Count(d => d.Severity == BoxCodeDiagnosticSeverity.Error);
+        int warnCount = merged.Count(d => d.Severity == BoxCodeDiagnosticSeverity.Warning);
+
+        var finalReport = _externalCliDiagnostics.Count == 0
+            ? report
+            : new BoxCodeAnalysisReport(errCount == 0, errCount, warnCount, merged, report.ExtractedActions);
+
+        LatestCodeAnalysis = finalReport;
+        HasCodeErrors = finalReport.ErrorCount > 0;
+        HasCodeWarnings = finalReport.WarningCount > 0;
+        CodeErrorSummary = finalReport.StatusSummary;
 
         CodeDiagnostics.Clear();
-        foreach (var d in report.Diagnostics)
+        foreach (var d in finalReport.Diagnostics)
             CodeDiagnostics.Add(d);
     }
 
@@ -799,6 +871,301 @@ public sealed partial class BoxCodingStudioViewModel : ObservableObject
     {
         RunCodeErrorAnalysis();
         StatusMessage = CodeErrorSummary;
+    }
+
+    [RelayCommand]
+    public void ApplyQuickFix(BoxCodeDiagnostic? diagnostic)
+    {
+        if (diagnostic?.QuickFix is null)
+            return;
+
+        string updated = BoxCodeErrorAnalyzer.ApplyQuickFix(GeneratedCode, diagnostic.QuickFix);
+        if (string.Equals(updated, GeneratedCode, StringComparison.Ordinal))
+            return;
+
+        _isInternalCodeUpdate = true;
+        try
+        {
+            GeneratedCode = updated;
+        }
+        finally
+        {
+            _isInternalCodeUpdate = false;
+        }
+
+        IsManualCodeEdit = true;
+        _externalCliDiagnostics.Clear();
+        RunCodeErrorAnalysis();
+        StatusMessage = $"Quick Fix applied: {diagnostic.QuickFix.Title} · {CodeErrorSummary}";
+    }
+
+    [RelayCommand]
+    public void JumpToDiagnostic(BoxCodeDiagnostic? diagnostic)
+    {
+        if (diagnostic is null)
+            return;
+
+        EditorCaretJumpRequested?.Invoke(Math.Max(1, diagnostic.Line), Math.Max(1, diagnostic.Column));
+    }
+
+    [RelayCommand]
+    public async Task RunExternalCompilerCheckAsync()
+    {
+        _externalCliDiagnostics.Clear();
+
+        if (SelectedLanguage == TargetProgrammingLanguage.ArduinoCpp)
+        {
+            string? cli = FindCliTool("arduino-cli.exe", "arduino-cli");
+            if (string.IsNullOrWhiteSpace(cli))
+            {
+                RunCodeErrorAnalysis();
+                StatusMessage = $"Static + Semantic check done ({CodeErrorSummary}) · Install arduino-cli for live GCC check.";
+                return;
+            }
+
+            string fqbn = ProgrammerIdeCatalog.BuildEffectiveFqbn(SelectedBoardType, null);
+            string tempDir = Path.Combine(Path.GetTempPath(), "BreadboardAOI_StudioChk_" + Guid.NewGuid().ToString("N")[..8]);
+            try
+            {
+                Directory.CreateDirectory(tempDir);
+                string ino = Path.Combine(tempDir, Path.GetFileName(tempDir) + ".ino");
+                await File.WriteAllTextAsync(ino, GeneratedCode ?? string.Empty).ConfigureAwait(true);
+
+                (bool ok, string outText) = await RunQuickCliProcessAsync(
+                    cli,
+                    ProgrammerIdeCatalog.BuildCompileArguments(fqbn, tempDir, verboseOutput: false),
+                    TimeSpan.FromSeconds(45)).ConfigureAwait(true);
+
+                _externalCliDiagnostics.AddRange(ProgrammerIdeCatalog.ParseArduinoCliDiagnostics(outText));
+                RunCodeErrorAnalysis();
+                StatusMessage = ok
+                    ? $"✓ arduino-cli GCC compile passed ({fqbn}) · {CodeErrorSummary}"
+                    : $"⚠ arduino-cli flagged {_externalCliDiagnostics.Count} issue(s) · {CodeErrorSummary}";
+            }
+            finally
+            {
+                TryDeleteTempDir(tempDir);
+            }
+        }
+        else
+        {
+            string? py = FindCliTool("python.exe", "python3.exe", "python");
+            if (string.IsNullOrWhiteSpace(py))
+            {
+                RunCodeErrorAnalysis();
+                StatusMessage = $"Static + Semantic Python check done ({CodeErrorSummary}) · Install Python for AST check.";
+                return;
+            }
+
+            string tempDir = Path.Combine(Path.GetTempPath(), "BreadboardAOI_PyStudio_" + Guid.NewGuid().ToString("N")[..8]);
+            try
+            {
+                Directory.CreateDirectory(tempDir);
+                string pyFile = Path.Combine(tempDir, "main.py");
+                await File.WriteAllTextAsync(pyFile, GeneratedCode ?? string.Empty).ConfigureAwait(true);
+
+                (bool ok, string outText) = await RunQuickCliProcessAsync(
+                    py,
+                    new[] { "-m", "py_compile", pyFile },
+                    TimeSpan.FromSeconds(15)).ConfigureAwait(true);
+
+                _externalCliDiagnostics.AddRange(ProgrammerIdeCatalog.ParsePythonSyntaxDiagnostics(outText));
+                RunCodeErrorAnalysis();
+                StatusMessage = ok
+                    ? $"✓ Python AST syntax verification passed · {CodeErrorSummary}"
+                    : $"⚠ Python AST flagged syntax error · {CodeErrorSummary}";
+            }
+            finally
+            {
+                TryDeleteTempDir(tempDir);
+            }
+        }
+    }
+
+    // ---- Interactive VS Code-Style Step-Through Debugger -------------------
+
+    public void ToggleBreakpointAtLine(int lineNumber)
+    {
+        if (lineNumber <= 0)
+            return;
+
+        bool added = _debugger.ToggleBreakpoint(lineNumber);
+        if (added)
+        {
+            if (!DebugBreakpoints.Contains(lineNumber))
+                DebugBreakpoints.Add(lineNumber);
+            DebugStatusText = $"Breakpoint set at line {lineNumber}.";
+        }
+        else
+        {
+            DebugBreakpoints.Remove(lineNumber);
+            DebugStatusText = $"Breakpoint removed at line {lineNumber}.";
+        }
+    }
+
+    [RelayCommand]
+    public void DebugStartOrContinue()
+    {
+        EnsureDebuggerLoadedForCurrentCode();
+        FirmwareDebugSnapshot snap = _debugger.Continue();
+        ApplyDebugSnapshot(snap);
+    }
+
+    [RelayCommand]
+    public void DebugPause()
+    {
+        EnsureDebuggerLoadedForCurrentCode();
+        FirmwareDebugSnapshot snap = _debugger.Pause();
+        ApplyDebugSnapshot(snap);
+    }
+
+    [RelayCommand]
+    public void DebugStepOver()
+    {
+        EnsureDebuggerLoadedForCurrentCode();
+        FirmwareDebugSnapshot snap = _debugger.StepOver();
+        ApplyDebugSnapshot(snap);
+    }
+
+    [RelayCommand]
+    public void DebugStepInto()
+    {
+        EnsureDebuggerLoadedForCurrentCode();
+        FirmwareDebugSnapshot snap = _debugger.StepInto();
+        ApplyDebugSnapshot(snap);
+    }
+
+    [RelayCommand]
+    public void DebugReset()
+    {
+        _debugLoadedCodeSnapshot = GeneratedCode ?? string.Empty;
+        _debugger.LoadCode(_debugLoadedCodeSnapshot, (BoxCodingLanguage)SelectedLanguage, SelectedBoardType);
+        _debugger.SetBreakpoints(DebugBreakpoints);
+        ApplyDebugSnapshot(_debugger.Reset());
+    }
+
+    [RelayCommand]
+    public void InjectSimulatedPinHigh()
+    {
+        _debugger.SetSimulatedPinInput(DebugSimulatedPinName, isHigh: true, analogRaw: 920);
+        DebugStatusText = $"Simulated input {DebugSimulatedPinName} -> HIGH (Analog 920)";
+    }
+
+    [RelayCommand]
+    public void InjectSimulatedPinLow()
+    {
+        _debugger.SetSimulatedPinInput(DebugSimulatedPinName, isHigh: false, analogRaw: 40);
+        DebugStatusText = $"Simulated input {DebugSimulatedPinName} -> LOW (Analog 40)";
+    }
+
+    private void EnsureDebuggerLoadedForCurrentCode()
+    {
+        string current = GeneratedCode ?? string.Empty;
+        if (!IsDebuggingActive || !string.Equals(_debugLoadedCodeSnapshot, current, StringComparison.Ordinal))
+        {
+            _debugLoadedCodeSnapshot = current;
+            _debugger.LoadCode(current, (BoxCodingLanguage)SelectedLanguage, SelectedBoardType);
+            _debugger.SetBreakpoints(DebugBreakpoints);
+        }
+    }
+
+    private void ApplyDebugSnapshot(FirmwareDebugSnapshot snap)
+    {
+        DebugCurrentLine = snap.CurrentLine;
+        IsDebuggingActive = snap.IsActive;
+        IsDebuggingPaused = snap.IsPaused;
+        DebugStatusText = snap.StatusText;
+
+        DebugCallStack.Clear();
+        foreach (DebugStackFrame f in snap.CallStack)
+            DebugCallStack.Add(f);
+
+        DebugWatchVariables.Clear();
+        foreach (DebugVariableWatch v in snap.Variables)
+            DebugWatchVariables.Add(v);
+
+        DebugWatchPins.Clear();
+        foreach (DebugPinWatchState p in snap.PinStates)
+            DebugWatchPins.Add(p);
+
+        DebugSerialLines.Clear();
+        foreach (string line in snap.SerialLines)
+            DebugSerialLines.Add(line);
+
+        if (snap.CurrentLine > 0)
+            EditorCaretJumpRequested?.Invoke(snap.CurrentLine, 1);
+    }
+
+    private static string? FindCliTool(params string[] executableNames)
+    {
+        string? pathEnv = Environment.GetEnvironmentVariable("PATH");
+        if (!string.IsNullOrWhiteSpace(pathEnv))
+        {
+            foreach (string raw in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string dir = raw.Trim().Trim('"');
+                if (string.IsNullOrWhiteSpace(dir)) continue;
+                foreach (string name in executableNames)
+                {
+                    try
+                    {
+                        string p = Path.Combine(dir, name);
+                        if (File.Exists(p)) return p;
+                    }
+                    catch { }
+                }
+            }
+        }
+
+        string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        foreach (string extra in new[] { Path.Combine(programFiles, "Arduino CLI"), Path.Combine(programFiles, "Python314"), Path.Combine(programFiles, "Python312") })
+        {
+            if (!Directory.Exists(extra)) continue;
+            foreach (string name in executableNames)
+            {
+                string p = Path.Combine(extra, name);
+                if (File.Exists(p)) return p;
+            }
+        }
+
+        return null;
+    }
+
+    private static async Task<(bool Succeeded, string Output)> RunQuickCliProcessAsync(string exe, string[] args, TimeSpan timeout)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = exe,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        foreach (string a in args) psi.ArgumentList.Add(a);
+
+        using var proc = new Process { StartInfo = psi };
+        if (!proc.Start()) return (false, string.Empty);
+
+        using var cts = new CancellationTokenSource(timeout);
+        var outTask = proc.StandardOutput.ReadToEndAsync(cts.Token);
+        var errTask = proc.StandardError.ReadToEndAsync(cts.Token);
+        try
+        {
+            await proc.WaitForExitAsync(cts.Token).ConfigureAwait(false);
+            string o = (await outTask.ConfigureAwait(false)).Trim();
+            string e = (await errTask.ConfigureAwait(false)).Trim();
+            return (proc.ExitCode == 0, string.IsNullOrEmpty(e) ? o : (string.IsNullOrEmpty(o) ? e : o + Environment.NewLine + e));
+        }
+        catch (OperationCanceledException)
+        {
+            try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); } catch { }
+            return (false, string.Empty);
+        }
+    }
+
+    private static void TryDeleteTempDir(string dir)
+    {
+        try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
     }
 
     [RelayCommand]

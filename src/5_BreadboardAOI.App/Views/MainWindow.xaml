@@ -161,6 +161,96 @@
                                           IsChecked="{Binding IsVoiceMuted, Mode=TwoWay}" />
                         </StackPanel>
                     </StackPanel>
+
+                    <Border Style="{StaticResource ToolbarSeparatorStyle}" Margin="0,2,10,0" />
+
+                    <!-- PROGRAMMER / NEON CONNECTION & SEND -->
+                    <StackPanel Margin="0,0,10,0">
+                        <TextBlock Text="PROGRAMMER" Style="{StaticResource ToolbarGroupLabelStyle}" />
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Border CornerRadius="4" Padding="8,4" Margin="0,0,6,0" BorderThickness="1" VerticalAlignment="Center">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Background" Value="#141820" />
+                                        <Setter Property="BorderBrush" Value="#334155" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsGlobalBoardConnected}" Value="True">
+                                                <Setter Property="Background" Value="#042F2E" />
+                                                <Setter Property="BorderBrush" Value="#00FFC8" />
+                                                <Setter Property="Effect">
+                                                    <Setter.Value>
+                                                        <DropShadowEffect Color="#00FFC8" BlurRadius="12" ShadowDepth="0" Opacity="0.85" />
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsCableMismatchWarning}" Value="True">
+                                                <Setter Property="Background" Value="#451A03" />
+                                                <Setter Property="BorderBrush" Value="#F59E0B" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Ellipse Width="7" Height="7" Margin="0,0,5,0" VerticalAlignment="Center">
+                                        <Ellipse.Style>
+                                            <Style TargetType="Ellipse">
+                                                <Setter Property="Fill" Value="#64748B" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsGlobalBoardConnected}" Value="True">
+                                                        <Setter Property="Fill" Value="#00FFC8" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding IsCableMismatchWarning}" Value="True">
+                                                        <Setter Property="Fill" Value="#FBBF24" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Ellipse.Style>
+                                    </Ellipse>
+                                    <TextBlock Text="{Binding GlobalConnectionBadgeText}" FontSize="9" FontWeight="Bold" FontFamily="{StaticResource MonoFontFamily}" VerticalAlignment="Center">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="#94A3B8" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsGlobalBoardConnected}" Value="True">
+                                                        <Setter Property="Foreground" Value="#00FFC8" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding IsCableMismatchWarning}" Value="True">
+                                                        <Setter Property="Foreground" Value="#FDE68A" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </Border>
+
+                            <Button Content="{Binding GlobalSendButtonLabel}"
+                                    Command="{Binding OpenProgrammerUploadDialogCommand}"
+                                    FontWeight="Bold"
+                                    Padding="10,4"
+                                    ToolTip="Open Hardware Programmer &amp; Send Firmware (Arduino IDE Options, Verify/Upload, Live Serial Monitor)">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource ToolbarButtonStyle}">
+                                        <Setter Property="Background" Value="#1E293B" />
+                                        <Setter Property="BorderBrush" Value="#475569" />
+                                        <Setter Property="Foreground" Value="#CBD5E1" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsGlobalBoardConnected}" Value="True">
+                                                <Setter Property="Background" Value="#005F56" />
+                                                <Setter Property="BorderBrush" Value="#00FFC8" />
+                                                <Setter Property="Foreground" Value="#E0FFF8" />
+                                                <Setter Property="Effect">
+                                                    <Setter.Value>
+                                                        <DropShadowEffect Color="#00FFC8" BlurRadius="10" ShadowDepth="0" Opacity="0.7" />
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </StackPanel>
+                    </StackPanel>
                 </WrapPanel>
 
                 <Button DockPanel.Dock="Right"
@@ -441,55 +531,153 @@
                                                         Content="CLEAR WIRES"
                                                         ToolTip="Remove all jumper wires attached to the microcontroller" />
                                             </UniformGrid>
+                                            <!-- DUAL BOARD / SECONDARY MCU SLOT -->
+                                            <StackPanel Margin="0,3,0,2">
+                                                <DockPanel LastChildFill="False" Margin="0,0,0,2">
+                                                    <TextBlock DockPanel.Dock="Left" Text="2ND BOARD SLOT (MCU_2)" Style="{StaticResource PanelHeaderTextStyle}" FontSize="8.5" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                                                    <TextBlock DockPanel.Dock="Right" Text="{Binding SecondaryDevBoardName}" FontSize="8.5" FontWeight="SemiBold" Foreground="#38BDF8" VerticalAlignment="Center" />
+                                                </DockPanel>
+                                                <UniformGrid Columns="4">
+                                                    <Button Content="+ UNO" Style="{StaticResource DockButtonStyle}" FontSize="8" Margin="1" Padding="3,2"
+                                                            Command="{Binding SelectSecondaryDevBoardTypeCommand}" CommandParameter="uno" ToolTip="Dock second Arduino Uno (MCU_2)" />
+                                                    <Button Content="+ S2" Style="{StaticResource DockButtonStyle}" FontSize="8" Margin="1" Padding="3,2"
+                                                            Command="{Binding SelectSecondaryDevBoardTypeCommand}" CommandParameter="s2" ToolTip="Dock second Wemos S2 Mini (MCU_2)" />
+                                                    <Button Content="+ ESP32" Style="{StaticResource DockButtonStyle}" FontSize="8" Margin="1" Padding="3,2"
+                                                            Command="{Binding SelectSecondaryDevBoardTypeCommand}" CommandParameter="esp32" ToolTip="Dock second ESP32 DevKit (MCU_2)" />
+                                                    <Button Content="NONE" Style="{StaticResource DockButtonStyle}" FontSize="8" Margin="1" Padding="3,2"
+                                                            Command="{Binding SelectSecondaryDevBoardTypeCommand}" CommandParameter="none" ToolTip="Remove second dev board (MCU_2)" />
+                                                </UniformGrid>
+                                            </StackPanel>
+
                                             <!-- CABLES & HARDWARE PROGRAMMER SUB-CARD -->
                                             <Border Background="{StaticResource PanelBackgroundBrush}"
-                                                    BorderBrush="{StaticResource BorderSubtleBrush}"
                                                     BorderThickness="1"
                                                     CornerRadius="4"
                                                     Padding="6,5"
                                                     Margin="0,5,0,3">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="BorderBrush" Value="{StaticResource BorderSubtleBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsGlobalBoardConnected}" Value="True">
+                                                                <Setter Property="BorderBrush" Value="#00FFC8" />
+                                                                <Setter Property="Background" Value="#082422" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding IsCableMismatchWarning}" Value="True">
+                                                                <Setter Property="BorderBrush" Value="#F59E0B" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
                                                 <StackPanel>
                                                     <DockPanel LastChildFill="False" Margin="0,0,0,4">
                                                         <TextBlock DockPanel.Dock="Left"
-                                                                   Text="CABLES &amp; HARDWARE PROGRAMMER"
+                                                                   Text="2.5D CABLES &amp; PROGRAMMER"
                                                                    Style="{StaticResource PanelHeaderTextStyle}"
                                                                    FontSize="9"
                                                                    Foreground="{StaticResource AccentCyanBrush}"
                                                                    VerticalAlignment="Center" />
                                                         <Border DockPanel.Dock="Right"
-                                                                Background="#0F172A"
-                                                                BorderBrush="{StaticResource AccentCyanBrush}"
-                                                                BorderThickness="1"
                                                                 CornerRadius="2"
-                                                                Padding="4,1">
-                                                            <TextBlock Text="{Binding SelectedCableBadgeText}"
+                                                                BorderThickness="1"
+                                                                Padding="5,1">
+                                                            <Border.Style>
+                                                                <Style TargetType="Border">
+                                                                    <Setter Property="Background" Value="#0F172A" />
+                                                                    <Setter Property="BorderBrush" Value="{StaticResource AccentCyanBrush}" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsGlobalBoardConnected}" Value="True">
+                                                                            <Setter Property="Background" Value="#004D40" />
+                                                                            <Setter Property="BorderBrush" Value="#00FFC8" />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding IsCableMismatchWarning}" Value="True">
+                                                                            <Setter Property="Background" Value="#78350F" />
+                                                                            <Setter Property="BorderBrush" Value="#F59E0B" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Border.Style>
+                                                            <TextBlock Text="{Binding GlobalConnectionBadgeText}"
                                                                        FontFamily="{StaticResource MonoFontFamily}"
                                                                        FontSize="8"
-                                                                       Foreground="{StaticResource AccentCyanBrush}" />
+                                                                       FontWeight="Bold">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Foreground" Value="#94A3B8" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsGlobalBoardConnected}" Value="True">
+                                                                                <Setter Property="Foreground" Value="#00FFC8" />
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding IsCableMismatchWarning}" Value="True">
+                                                                                <Setter Property="Foreground" Value="#FDE68A" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
                                                         </Border>
                                                     </DockPanel>
+
+                                                    <!-- Target MCU Slot & USB Adapter Toggle -->
+                                                    <Grid Margin="0,0,0,4">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="4" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <ComboBox Grid.Column="0"
+                                                                  Style="{StaticResource DockComboBoxStyle}"
+                                                                  ItemsSource="{Binding AvailableTargetBoardSlots}"
+                                                                  DisplayMemberPath="DisplayLabel"
+                                                                  SelectedValuePath="BoardInstanceId"
+                                                                  SelectedValue="{Binding TargetProgrammerBoardInstanceId, Mode=TwoWay}"
+                                                                  Height="22"
+                                                                  FontSize="8.5"
+                                                                  ToolTip="Choose which docked microcontroller USB port receives the cable" />
+                                                        <ToggleButton Grid.Column="2"
+                                                                      Style="{StaticResource ToolbarToggleButtonStyle}"
+                                                                      IsChecked="{Binding IsUsbAdapterEnabled, Mode=TwoWay}"
+                                                                      Command="{Binding ToggleUsbAdapterModeCommand}"
+                                                                      Padding="6,2"
+                                                                      FontSize="8"
+                                                                      Content="USB ADAPTER"
+                                                                      ToolTip="Allow non-native USB plug via OTG / Type-C adapter dongle" />
+                                                    </Grid>
+
                                                     <UniformGrid Columns="3" Margin="0,0,0,3">
-                                                        <ToggleButton Style="{StaticResource ToolbarToggleButtonStyle}" Margin="1" Padding="4,4" FontSize="8.5"
-                                                                      Background="{StaticResource ToolbarSurfaceBrush}"
-                                                                      BorderBrush="{StaticResource BorderBrush}"
+                                                        <ToggleButton Style="{StaticResource ToolbarToggleButtonStyle}" Margin="1" Padding="3,4" FontSize="8"
+                                                                      Background="#10151C"
+                                                                      BorderBrush="#00E5FF"
                                                                       IsChecked="{Binding IsTypeCCableSelected, Mode=OneWay}"
                                                                       Command="{Binding SelectUsbCableCommand}" CommandParameter="typec"
-                                                                      Content="USB TYPE-C"
-                                                                      ToolTip="USB Type-C 3.1 programmer cable (native Wemos S2 Mini)" />
-                                                        <ToggleButton Style="{StaticResource ToolbarToggleButtonStyle}" Margin="1" Padding="4,4" FontSize="8.5"
-                                                                      Background="{StaticResource ToolbarSurfaceBrush}"
-                                                                      BorderBrush="{StaticResource BorderBrush}"
+                                                                      ToolTip="Anker 100W Black/Silver Diamond-Braided USB-C to USB-C cable (native Wemos ESP32-S2 Mini)">
+                                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                                <Rectangle Width="7" Height="7" RadiusX="1" RadiusY="1" Fill="#CBD5E1" Stroke="#00E5FF" StrokeThickness="1" Margin="0,0,3,0" />
+                                                                <TextBlock Text="ANKER 100W" FontWeight="Bold" />
+                                                            </StackPanel>
+                                                        </ToggleButton>
+                                                        <ToggleButton Style="{StaticResource ToolbarToggleButtonStyle}" Margin="1" Padding="3,4" FontSize="8"
+                                                                      Background="#141418"
+                                                                      BorderBrush="#FF6D00"
                                                                       IsChecked="{Binding IsTypeBCableSelected, Mode=OneWay}"
                                                                       Command="{Binding SelectUsbCableCommand}" CommandParameter="usbb"
-                                                                      Content="USB TYPE-B"
-                                                                      ToolTip="Standard USB-B Printer/ISP cable (native Arduino Uno &amp; Mega)" />
-                                                        <ToggleButton Style="{StaticResource ToolbarToggleButtonStyle}" Margin="1" Padding="4,4" FontSize="8.5"
-                                                                      Background="{StaticResource ToolbarSurfaceBrush}"
-                                                                      BorderBrush="{StaticResource BorderBrush}"
+                                                                      ToolTip="Glossy Black Molded USB Type-A to Type-B cable with Orange USB Emblem (native Arduino Uno &amp; Mega)">
+                                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                                <Ellipse Width="7" Height="7" Fill="#FF6D00" Margin="0,0,3,0" />
+                                                                <TextBlock Text="USB-A→B" FontWeight="Bold" />
+                                                            </StackPanel>
+                                                        </ToggleButton>
+                                                        <ToggleButton Style="{StaticResource ToolbarToggleButtonStyle}" Margin="1" Padding="3,4" FontSize="8"
+                                                                      Background="#161A24"
+                                                                      BorderBrush="#F59E0B"
                                                                       IsChecked="{Binding IsMicroUsbCableSelected, Mode=OneWay}"
                                                                       Command="{Binding SelectUsbCableCommand}" CommandParameter="micro"
-                                                                      Content="MICRO-USB"
-                                                                      ToolTip="Micro-USB high-speed UART cable (native ESP32 DevKit &amp; STM32)" />
+                                                                      ToolTip="Micro-USB 2.0 Data Cable (native ESP32 DevKit v1 &amp; STM32 Blue Pill)">
+                                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                                <Rectangle Width="7" Height="5" Fill="#F59E0B" Margin="0,0,3,0" />
+                                                                <TextBlock Text="MICRO-USB" FontWeight="Bold" />
+                                                            </StackPanel>
+                                                        </ToggleButton>
                                                     </UniformGrid>
                                                     <Grid Margin="0,1,0,3">
                                                         <Grid.ColumnDefinitions>
@@ -501,19 +689,29 @@
                                                                 Margin="1"
                                                                 Command="{Binding ToggleUsbCableConnectionCommand}"
                                                                 Content="{Binding ConnectCableButtonLabel}"
-                                                                ToolTip="Plug or unplug the USB programmer cable on the 2D CAD canvas" />
+                                                                ToolTip="Plug/unplug cable or drag directly from 2.5D Cable Rack to Dev Board USB jack on the CAD canvas" />
                                                         <Button Grid.Column="1"
-                                                                Style="{StaticResource DockButtonStyle}"
                                                                 Margin="3,1,1,1"
-                                                                Padding="8,4"
-                                                                Background="#004D40"
-                                                                BorderBrush="#00BFA5"
-                                                                Foreground="#A7FFEB"
+                                                                Padding="9,4"
                                                                 FontWeight="Bold"
-                                                                Visibility="{Binding IsProgrammerCableConnected, Converter={StaticResource BoolToVis}}"
                                                                 Command="{Binding OpenProgrammerUploadDialogCommand}"
-                                                                Content="⬆ UPLOAD TO BOARD"
-                                                                ToolTip="Analyze code and flash firmware onto the virtual/connected MCU" />
+                                                                Content="{Binding GlobalSendButtonLabel}"
+                                                                ToolTip="Open Hardware Programmer &amp; Send Firmware (Arduino IDE Options, Verify, Physical Upload, Serial Monitor)">
+                                                            <Button.Style>
+                                                                <Style TargetType="Button" BasedOn="{StaticResource DockButtonStyle}">
+                                                                    <Setter Property="Background" Value="#1E293B" />
+                                                                    <Setter Property="BorderBrush" Value="#475569" />
+                                                                    <Setter Property="Foreground" Value="#CBD5E1" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsGlobalBoardConnected}" Value="True">
+                                                                            <Setter Property="Background" Value="#004D40" />
+                                                                            <Setter Property="BorderBrush" Value="#00FFC8" />
+                                                                            <Setter Property="Foreground" Value="#A7FFEB" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Button.Style>
+                                                        </Button>
                                                     </Grid>
                                                     <TextBlock Text="{Binding ConnectedBoardSummary}"
                                                                Style="{StaticResource MonoSecondaryTextStyle}"
@@ -1339,15 +1537,6 @@
                                                Style="{StaticResource MonoSecondaryTextStyle}"
                                                TextWrapping="Wrap"
                                                Margin="22,0,0,10" />
-
-                                    <CheckBox Content="Rule-Based Advice Fallback (When Qwen Offline)"
-                                              Style="{StaticResource LayerCheckBoxStyle}"
-                                              IsChecked="{Binding IsRuleBasedAdviceEnabled, Mode=TwoWay}"
-                                              ToolTip="When Qwen is offline, generate deterministic DRC repair guidance." />
-                                    <TextBlock Text="When disabled and Qwen is offline, an explicit offline notice is displayed with zero hallucination."
-                                               Style="{StaticResource MonoSecondaryTextStyle}"
-                                               TextWrapping="Wrap"
-                                               Margin="22,0,0,4" />
                                 </StackPanel>
 
                                 <Border Style="{StaticResource DockSeparatorStyle}" />
@@ -1363,15 +1552,6 @@
                                               IsChecked="{Binding IsVoiceEnabled, Mode=TwoWay}"
                                               ToolTip="Master toggle for spoken voice tutoring." />
                                     <TextBlock Text="Synthesizes tutor guidance aloud via Kokoro-82M, Piper, or Windows SAPI."
-                                               Style="{StaticResource MonoSecondaryTextStyle}"
-                                               TextWrapping="Wrap"
-                                               Margin="22,0,0,10" />
-
-                                    <CheckBox Content="Speak Rule-Based Advice When Qwen Offline"
-                                              Style="{StaticResource LayerCheckBoxStyle}"
-                                              IsChecked="{Binding SpeakRuleBasedAdvice, Mode=TwoWay}"
-                                              ToolTip="Allows the voice engine to speak deterministic DRC repair guidance." />
-                                    <TextBlock Text="Enables spoken advice during local testing without requiring the GPU Qwen model to run."
                                                Style="{StaticResource MonoSecondaryTextStyle}"
                                                TextWrapping="Wrap"
                                                Margin="22,0,0,10" />
@@ -2394,15 +2574,101 @@
                 <TextBlock DockPanel.Dock="Left"
                            Text="READY"
                            Style="{StaticResource StatusTextStyle}"
-                           Margin="0,0,12,0" />
+                           Margin="0,0,10,0"
+                           VerticalAlignment="Center" />
+
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
+                    <Border CornerRadius="3" Padding="6,2" Margin="0,0,6,0" BorderThickness="1" VerticalAlignment="Center">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Background" Value="#141820" />
+                                <Setter Property="BorderBrush" Value="#334155" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsGlobalBoardConnected}" Value="True">
+                                        <Setter Property="Background" Value="#042F2E" />
+                                        <Setter Property="BorderBrush" Value="#00FFC8" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsCableMismatchWarning}" Value="True">
+                                        <Setter Property="Background" Value="#78350F" />
+                                        <Setter Property="BorderBrush" Value="#F59E0B" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Text="{Binding GlobalConnectionBadgeText}" FontFamily="{StaticResource MonoFontFamily}" FontSize="9" FontWeight="Bold">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="#94A3B8" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsGlobalBoardConnected}" Value="True">
+                                            <Setter Property="Foreground" Value="#00FFC8" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsCableMismatchWarning}" Value="True">
+                                            <Setter Property="Foreground" Value="#FDE68A" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Border>
+                    <Button Content="{Binding GlobalSendButtonLabel}"
+                            Command="{Binding OpenProgrammerUploadDialogCommand}"
+                            Padding="8,2"
+                            FontSize="9.5"
+                            FontWeight="Bold"
+                            ToolTip="Send / Upload firmware to connected microcontroller">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource DockButtonStyle}">
+                                <Setter Property="Background" Value="#1E293B" />
+                                <Setter Property="BorderBrush" Value="#475569" />
+                                <Setter Property="Foreground" Value="#CBD5E1" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsGlobalBoardConnected}" Value="True">
+                                        <Setter Property="Background" Value="#004D40" />
+                                        <Setter Property="BorderBrush" Value="#00FFC8" />
+                                        <Setter Property="Foreground" Value="#A7FFEB" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                </StackPanel>
+
                 <TextBlock DockPanel.Dock="Right"
                            Text="{Binding FrameTelemetry}"
-                           Style="{StaticResource MonoSecondaryTextStyle}" />
+                           Style="{StaticResource MonoSecondaryTextStyle}"
+                           VerticalAlignment="Center" />
                 <TextBlock Text="{Binding StatusLine}"
                            Style="{StaticResource StatusTextStyle}"
                            TextTrimming="CharacterEllipsis"
                            VerticalAlignment="Center" />
             </DockPanel>
+        </Border>
+
+        <!-- APP-WIDE NEON CONNECTED PERIMETER GLOW OVERLAY -->
+        <Border Grid.RowSpan="3"
+                IsHitTestVisible="False"
+                Background="{x:Null}"
+                BorderThickness="2"
+                Panel.ZIndex="999">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="BorderBrush" Value="Transparent" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsGlobalBoardConnected}" Value="True">
+                            <Setter Property="BorderBrush" Value="#00FFC8" />
+                            <Setter Property="Effect">
+                                <Setter.Value>
+                                    <DropShadowEffect Color="#00FFC8" BlurRadius="14" ShadowDepth="0" Opacity="0.75" RenderingBias="Performance" />
+                                </Setter.Value>
+                            </Setter>
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding IsCableMismatchWarning}" Value="True">
+                            <Setter Property="BorderBrush" Value="#F59E0B" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
         </Border>
     </Grid>
 </Window>

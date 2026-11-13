@@ -712,7 +712,7 @@ public partial class AiVisionInspectionWindow : Window
             ResultTextBox.Text =
                 "[Qwen is not connected] The cognitive tutor is disabled or has no endpoint. " +
                 "Click 'LINK LM STUDIO' or open AI ROUTING > LOCAL AI, then press ANALYZE AGAIN.";
-            ThinkingTextBox.Text = "No reasoning trace: no Qwen service is attached to this workstation.";
+            ThinkingTextBox.Text = "No vision service is attached to this workstation.";
             ThinkingStatusText.Text = "OFFLINE";
             ThinkingDot.Fill = (Brush)FindResource("DrcWarningBrush");
             ThinkingDotGlow.Opacity = 0;
@@ -764,7 +764,7 @@ public partial class AiVisionInspectionWindow : Window
         SpeakResultButton.IsEnabled = false;
         ThinkingTextBox.Clear();
         ResultTextBox.Clear();
-        InstructionTextBox.Text = "Waiting for the complete Qwen answer ...";
+        InstructionTextBox.Text = "Waiting for the complete vision answer ...";
         ResultStatusText.Text = "STREAMING";
         ThinkingStatusText.Text = "CONNECTING...";
         ThinkingDot.Fill = (Brush)FindResource("LedOnlineBrush");
@@ -793,7 +793,7 @@ public partial class AiVisionInspectionWindow : Window
             // No OpenCV homography or warp, no YOLO integration.
             prompt = DiagnosticPromptBuilder.BuildLiveVisionInspection();
 
-            byte[]? liveCamPng = _coordinator?.CaptureLiveRawPng() ?? _coordinator?.CaptureLiveWarpedPng();
+            byte[]? liveCamPng = _coordinator?.CaptureLiveRawPng();
             if (liveCamPng is { Length: > 0 })
             {
                 visionBytes = liveCamPng;
@@ -809,13 +809,13 @@ public partial class AiVisionInspectionWindow : Window
         {
             ResultTextBox.Text =
                 "[No image available] Start the live camera or upload a photo, then press ANALYZE AGAIN.";
-            ThinkingTextBox.Text = "Qwen vision needs an image; no YOLO/DRC text was sent.";
+            ThinkingTextBox.Text = "The vision model needs an image; no YOLO/DRC text was sent.";
             ThinkingStatusText.Text = "NO IMAGE";
             ThinkingDot.Fill = (Brush)FindResource("DrcWarningBrush");
             ThinkingDotGlow.Opacity = 0;
             AnalysisStatusText.Text = "NO IMAGE";
             BottomStatusText.Text = "No live frame or uploaded photo is available.";
-            InstructionTextBox.Text = "No voice instruction: no image was available for Qwen vision.";
+            InstructionTextBox.Text = "No voice instruction: no image was available for the vision model.";
             ResultStatusText.Text = "NO IMAGE";
             SpeakResultButton.IsEnabled = false;
             AnalyzeButton.IsEnabled = true;
@@ -823,61 +823,35 @@ public partial class AiVisionInspectionWindow : Window
             return;
         }
 
-        var thinking = new StringBuilder();
         var answer = new StringBuilder();
-        bool sawThinking = false;
-        bool sawContent = false;
         Stopwatch clock = Stopwatch.StartNew();
         int streamChunks = 0;
+
+        ThinkingTextBox.Text = "Direct vision request: the prompt and the raw frame are the only inputs.";
+        ThinkingStatusText.Text = "ANSWERING...";
 
         _isAnalysisStreaming = true;
         try
         {
-            IAsyncEnumerable<QwenStreamEvent> stream = qwen.StreamImageDetailedAsync(
-                visionBytes!, prompt, allowThinking: true, token);
-
-            await foreach (QwenStreamEvent streamEvent in stream.WithCancellation(token))
+            await foreach (string chunk in qwen
+                               .StreamImageAsync(visionBytes!, prompt, token)
+                               .WithCancellation(token))
             {
                 streamChunks++;
                 if (_isClosed || generation != _analysisGeneration)
                     return;
 
-                if (streamEvent.Kind == QwenStreamKind.Thinking)
-                {
-                    if (!sawThinking)
-                    {
-                        sawThinking = true;
-                        ThinkingStatusText.Text = "THINKING...";
-                    }
-
-                    thinking.Append(streamEvent.Text);
-                    ThinkingTextBox.Text = thinking.ToString();
-                    ThinkingTextBox.ScrollToEnd();
-                }
-                else
-                {
-                    if (!sawContent)
-                    {
-                        sawContent = true;
-                        ThinkingStatusText.Text = "ANSWERING...";
-                    }
-
-                    answer.Append(streamEvent.Text);
-                    ResultTextBox.Text = answer.ToString();
-                    ResultTextBox.ScrollToEnd();
-
-                    if (streamEvent.Kind == QwenStreamKind.Content && answer.Length > 0)
-                    {
-                        InstructionTextBox.Text = "Generating humanized instructions (max 5 sentences)...";
-                    }
-                }
+                answer.Append(chunk);
+                ResultTextBox.Text = answer.ToString();
+                ResultTextBox.ScrollToEnd();
+                InstructionTextBox.Text = "Generating humanized instructions (max 5 sentences)...";
             }
 
             clock.Stop();
             if (_isClosed || generation != _analysisGeneration)
                 return;
 
-            bool serverAnswer = qwen.LastMode == QwenResponseMode.Server && qwen.LastAnswerUsable;
+            bool serverAnswer = qwen.LastAnswerUsable;
             _lastAnswerFromServer = serverAnswer;
             UpdateTutorBadge();
 
@@ -894,12 +868,11 @@ public partial class AiVisionInspectionWindow : Window
 
                 ThinkingStatusText.Text = $"COMPLETE · {elapsed:0.0}s · {estTokens} tok";
                 AnalysisStatusText.Text = $"{elapsed:0.0}s · {estTokens} tok ({tokSec:0.1} tok/s) · {qwen.EndpointProvider}";
-                BottomStatusText.Text = $"Qwen answer received from {qwen.EndpointSummary} in {elapsed:0.0}s ({estTokens} tokens, {tokSec:0.1} tok/s).";
+                BottomStatusText.Text = $"Vision answer received from {qwen.EndpointSummary} in {elapsed:0.0}s ({estTokens} tokens, {tokSec:0.1} tok/s).";
                 PhotoActionBadge.Text = "ANALYSIS COMPLETE";
                 PhotoActionBadge.Foreground = (Brush)FindResource("LedOnlineBrush");
 
-                if (!sawThinking)
-                    ThinkingTextBox.Text = "Model answered directly (direct vision reasoning without separate <think> tags).";
+                ThinkingTextBox.Text = "Model answered directly; no reasoning channel is used.";
 
                 string fullInstruction = CapSentences(answer.ToString().Trim(), 5);
                 _voiceInstruction = BuildVoiceInstruction(fullInstruction);
@@ -914,27 +887,17 @@ public partial class AiVisionInspectionWindow : Window
             {
                 ThinkingDot.Fill = (Brush)FindResource("DrcWarningBrush");
                 ThinkingDotGlow.Opacity = 0;
-                ThinkingStatusText.Text = qwen.LastMode == QwenResponseMode.Server ? "NO ANSWER" : "OFFLINE";
-                AnalysisStatusText.Text = "RULE-BASED / OFFLINE";
+                ThinkingStatusText.Text = "OFFLINE";
+                AnalysisStatusText.Text = "OFFLINE";
                 BottomStatusText.Text = qwen.LastError
-                    ?? "Qwen did not answer. Check LM Studio / local server on port 1234.";
+                    ?? "The vision model did not answer. Check the endpoint under AI ROUTING.";
 
-                if (!sawThinking)
-                {
-                    ThinkingTextBox.Text =
-                        "No reasoning trace: Qwen did not answer. The status bar shows the endpoint error.";
-                }
-
-                if (!photo && answer.Length > 0
-                    && !answer.ToString().StartsWith("[Qwen", StringComparison.Ordinal))
-                {
-                    ResultTextBox.Text = "[RULE-BASED FALLBACK · QWEN OFFLINE]\n" + answer;
-                }
+                ThinkingTextBox.Text = "No answer. The status bar shows the endpoint error.";
 
                 _voiceInstruction = string.Empty;
                 InstructionTextBox.Text =
-                    "No voice instruction: Qwen is offline. DRC advice stays on screen as text.";
-                ResultStatusText.Text = "RULE-BASED · TEXT ONLY";
+                    "No voice instruction: the vision model is offline.";
+                ResultStatusText.Text = "OFFLINE";
                 SpeakResultButton.IsEnabled = false;
             }
 
@@ -993,7 +956,7 @@ public partial class AiVisionInspectionWindow : Window
 
     private async Task SpeakResultAsync(string text, int generation, bool force = false)
     {
-        // Only a real server answer may be synthesized; rule-based text stays silent, unless explicitly forced.
+        // Only a real model answer may be synthesized; UI and DRC text stay silent.
         bool allowVoice = force || _lastAnswerFromServer;
         if (_coordinator is null || !allowVoice || string.IsNullOrWhiteSpace(text))
             return;

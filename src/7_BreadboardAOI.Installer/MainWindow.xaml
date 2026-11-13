@@ -177,12 +177,12 @@
 
                     <StackPanel VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                            <TextBlock Text="Breadboard AOI" Foreground="#F8FAFC" FontSize="17" FontWeight="Bold"/>
+                            <TextBlock Text="Breadboard AOI v2.0" Foreground="#F8FAFC" FontSize="17" FontWeight="Bold"/>
                             <Border Background="#111C2D" CornerRadius="6" Padding="8,2" Margin="10,0,0,0" BorderBrush="#2563EB" BorderThickness="1">
-                                <TextBlock Text="Qwen3-VL &#x2022; KiCad DRC" Foreground="#60A5FA" FontSize="10.5" FontWeight="SemiBold"/>
+                                <TextBlock Text="Block Coding &#x2022; USB Prog &#x2022; KiCad DRC" Foreground="#60A5FA" FontSize="10.5" FontWeight="SemiBold"/>
                             </Border>
                             <Border Background="#0D2821" CornerRadius="6" Padding="8,2" Margin="6,0,0,0" BorderBrush="#10B981" BorderThickness="1">
-                                <TextBlock Text="Antigravity Ready" Foreground="#34D399" FontSize="10.5" FontWeight="SemiBold"/>
+                                <TextBlock Text="Live AI Ready" Foreground="#34D399" FontSize="10.5" FontWeight="SemiBold"/>
                             </Border>
                         </StackPanel>
                         <TextBlock x:Name="HardwareSubtitleText"

@@ -15,14 +15,24 @@ public enum BoxCodeDiagnosticSeverity
     Error = 2
 }
 
+public sealed record BoxCodeQuickFix(
+    string Title,
+    int TargetLine,
+    string ReplacementText,
+    bool InsertLineInsteadOfReplace = false,
+    int? InsertAtLine = null);
+
 public sealed record BoxCodeDiagnostic(
     int Line,
     int Column,
     BoxCodeDiagnosticSeverity Severity,
     string Code,
     string Message,
-    string? Suggestion = null)
+    string? Suggestion = null,
+    BoxCodeQuickFix? QuickFix = null)
 {
+    public bool HasQuickFix => QuickFix is not null;
+
     public string SeverityLabel => Severity switch
     {
         BoxCodeDiagnosticSeverity.Error => "ERROR",
@@ -131,10 +141,62 @@ public static partial class BoxCodeErrorAnalyzer
         // 3. Hardware & board pin semantic rules (BC030..BC034)
         AnalyzeHardwarePins(rawLines, strippedLines, language, boardType, wiredMcuPins, diagnostics);
 
-        // 4. Extract runtime actions for simulator
+        // 4. Semantic & logic checks (BC035, BC040..BC051) with one-click Quick Fixes
+        BoxCodeSemanticAnalyzer.AnalyzeSemanticsAndLogic(
+            rawLines, strippedLines, language, boardType, diagnostics);
+
+        // 5. Extract runtime actions for simulator
         ExtractSimulatedActions(rawLines, strippedLines, language, actions);
 
         return BuildReport(diagnostics, actions);
+    }
+
+    public static string ApplyQuickFix(string? code, BoxCodeQuickFix? fix)
+    {
+        if (string.IsNullOrEmpty(code) || fix is null)
+            return code ?? string.Empty;
+
+        string newline = code.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        var lines = code.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n').ToList();
+
+        if (fix.InsertLineInsteadOfReplace)
+        {
+            int insertIdx = Math.Clamp((fix.InsertAtLine ?? fix.TargetLine) - 1, 0, lines.Count);
+            if (string.IsNullOrEmpty(fix.ReplacementText))
+                return code;
+
+            string indent = string.Empty;
+            if (insertIdx > 0 && insertIdx - 1 < lines.Count)
+            {
+                string prev = lines[insertIdx - 1];
+                int spaces = 0;
+                while (spaces < prev.Length && char.IsWhiteSpace(prev[spaces]))
+                    spaces++;
+                indent = prev[..spaces];
+            }
+
+            string toInsert = char.IsWhiteSpace(fix.ReplacementText.FirstOrDefault())
+                ? fix.ReplacementText
+                : indent + fix.ReplacementText;
+            lines.Insert(insertIdx, toInsert);
+        }
+        else
+        {
+            int targetIdx = fix.TargetLine - 1;
+            if (targetIdx < 0 || targetIdx >= lines.Count)
+                return code;
+
+            if (string.Equals(fix.Title, "Remove unreachable line", StringComparison.Ordinal))
+            {
+                lines.RemoveAt(targetIdx);
+            }
+            else
+            {
+                lines[targetIdx] = fix.ReplacementText;
+            }
+        }
+
+        return string.Join(newline, lines);
     }
 
     private static BoxCodeAnalysisReport BuildReport(
@@ -629,14 +691,24 @@ public static partial class BoxCodeErrorAnalyzer
             // Board-specific rules (BC030, BC031, BC032)
             if (boardType != MicrocontrollerBoardType.None)
             {
-                bool isEsp = boardType is MicrocontrollerBoardType.Esp32DevKitV1 or MicrocontrollerBoardType.WemosEsp32S2Mini;
-
-                if (isEsp && hasNum && !isAnalogPrefix && numPin is >= 6 and <= 11)
+                // Original ESP32 DevKit V1 reserves GPIO 6-11 for internal SPI flash.
+                // On WEMOS ESP32-S2 Mini, GPIO 6-11 are safe user GPIOs/ADC/I2C (IO8=SDA, IO9=SCL);
+                // SPI flash/PSRAM occupies GPIO 26-32 instead.
+                if (boardType == MicrocontrollerBoardType.Esp32DevKitV1 && hasNum && !isAnalogPrefix && numPin is >= 6 and <= 11)
                 {
                     diagnostics.Add(new BoxCodeDiagnostic(
                         lineNum, col, BoxCodeDiagnosticSeverity.Error, "BC031",
                         $"GPIO {numPin} is reserved for internal SPI flash on ESP32.",
                         "Use a safe general-purpose GPIO such as 2, 4, 5, 13, 18, 19, 21, 22, 23, 25-27, or 32-33."));
+                    continue;
+                }
+
+                if (boardType == MicrocontrollerBoardType.WemosEsp32S2Mini && hasNum && !isAnalogPrefix && numPin is >= 26 and <= 32)
+                {
+                    diagnostics.Add(new BoxCodeDiagnostic(
+                        lineNum, col, BoxCodeDiagnosticSeverity.Error, "BC031",
+                        $"GPIO {numPin} is reserved for internal SPI flash/PSRAM on ESP32-S2.",
+                        "Use a safe broken-out WEMOS S2 Mini pin such as IO1-IO18, IO21, or IO33-IO40."));
                     continue;
                 }
 
@@ -672,10 +744,17 @@ public static partial class BoxCodeErrorAnalyzer
                 !setupOutputPins.Contains(normKey) &&
                 warnedMissingPinMode.Add(normKey))
             {
+                int setupInsertLine = FindSetupInsertionLine(strippedLines);
                 diagnostics.Add(new BoxCodeDiagnostic(
                     lineNum, col, BoxCodeDiagnosticSeverity.Warning, "BC033",
                     $"Pin {token} is driven with digitalWrite() but pinMode({token}, OUTPUT) was not found in setup().",
-                    $"Add 'pinMode({token}, OUTPUT);' inside void setup()."));
+                    $"Add 'pinMode({token}, OUTPUT);' inside void setup().",
+                    new BoxCodeQuickFix(
+                        $"Add pinMode({token}, OUTPUT); in setup()",
+                        lineNum,
+                        $"    pinMode({token}, OUTPUT);",
+                        InsertLineInsteadOfReplace: true,
+                        InsertAtLine: setupInsertLine)));
             }
 
             // BC034: Pin not present in wiredMcuPins
@@ -912,7 +991,7 @@ public static partial class BoxCodeErrorAnalyzer
         return false;
     }
 
-    private static McuPinDefinition? ResolveBoardPin(
+    internal static McuPinDefinition? ResolveBoardPin(
         MicrocontrollerBoardProfile profile,
         string token,
         bool hasNum,
@@ -931,6 +1010,28 @@ public static partial class BoxCodeErrorAnalyzer
         }
 
         return found;
+    }
+
+    internal static int FindSetupInsertionLine(string[] strippedLines)
+    {
+        for (int i = 0; i < strippedLines.Length; i++)
+        {
+            if (!SetupDeclRegex().IsMatch(strippedLines[i]))
+                continue;
+
+            if (strippedLines[i].Contains('{'))
+                return i + 2;
+
+            for (int j = i + 1; j < Math.Min(i + 4, strippedLines.Length); j++)
+            {
+                if (strippedLines[j].Contains('{'))
+                    return j + 2;
+            }
+
+            return i + 2;
+        }
+
+        return 1;
     }
 
     private static bool IsOutOfRangeForBoard(
@@ -971,7 +1072,7 @@ public static partial class BoxCodeErrorAnalyzer
         }
     }
 
-    private static string NormalizePinKey(string raw)
+    internal static string NormalizePinKey(string raw)
     {
         string s = raw.Trim();
         if (s.StartsWith("GPIO ", StringComparison.OrdinalIgnoreCase))

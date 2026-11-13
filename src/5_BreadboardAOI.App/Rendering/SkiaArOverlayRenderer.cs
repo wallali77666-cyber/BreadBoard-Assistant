@@ -13,6 +13,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using BreadboardAOI.Core.BoxCoding;
 using BreadboardAOI.Core.Contracts;
 using BreadboardAOI.Core.DrcEngine;
 using BreadboardAOI.Core.Geometry;
@@ -375,7 +376,58 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
         if (!_hasTransform)
         {
             ClearDevBoardHover();
+            HoveredCableRackKind = UsbCableKind.None;
+            HoveredUsbReceptacleBoardId = null;
+            HoveredProgrammerJack = false;
             return ApplyHover(false, default);
+        }
+
+        if (PendingCableDragKind != UsbCableKind.None)
+            CableDragCursorCanvas = new SKPoint(viewportX, viewportY);
+
+        HoveredCableRackKind = TryHitTestCableRackCard(viewportX, viewportY, out UsbCableKind rackHover)
+            ? rackHover
+            : UsbCableKind.None;
+        HoveredProgrammerJack = TryHitTestProgrammerJack(viewportX, viewportY);
+        HoveredUsbReceptacleBoardId = TryHitTestBoardUsbReceptacle(viewportX, viewportY, out string? usbBoardId, out _)
+            ? usbBoardId
+            : null;
+
+        if (HoveredUsbReceptacleBoardId is not null)
+        {
+            ApplyHover(false, default);
+            _hoverValid = false;
+            ClearDevBoardHover();
+            UsbCableKind evalKind = PendingCableDragKind != UsbCableKind.None ? PendingCableDragKind : ActiveUsbCableKind;
+            var boardState = ActiveMicrocontrollers.FirstOrDefault(m => string.Equals(m.BoardInstanceId, HoveredUsbReceptacleBoardId, StringComparison.OrdinalIgnoreCase));
+            string compatNote = "Plug mismatch (enable USB Adapter or pick native cable)";
+            if (boardState is not null)
+                ProgrammerCatalog.IsCableCompatible(evalKind, boardState.BoardType, IsCableAdapterEnabled, out _, out compatNote);
+            string compatSuffix = compatNote;
+            _hoverText = PendingCableDragKind != UsbCableKind.None
+                ? $"[USB PORT {HoveredUsbReceptacleBoardId}] Release/Click to plug {ProgrammerCatalog.GetCableSpec(PendingCableDragKind).ShortTag} — {compatSuffix}"
+                : $"[USB PORT {HoveredUsbReceptacleBoardId}] Click to plug/target · Right-click to unplug";
+            return true;
+        }
+
+        if (HoveredCableRackKind != UsbCableKind.None)
+        {
+            ApplyHover(false, default);
+            _hoverValid = false;
+            ClearDevBoardHover();
+            _hoverText = $"[2.5D CABLE RACK] {ProgrammerCatalog.GetCableSpec(HoveredCableRackKind).DisplayName} — Click or drag to Dev Board USB port";
+            return true;
+        }
+
+        if (HoveredProgrammerJack)
+        {
+            ApplyHover(false, default);
+            _hoverValid = false;
+            ClearDevBoardHover();
+            _hoverText = IsProgrammerConnected
+                ? "[PROGRAMMER USB JACK] Connected — Right-click to unplug or drag to retarget"
+                : "[PROGRAMMER USB JACK] Click or drag to Dev Board USB port to connect";
+            return true;
         }
 
         // 1. Hit-test off-board microcontroller pin sockets first if docked
@@ -402,6 +454,9 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
     public void ClearHover()
     {
         ClearDevBoardHover();
+        HoveredCableRackKind = UsbCableKind.None;
+        HoveredUsbReceptacleBoardId = null;
+        HoveredProgrammerJack = false;
         if (!_hoverValid && _hoverText.Length == 0)
             return;
 
@@ -511,14 +566,12 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
         if (ActiveMicrocontrollers.Count > 0)
         {
             float pixelsPerMm = _boardPixelWidth / BreadboardWidthMm;
-            var mcuLayouts = new List<RenderedMicrocontrollerLayout>(ActiveMicrocontrollers.Count);
-            foreach (var mcu in ActiveMicrocontrollers)
-                mcuLayouts.Add(McuRenderer.ComputeBoardLayout(mcu, boardRect, pixelsPerMm));
+            List<RenderedMicrocontrollerLayout> mcuLayouts = McuRenderer.ComputeBoardLayouts(ActiveMicrocontrollers, boardRect, pixelsPerMm);
             _activeMcuLayouts = mcuLayouts;
 
             // 1. Paint microcontroller boards first so the PCB, hardware ICs, and headers form the foundation
-            foreach (var mcu in ActiveMicrocontrollers)
-                McuRenderer.RenderMicrocontroller(canvas, mcu, boardRect, pixelsPerMm);
+            for (int i = 0; i < ActiveMicrocontrollers.Count; i++)
+                McuRenderer.RenderMicrocontroller(canvas, ActiveMicrocontrollers[i], mcuLayouts[i], pixelsPerMm);
 
             // 2. Paint 3D jumper wires on top so they arch gracefully into the headers
             if (ActiveDevBoardWires.Count > 0)
@@ -1202,17 +1255,19 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
 
     private void DrawHoverTooltip(SKCanvas canvas, int viewportWidth, int viewportHeight)
     {
-        if (!_hoverValid || _hoverText.Length == 0)
+        if (_hoverText.Length == 0)
+            return;
+        if (!_hoverValid && _hoverScreenX <= 0f && _hoverScreenY <= 0f)
             return;
 
         float textWidth = _hoverTextPaint.MeasureText(_hoverText);
         float width = textWidth + 16f;
         const float height = 24f;
 
-        // Anchor the inspector to the snapped pin, not the raw cursor: the panel
-        // then always labels the blue ring the operator can actually see.
-        float anchorX = _boardLeft + _hoverHole.Px * _scale;
-        float anchorY = _boardTop + _hoverHole.Py * _scale;
+        // Anchor the inspector to the snapped pin when hovering a tie point, or to
+        // the cursor position when hovering a USB receptacle, 2.5D cable rack, programmer jack, or MCU pin.
+        float anchorX = _hoverValid ? (_boardLeft + _hoverHole.Px * _scale) : _hoverScreenX;
+        float anchorY = _hoverValid ? (_boardTop + _hoverHole.Py * _scale) : _hoverScreenY;
 
         float x = anchorX + 16f;
         float y = anchorY + 18f;
@@ -1296,9 +1351,16 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
         float extraWidth = 0f;
         float extraHeight = 0f;
         bool hasRightMarginMcu = false;
+        float bottomAccumWidth = 0f;
+        int bottomBoardCount = 0;
+        float rightAccumHeight = 0f;
+        int rightBoardCount = 0;
 
         foreach (OffBoardMicrocontrollerVisualState mcu in ActiveMicrocontrollers)
         {
+            if (mcu.BoardType == MicrocontrollerBoardType.None)
+                continue;
+
             MicrocontrollerBoardProfile profile = McuRuleEngine.GetBoardProfile(mcu.BoardType);
             McuLabelExtents labels = McuRenderer.MeasureLabelExtents(profile, pixelsPerMm);
             float boardWidthUnits = profile.WidthMm * unitsPerMm;
@@ -1306,38 +1368,42 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
 
             if (mcu.DockPlacement == OffBoardDockPlacement.BottomMargin)
             {
-                float slotOffset = mcu.DockSlotIndex * (boardWidthUnits + slotGapUnits);
+                if (bottomBoardCount > 0)
+                    bottomAccumWidth += slotGapUnits;
+                bottomAccumWidth += (labels.LeftPx / safeScale) + boardWidthUnits + (labels.RightPx / safeScale);
+                bottomBoardCount++;
+
                 extraHeight = MathF.Max(
                     extraHeight,
-                    gapUnits + boardHeightUnits + (labels.BottomPx / safeScale) + titleUnits);
+                    gapUnits + ((labels.TopPx + labels.BottomPx) / safeScale) + boardHeightUnits + titleUnits);
                 extraWidth = MathF.Max(
                     extraWidth,
-                    MathF.Max(0f, slotOffset + boardWidthUnits - BoardWidth));
+                    MathF.Max(0f, bottomAccumWidth - BoardWidth));
             }
             else
             {
                 hasRightMarginMcu = true;
-                float slotOffset = mcu.DockSlotIndex * (boardHeightUnits + slotGapUnits);
+                if (rightBoardCount > 0)
+                    rightAccumHeight += slotGapUnits + titleUnits;
+                rightAccumHeight += ((labels.TopPx + labels.BottomPx) / safeScale) + boardHeightUnits;
+                rightBoardCount++;
+
                 extraWidth = MathF.Max(
                     extraWidth,
-                    gapUnits + boardWidthUnits + (labels.RightPx / safeScale));
+                    gapUnits + ((labels.LeftPx + labels.RightPx) / safeScale) + boardWidthUnits);
                 extraHeight = MathF.Max(
                     extraHeight,
-                    MathF.Max(
-                        0f,
-                        slotOffset + boardHeightUnits
-                        + ((labels.TopPx + labels.BottomPx) / safeScale)
-                        + titleUnits
-                        - BoardHeight));
+                    MathF.Max(0f, rightAccumHeight + titleUnits - BoardHeight));
             }
         }
 
         if (Layers.ShowHardwareProgrammer)
         {
-            float programmerReserveUnits = (14.0f + 32.0f) * unitsPerMm;
+            float programmerReserveUnits = (12.0f + 37.0f) * unitsPerMm;
             extraWidth = hasRightMarginMcu
                 ? extraWidth + programmerReserveUnits
                 : MathF.Max(extraWidth, programmerReserveUnits);
+            extraHeight = MathF.Max(extraHeight, 8.0f * unitsPerMm);
         }
 
         return (extraWidth, extraHeight);
@@ -1351,10 +1417,11 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
         _hoverValid = found;
         _hoverHole = found ? hole : default;
 
-        if (changed)
+        if (changed || (!found && _hoverText.Length > 0))
         {
             RefreshHoverInfo();
-            HoverChanged?.Invoke(this, EventArgs.Empty);
+            if (changed)
+                HoverChanged?.Invoke(this, EventArgs.Empty);
         }
 
         return found;
@@ -1647,6 +1714,10 @@ public sealed partial class SkiaArOverlayRenderer : IDisposable
         _jumperLinePath.Dispose();
         _partWirePath.Dispose();
         _allStripsPath?.Dispose();
+
+        _jumperLinePaint.PathEffect?.Dispose();
+        _ratsnestPaint.PathEffect?.Dispose();
+        _builderLinkPaint.PathEffect?.Dispose();
 
         DisposePaints(
             _pasteboardPaint,

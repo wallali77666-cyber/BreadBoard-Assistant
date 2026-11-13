@@ -3,13 +3,14 @@
 // PURPOSE: Owns the dual-loop AOI workstation.
 //          Loop 1 (E-Cores): 60 FPS capture -> homography -> hand gate -> YOLO ->
 //          Union-Find DRC -> CAD frame/state publication. No LLM or TTS work.
-//          Loop 2 (P-Cores): Qwen3-VL-30B-A3B / rule-based tutor -> sentence
-//          splitter -> natural voice for Qwen answers only. The rule-based
-//          fallback stays text-only. Connected only by a 1-slot channel.
+//          Loop 2 (P-Cores): vision tutor -> sentence splitter -> natural voice.
+//          The model receives one fixed prompt and the raw camera frame; the
+//          deterministic DRC engine stays the only judge. Connected only by a
+//          1-slot channel.
 //
-// PORTABILITY: affinity is best-effort, the YOLO model is optional, Qwen is
-// optional and the voice engine degrades to SAPI or silence, so the app runs on
-// any Windows laptop.
+// PORTABILITY: affinity is best-effort, the YOLO model is optional, the vision
+// model is optional and the voice engine degrades to SAPI or silence, so the app
+// runs on any Windows laptop.
 // ============================================================================
 
 using System;
@@ -101,7 +102,6 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     private readonly HandMotionGate _motionGate = new();
     private readonly WireInsertionTracker _wireTracker = new();
     private PaddleIcPartNumberOcr? _icOcr;
-    private readonly MicroCropExtractor _cropExtractor = new();
     private readonly VramBudgetMonitor _vramMonitor = new();
     private readonly List<DetectedComponent> _yoloDetections = new(32);
     private readonly List<DetectedComponent> _reconciledDetections = new(32);
@@ -310,16 +310,6 @@ public sealed class InspectionPipelineCoordinator : IDisposable
     {
         get => Volatile.Read(ref _cognitiveTutorToggled) != 0;
         set => Volatile.Write(ref _cognitiveTutorToggled, value ? 1 : 0);
-    }
-
-    public bool IsRuleBasedAdviceEnabled
-    {
-        get => _qwen?.AllowRuleBasedFallback ?? false;
-        set
-        {
-            if (_qwen is not null)
-                _qwen.AllowRuleBasedFallback = value;
-        }
     }
 
     public InspectionPipelineOptions Options => _options;
@@ -631,9 +621,9 @@ public sealed class InspectionPipelineCoordinator : IDisposable
                     : $"COLAB / {_remoteTarget?.DisplayHost ?? "REMOTE"}"
                 : "LOCAL";
 
-            return qwen.IsConnected || qwen.LastMode == QwenResponseMode.Server
+            return qwen.IsConnected || qwen.LastAnswerUsable
                 ? $"AI TUTOR / {qwen.ActiveModelAlias} / {route}"
-                : $"RULE-BASED TUTOR / OFFLINE ({route})";
+                : $"TUTOR OFFLINE / {route}";
         }
     }
 
@@ -1498,7 +1488,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         }
 
         _lastStateHash = packet.StateHash;
-        DrcStatePacket published = AttachMicroCrop(packet);
+        DrcStatePacket published = packet;
 
         try
         {
@@ -1524,37 +1514,24 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             RaiseEmergency(published);
 
         // In manual / builder mode, automatic AI dispatch is suppressed.
-        // The builder runs continuous DRC only; Qwen is dispatched when the user presses "ASK AI".
-        if (!manual && (published.Components.Count > 0 || published.Violations.Count > 0))
+        // The builder runs continuous DRC only; the tutor is dispatched on ASK AI.
+        // The raw frame is attached on the cognitive thread, not here, so this
+        // 60 FPS loop never pays for a PNG encode.
+        if (!manual && _options.EnableCognitiveTutor
+            && (published.Components.Count > 0 || published.Violations.Count > 0))
+        {
             _cognitiveChannel.Writer.TryWrite(published);
+        }
     }
 
-    /// <summary>Adds the 256 x 256 PNG crop for Qwen only when the topology changed.</summary>
-    private DrcStatePacket AttachMicroCrop(DrcStatePacket packet)
+    /// <summary>
+    /// Attaches the raw camera frame for the vision model. The published packet
+    /// stays image-free so the UI never holds a multi-megabyte PNG.
+    /// </summary>
+    private DrcStatePacket AttachRawFrame(DrcStatePacket packet)
     {
-        if (packet.Violations.Count == 0 || packet.Components.Count == 0 || _warpedFrame.Empty())
-            return packet;
-
-        DetectedComponent target = packet.Components[0].RawDetection;
-        bool found = false;
-
-        for (int v = 0; v < packet.Violations.Count && !found; v++)
-        {
-            DrcViolation violation = packet.Violations[v];
-            for (int c = 0; c < packet.Components.Count; c++)
-            {
-                SnappedComponent component = packet.Components[c];
-                if (component.Pin1Hole.StripId == violation.OffendingStripId
-                    || component.Pin2Hole.StripId == violation.OffendingStripId)
-                {
-                    target = component.RawDetection;
-                    found = true;
-                    break;
-                }
-            }
-        }
-
-        if (!_cropExtractor.TryExtractPng(_warpedFrame, target, out byte[] png) || png.Length == 0)
+        byte[]? raw = CaptureLiveRawPng();
+        if (raw is not { Length: > 0 })
             return packet;
 
         return new DrcStatePacket
@@ -1565,7 +1542,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             StateHash = packet.StateHash,
             Components = packet.Components,
             Violations = packet.Violations,
-            MicroCropPngBytes = png
+            RawImagePngBytes = raw
         };
     }
 
@@ -1696,6 +1673,11 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         if (qwen is null)
             return;
 
+        // The raw camera frame is captured here, on the cognitive thread, so the
+        // 60 FPS reflex loop is never blocked by PNG encoding.
+        if (packet.RawImagePngBytes is not { Length: > 0 })
+            packet = AttachRawFrame(packet);
+
         TutorTurnStarted?.Invoke();
         CpuAffinityManager.ReportProcessor(AffinityRole.Ai);
 
@@ -1729,17 +1711,8 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             TutorSentenceCompleted?.Invoke(tail);
         }
 
-        // Only the model's own answer is ever spoken. Rule-based / DRC text is
-        // shown on screen but never synthesized, so the voice always belongs to
-        // Qwen and never to the deterministic checker.
-        bool shouldSpeak = QwenMoEService.ShouldSpeakAnswer(
-            qwen.LastMode,
-            VoiceMuted,
-            _voice is not null,
-            sentences.Count);
-
-        if (shouldSpeak)
-            await _voice!.SpeakParagraphAsync(sentences, cancellationToken).ConfigureAwait(false);
+        if (qwen.LastAnswerUsable && !VoiceMuted && _voice is not null && sentences.Count > 0)
+            await _voice.SpeakParagraphAsync(sentences, cancellationToken).ConfigureAwait(false);
 
         if (transcript.Length > 0)
         {
@@ -1749,12 +1722,9 @@ public sealed class InspectionPipelineCoordinator : IDisposable
                 TimeToFirstTokenMs: firstTokenMs < 0d ? clock.Elapsed.TotalMilliseconds : firstTokenMs,
                 TotalMs: clock.Elapsed.TotalMilliseconds,
                 Characters: transcript.Length,
-                Backend: qwen.LastMode == QwenResponseMode.Server
-                    ? _remoteTarget is { IsLoopback: true }
-                        ? "LOCAL AI TUTOR"
-                        : UsingRemoteTutor ? "REMOTE TUTOR" : "LOCAL TUTOR"
-                    : "RULE-BASED TUTOR",
-                RuleBased: qwen.LastMode != QwenResponseMode.Server));
+                Backend: _remoteTarget is { IsLoopback: true }
+                    ? "LOCAL AI TUTOR"
+                    : UsingRemoteTutor ? "REMOTE TUTOR" : "LOCAL TUTOR"));
         }
     }
 
@@ -1790,8 +1760,8 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         RaiseStatus(muted ? "Voice muted: transcript only." : $"Voice unmuted: {VoiceBackendDescription}.");
     }
 
-    /// <summary>Explicitly queues the active DRC packet into Qwen cognitive loop on demand.</summary>
-    public bool RequestAiDiagnostic(byte[]? fullBoardPng = null)
+    /// <summary>Explicitly queues the active packet plus the raw frame into the vision tutor loop.</summary>
+    public bool RequestAiDiagnostic(byte[]? rawImagePng = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -1802,8 +1772,20 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             return false;
         }
 
-        if (fullBoardPng is { Length: > 0 })
-            packet.FullBoardPngBytes = fullBoardPng;
+        DrcStatePacket request = packet;
+        if (rawImagePng is { Length: > 0 })
+        {
+            request = new DrcStatePacket
+            {
+                FrameNumber = packet.FrameNumber,
+                YoloInferenceMs = packet.YoloInferenceMs,
+                DrcComputeMs = packet.DrcComputeMs,
+                StateHash = packet.StateHash,
+                Components = packet.Components,
+                Violations = packet.Violations,
+                RawImagePngBytes = rawImagePng
+            };
+        }
 
         if (_qwen is null || _cognitiveTask is null)
         {
@@ -1811,13 +1793,13 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             return false;
         }
 
-        if (!_cognitiveChannel.Writer.TryWrite(packet))
+        if (!_cognitiveChannel.Writer.TryWrite(request))
         {
             RaiseStatus("AI Tutor busy: previous response is still streaming.");
             return false;
         }
 
-        RaiseStatus($"AI Tutor: dispatched {packet.Components.Count} part(s) and {packet.Violations.Count} DRC violation(s) to Qwen.");
+        RaiseStatus("AI Tutor: sent the prompt and raw frame to the vision model.");
         return true;
     }
 
@@ -1839,7 +1821,7 @@ public sealed class InspectionPipelineCoordinator : IDisposable
             return;
         }
 
-        if (!_cognitiveChannel.Writer.TryWrite(packet))
+        if (!_cognitiveChannel.Writer.TryWrite(packet.RawImagePngBytes is { Length: > 0 } ? packet : AttachRawFrame(packet)))
         {
             RaiseStatus("Replay skipped: tutor is still streaming.");
             return;
@@ -1922,7 +1904,6 @@ public sealed class InspectionPipelineCoordinator : IDisposable
         _motionGate.Dispose();
         _icOcr?.Dispose();
         _yolo?.Dispose();
-        _cropExtractor.Dispose();
 
         lock (_qwenSync)
         {
@@ -1949,7 +1930,6 @@ public readonly record struct TutorTurnMetrics(
     double TotalMs,
     int Characters,
     string Backend,
-    bool RuleBased,
     int EstimatedTokens = 0)
 {
     public string Describe()

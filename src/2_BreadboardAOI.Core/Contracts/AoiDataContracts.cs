@@ -143,7 +143,7 @@ public readonly record struct DrcViolation(
     int OffendingStripId,
     HoleCoord BadHole,
     HoleCoord SuggestedTargetHole, // If valid target exists, draws green air-wire arrow
-    string TechnicalMessage        // Fed directly into Qwen3-VL prompt & Right Inspector Dock
+    string TechnicalMessage        // Shown in the right inspector dock; never sent to the vision model
 );
 
 /// <summary>
@@ -157,8 +157,8 @@ public sealed class DrcStatePacket
     public required int StateHash { get; init; } // Used to detect if circuit topology actually changed
     public required IReadOnlyList<SnappedComponent> Components { get; init; }
     public required IReadOnlyList<DrcViolation> Violations { get; init; }
-    public byte[]? MicroCropPngBytes { get; init; } // 256x256 crop of faulty/new component for Qwen3-VL
-    public byte[]? FullBoardPngBytes { get; set; }  // 1000x500 high-res full breadboard snapshot for Qwen3-VL
+    /// <summary>Raw camera frame handed to the vision model verbatim (no crop, warp or overlay).</summary>
+    public byte[]? RawImagePngBytes { get; set; }
 
     public bool HasCriticalShort =>
         Violations.Count > 0 && Violations[0].Severity == DrcSeverity.Critical;

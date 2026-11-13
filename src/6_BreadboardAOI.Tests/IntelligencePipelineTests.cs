@@ -35,39 +35,17 @@ public sealed class IntelligencePipelineTests
     }
 
     [Fact]
-    public void Voice_is_allowed_only_for_a_server_answer()
-    {
-        QwenMoEService.ShouldSpeakAnswer(QwenResponseMode.Server, false, true, 3).Should().BeTrue();
-
-        // Rule-based / DRC text must never be synthesized.
-        QwenMoEService.ShouldSpeakAnswer(QwenResponseMode.RuleBasedFallback, false, true, 3).Should().BeFalse();
-
-        QwenMoEService.ShouldSpeakAnswer(QwenResponseMode.Server, true, true, 3).Should().BeFalse();
-        QwenMoEService.ShouldSpeakAnswer(QwenResponseMode.Server, false, false, 3).Should().BeFalse();
-        QwenMoEService.ShouldSpeakAnswer(QwenResponseMode.Server, false, true, 0).Should().BeFalse();
-    }
-
-    [Fact]
-    public void Prompt_keeps_labels_for_a_text_only_fault_but_drops_the_json()
+    public void Prompt_is_the_fixed_instruction_without_drc_text()
     {
         string prompt = DiagnosticPromptBuilder.Build(CreateSameStripPacket());
 
+        prompt.Should().Be(DiagnosticPromptBuilder.TutorInstruction);
+        prompt.Should().Contain("CIRCUIT VERDICT: CORRECT");
+        prompt.Should().Contain("CIRCUIT VERDICT: WRONG");
         prompt.Should().Contain("no more than 5 sentences");
-        prompt.Should().Contain("name the error first");
-        prompt.Should().Contain("ErcSameStripShort");
-        prompt.Should().Contain("D15");
-        prompt.Should().Contain("D16");
+        prompt.Should().NotContain("ErcSameStripShort");
+        prompt.Should().NotContain("D15");
         prompt.Should().NotContain("DRC_JSON");
-        prompt.Should().NotContain("\"violations\"");
-    }
-
-    [Fact]
-    public void Prompt_with_an_image_sends_only_the_instruction()
-    {
-        DrcStatePacket packet = CreateSameStripPacket();
-        packet.FullBoardPngBytes = new byte[] { 1, 2, 3 };
-
-        DiagnosticPromptBuilder.Build(packet).Should().Be(DiagnosticPromptBuilder.TutorInstruction);
     }
 
     [Fact]
@@ -80,64 +58,8 @@ public sealed class IntelligencePipelineTests
         summary.Should().Contain("LED1");
     }
 
-    [Theory]
-    [InlineData(ViolationCode.ErcVccGndDirectShort, "dead short")]
-    [InlineData(ViolationCode.ErcSameStripShort, "D16")]
-    [InlineData(ViolationCode.ErcFloatingLead, "ground rail")]
-    [InlineData(ViolationCode.DrcSchematicNetMismatch, "target net is open")]
-    public void Rule_based_diagnostic_explains_the_fault(ViolationCode code, string expectedFragment)
-    {
-        DrcStatePacket packet = CreatePacket(new DrcViolation(
-            code,
-            DrcSeverity.Critical,
-            "LED1",
-            115,
-            new HoleCoord("D15", 115, 400f, 140f),
-            new HoleCoord("D16", 116, 414.8f, 140f),
-            "Technical DRC message."));
-
-        QwenMoEService.BuildRuleBasedDiagnostic(packet).Should().Contain(expectedFragment);
-    }
-
     [Fact]
-    public void Rule_based_diagnostic_speaks_exactly_three_sentences_even_with_many_faults()
-    {
-        var packet = new DrcStatePacket
-        {
-            FrameNumber = 43,
-            YoloInferenceMs = 0.5,
-            DrcComputeMs = 0.08,
-            StateHash = 7,
-            Components = Array.Empty<SnappedComponent>(),
-            Violations = new[]
-            {
-                new DrcViolation(
-                    ViolationCode.ErcSameStripShort,
-                    DrcSeverity.Critical,
-                    "LED1",
-                    115,
-                    new HoleCoord("D15", 115, 400f, 140f),
-                    new HoleCoord("D16", 116, 414.8f, 140f),
-                    "Short."),
-                new DrcViolation(
-                    ViolationCode.ErcFloatingLead,
-                    DrcSeverity.Warning,
-                    "R1",
-                    130,
-                    new HoleCoord("A30", 130, 470f, 95f),
-                    default,
-                    "Floating.")
-            }
-        };
-
-        string answer = QwenMoEService.BuildRuleBasedDiagnostic(packet);
-
-        SentenceStreamSplitter.Split(answer).Should().HaveCount(3);
-        answer.Should().Contain("D15").And.Contain("D16");
-    }
-
-    [Fact]
-    public async Task Rule_based_tutor_streams_without_llama_server_or_model()
+    public async Task Offline_tutor_streams_one_explicit_message_without_a_server()
     {
         var options = new QwenMoEOptions
         {
@@ -146,8 +68,7 @@ public sealed class IntelligencePipelineTests
             MmprojPath = "assets/models/does-not-exist-mmproj.gguf",
             ServerExecutablePath = "tools/does-not-exist-llama-server.exe",
             AutoLaunchServer = false,
-            RequestTimeoutSeconds = 1,
-            FallbackTokensPerSecond = 500
+            RequestTimeoutSeconds = 1
         };
 
         using var service = new QwenMoEService(options);
@@ -156,41 +77,10 @@ public sealed class IntelligencePipelineTests
         await foreach (string token in service.StreamDiagnosticAsync(CreateSameStripPacket()))
             tokens.Add(token);
 
-        tokens.Should().NotBeEmpty();
-
-        string answer = string.Concat(tokens);
-        answer.Should().Contain("D15").And.Contain("D16");
-        service.LastMode.Should().Be(QwenResponseMode.RuleBasedFallback);
+        tokens.Should().HaveCount(1);
+        tokens[0].Should().Contain("[Vision model offline]");
+        service.LastAnswerUsable.Should().BeFalse();
         service.LastError.Should().NotBeNullOrWhiteSpace();
-        SentenceStreamSplitter.Split(answer).Should().NotBeEmpty();
-    }
-
-    [Fact]
-    public async Task Offline_message_streams_when_rule_based_fallback_disabled()
-    {
-        var options = new QwenMoEOptions
-        {
-            EndpointUrl = "http://127.0.0.1:9/v1/chat/completions",
-            ModelPath = "assets/models/does-not-exist.gguf",
-            MmprojPath = "assets/models/does-not-exist-mmproj.gguf",
-            ServerExecutablePath = "tools/does-not-exist-llama-server.exe",
-            AutoLaunchServer = false,
-            RequestTimeoutSeconds = 1,
-            FallbackTokensPerSecond = 500
-        };
-
-        using var service = new QwenMoEService(options)
-        {
-            AllowRuleBasedFallback = false
-        };
-        var tokens = new List<string>();
-
-        await foreach (string token in service.StreamDiagnosticAsync(CreateSameStripPacket()))
-            tokens.Add(token);
-
-        tokens.Should().NotBeEmpty();
-        string answer = string.Concat(tokens);
-        answer.Should().Contain("Qwen AI is offline");
     }
 
     [Fact]
@@ -324,7 +214,6 @@ public sealed class IntelligencePipelineTests
         DrcComputeMs = 0.04,
         StateHash = unchecked((int)0xDEADBEEF),
         Components = Array.Empty<SnappedComponent>(),
-        Violations = new[] { violation },
-        MicroCropPngBytes = null
+        Violations = new[] { violation }
     };
 }

@@ -20,6 +20,48 @@ namespace BreadboardAOI.App.ViewModels;
 
 public sealed partial class MainWorkstationViewModel
 {
+    [ObservableProperty]
+    private MicrocontrollerBoardType _secondaryDevBoardType = MicrocontrollerBoardType.None;
+
+    public bool IsSecondaryDevBoardDocked => SecondaryDevBoardType != MicrocontrollerBoardType.None;
+
+    public string SecondaryDevBoardName => SecondaryDevBoardType == MicrocontrollerBoardType.None
+        ? "None (Single Board)"
+        : _renderer.McuRuleEngine.GetBoardProfile(SecondaryDevBoardType).DisplayName;
+
+    partial void OnSecondaryDevBoardTypeChanged(MicrocontrollerBoardType value)
+    {
+        OnPropertyChanged(nameof(IsSecondaryDevBoardDocked));
+        OnPropertyChanged(nameof(SecondaryDevBoardName));
+        RefreshTargetBoardSlots();
+        UpdateDevBoardState();
+    }
+
+    [RelayCommand]
+    public void SelectSecondaryDevBoardType(string? boardName)
+    {
+        if (string.IsNullOrWhiteSpace(boardName))
+            return;
+
+        var newType = boardName.Trim().ToLowerInvariant() switch
+        {
+            "none" or "remove" or "empty" or "single" => MicrocontrollerBoardType.None,
+            "mega" or "mega2560" => MicrocontrollerBoardType.ArduinoMega2560,
+            "esp32" or "devkit" or "esp32devkit" => MicrocontrollerBoardType.Esp32DevKitV1,
+            "s2" or "s2mini" or "wemos" => MicrocontrollerBoardType.WemosEsp32S2Mini,
+            "stm32" or "bluepill" or "cortex" => MicrocontrollerBoardType.Stm32BluePillF103C8,
+            _ => MicrocontrollerBoardType.ArduinoUnoR3R4
+        };
+
+        if (SecondaryDevBoardType != newType)
+        {
+            RecordUndoSnapshot($"Switch Secondary Board to {boardName}");
+            SecondaryDevBoardType = newType;
+            if (newType != MicrocontrollerBoardType.None)
+                IsDevBoardDocked = true;
+        }
+    }
+
     [RelayCommand]
     public void SelectDevBoardType(string? boardName)
     {
@@ -826,14 +868,40 @@ public sealed partial class MainWorkstationViewModel
         if (!IsDevBoardDocked)
         {
             _renderer.ActiveMicrocontrollers = Array.Empty<OffBoardMicrocontrollerVisualState>();
+            RefreshTargetBoardSlots();
             return;
         }
 
+        var boards = new List<OffBoardMicrocontrollerVisualState>(2);
+
+        if (SelectedDevBoardType != MicrocontrollerBoardType.None)
+        {
+            boards.Add(BuildBoardVisualState("MCU_1", SelectedDevBoardType, dockSlotIndex: 0, violations));
+        }
+
+        if (SecondaryDevBoardType != MicrocontrollerBoardType.None)
+        {
+            boards.Add(BuildBoardVisualState("MCU_2", SecondaryDevBoardType, dockSlotIndex: 1, violations));
+        }
+
+        _renderer.ActiveMicrocontrollers = boards;
+        RefreshTargetBoardSlots();
+
+        if (_boxCodingStudioWindow is { DataContext: BoxCodingStudioViewModel boxVm })
+            boxVm.UpdateWiredMcuPins(ExtractWiredMcuPins());
+    }
+
+    private OffBoardMicrocontrollerVisualState BuildBoardVisualState(
+        string boardInstanceId,
+        MicrocontrollerBoardType boardType,
+        int dockSlotIndex,
+        IReadOnlyList<McuDrcViolation> violations)
+    {
         var connected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (OffBoardJumperWire wire in ActiveDevBoardWires)
         {
-            CollectMcuPin(wire.SourceEndpointKey, connected);
-            CollectMcuPin(wire.TargetEndpointKey, connected);
+            CollectMcuPinForBoard(wire.SourceEndpointKey, boardInstanceId, connected);
+            CollectMcuPinForBoard(wire.TargetEndpointKey, boardInstanceId, connected);
         }
 
         var violating = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -841,25 +909,22 @@ public sealed partial class MainWorkstationViewModel
         {
             foreach (McuPinEndpoint endpoint in violation.OffendingPins)
             {
-                if (string.Equals(endpoint.BoardInstanceId, "MCU_1", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(endpoint.BoardInstanceId, boardInstanceId, StringComparison.OrdinalIgnoreCase))
                     violating.Add(endpoint.PinId);
             }
         }
 
-        _renderer.ActiveMicrocontrollers = new[]
-        {
-            new OffBoardMicrocontrollerVisualState(
-                "MCU_1",
-                SelectedDevBoardType,
-                SelectedDevBoardPlacement,
-                0,
-                null,
-                connected,
-                violating)
-        };
+        return new OffBoardMicrocontrollerVisualState(
+            boardInstanceId,
+            boardType,
+            SelectedDevBoardPlacement,
+            dockSlotIndex,
+            null,
+            connected,
+            violating);
     }
 
-    private static void CollectMcuPin(string key, HashSet<string> pins)
+    private static void CollectMcuPinForBoard(string key, string boardInstanceId, HashSet<string> pins)
     {
         if (string.IsNullOrWhiteSpace(key))
             return;
@@ -869,7 +934,11 @@ public sealed partial class MainWorkstationViewModel
             return;
 
         int colon = trimmed.LastIndexOf(':');
-        if (colon >= 0 && colon < trimmed.Length - 1)
+        if (colon < 0 || colon >= trimmed.Length - 1)
+            return;
+
+        string inst = trimmed.Substring(0, colon);
+        if (string.Equals(inst, boardInstanceId, StringComparison.OrdinalIgnoreCase))
             pins.Add(trimmed.Substring(colon + 1));
     }
 

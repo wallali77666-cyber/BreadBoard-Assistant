@@ -18,6 +18,7 @@
     <PackageReference Include="SkiaSharp" Version="2.88.8" />
     <PackageReference Include="SkiaSharp.Views.WPF" Version="2.88.8" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -34,18 +35,9 @@
   <!-- The builder's footprint picker reads symbols straight from this archive at
        runtime, so the part chosen in BUILD mode keeps its KiCad library id. -->
   <ItemGroup>
-    <Content Include="..\..\assets\kicad\kicad-symbols-master.zip"
-             Link="assets\kicad\kicad-symbols-master.zip"
-             CopyToOutputDirectory="PreserveNewest"
-             CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="..\..\assets\kicad\NOTICE.md"
-             Link="assets\kicad\NOTICE.md"
-             CopyToOutputDirectory="PreserveNewest"
-             CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="..\..\assets\kicad\LICENSE-kicad.md"
-             Link="assets\kicad\LICENSE-kicad.md"
-             CopyToOutputDirectory="PreserveNewest"
-             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\assets\kicad\kicad-symbols-master.zip" Link="assets\kicad\kicad-symbols-master.zip" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\assets\kicad\NOTICE.md" Link="assets\kicad\NOTICE.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\assets\kicad\LICENSE-kicad.md" Link="assets\kicad\LICENSE-kicad.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <Target Name="MirrorNativeDllsToOutput" AfterTargets="Build">

@@ -159,37 +159,6 @@ public sealed class VisionPipelineTests
     }
 
     [Fact]
-    public void Micro_crop_extracts_a_256x256_png()
-    {
-        using var frame = HomographyCalibrator.CreateSyntheticBoardFrame(640, 480);
-        using var extractor = new MicroCropExtractor();
-
-        var component = new DetectedComponent(
-            TrackId: 1,
-            Kind: ComponentKind.Led,
-            Confidence: 0.9f,
-            BoxX: 40,
-            BoxY: 40,
-            BoxW: 60,
-            BoxH: 40,
-            Lead1Px: 45,
-            Lead1Py: 60,
-            Lead2Px: 95,
-            Lead2Py: 60);
-
-        extractor.TryExtractPng(frame, component, out byte[] png).Should().BeTrue();
-        png.Length.Should().BeGreaterThan(8);
-        png[0].Should().Be(0x89);
-        png[1].Should().Be(0x50); // PNG signature
-        png[2].Should().Be(0x4E);
-        png[3].Should().Be(0x47);
-
-        using var decoded = Cv2.ImDecode(png, ImreadModes.Color);
-        decoded.Width.Should().Be(256);
-        decoded.Height.Should().Be(256);
-    }
-
-    [Fact]
     public void Synthetic_camera_hands_frames_to_the_pinned_ring_buffer()
     {
         using var camera = new CameraCaptureService(CameraSource.Synthetic, 640, 480);

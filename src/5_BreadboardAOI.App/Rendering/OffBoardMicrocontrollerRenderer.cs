@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using BreadboardAOI.Core.BoxCoding;
 using BreadboardAOI.Core.DrcEngine;
 using SkiaSharp;
 
@@ -34,7 +35,10 @@ public sealed record RenderedMicrocontrollerLayout(
     MicrocontrollerBoardType BoardType,
     SKRect BoardBoundsCanvas,
     IReadOnlyDictionary<string, SKPoint> PinSocketCanvasCenters,
-    IReadOnlyDictionary<string, SKRect> PinHitBoxesCanvas);
+    IReadOnlyDictionary<string, SKRect> PinHitBoxesCanvas,
+    SKRect UsbReceptacleRectCanvas = default,
+    UsbCableKind NativeUsbKind = UsbCableKind.None,
+    bool IsUsbReceptacleVertical = false);
 
 /// <summary>
 /// How far the rotated pin-label badges and the silkscreen title reach outside
@@ -61,6 +65,11 @@ public sealed class OffBoardMicrocontrollerRenderer
     /// <summary>Extra clearance below a docked MCU for its silkscreen title, in millimetres.</summary>
     public const float TitleClearanceMm = 6.0f;
 
+    private static readonly SKTypeface s_uiBoldTypeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold);
+    private static readonly SKTypeface s_uiRegularTypeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Normal);
+    private static readonly SKTypeface s_monoBoldTypeface = SKTypeface.FromFamilyName("Consolas", SKFontStyle.Bold);
+    private static readonly SKTypeface s_serifBoldTypeface = SKTypeface.FromFamilyName("Georgia", SKFontStyle.Bold);
+
     private readonly DevBoardAndModuleRuleEngine _ruleEngine;
 
     // Color palette for pin labels per specification
@@ -86,6 +95,89 @@ public sealed class OffBoardMicrocontrollerRenderer
         OffBoardMicrocontrollerVisualState state,
         SKRect breadboardBounds,
         float pixelsPerMm)
+        => ComputeBoardLayoutCore(state, breadboardBounds, pixelsPerMm, overrideOriginX: null, overrideOriginY: null);
+
+    /// <summary>
+    /// Computes non-overlapping canvas layouts for all docked microcontrollers together so dual-board
+    /// configurations (e.g., Mega 2560 + Uno, or Uno + Wemos S2 Mini) never collide horizontally or vertically.
+    /// </summary>
+    public List<RenderedMicrocontrollerLayout> ComputeBoardLayouts(
+        IReadOnlyList<OffBoardMicrocontrollerVisualState> states,
+        SKRect breadboardBounds,
+        float pixelsPerMm)
+    {
+        ArgumentNullException.ThrowIfNull(states);
+        var layouts = new List<RenderedMicrocontrollerLayout>(states.Count);
+        if (states.Count == 0)
+            return layouts;
+
+        int bottomCount = 0;
+        int rightCount = 0;
+        foreach (OffBoardMicrocontrollerVisualState s in states)
+        {
+            if (s.BoardType == MicrocontrollerBoardType.None) continue;
+            if (s.DockPlacement == OffBoardDockPlacement.BottomMargin) bottomCount++;
+            else rightCount++;
+        }
+
+        float bottomCursorX = breadboardBounds.Left;
+        float rightCursorY = breadboardBounds.Top;
+        float marginGapPx = DockGapMm * pixelsPerMm;
+        float slotGapPx = 14.0f * pixelsPerMm;
+        float titlePx = TitleClearanceMm * pixelsPerMm;
+
+        foreach (OffBoardMicrocontrollerVisualState state in states)
+        {
+            if (state.BoardType == MicrocontrollerBoardType.None)
+            {
+                layouts.Add(ComputeBoardLayoutCore(state, breadboardBounds, pixelsPerMm, null, null));
+                continue;
+            }
+
+            MicrocontrollerBoardProfile profile = _ruleEngine.GetBoardProfile(state.BoardType);
+            McuLabelExtents ext = MeasureLabelExtents(profile, pixelsPerMm);
+            float boardWidthPx = profile.WidthMm * pixelsPerMm;
+            float boardHeightPx = profile.HeightMm * pixelsPerMm;
+
+            if (state.DockPlacement == OffBoardDockPlacement.BottomMargin)
+            {
+                if (bottomCount <= 1)
+                {
+                    layouts.Add(ComputeBoardLayoutCore(state, breadboardBounds, pixelsPerMm, null, null));
+                }
+                else
+                {
+                    float originX = bottomCursorX + ext.LeftPx;
+                    float originY = breadboardBounds.Bottom + marginGapPx + ext.TopPx;
+                    bottomCursorX = originX + boardWidthPx + ext.RightPx + slotGapPx;
+                    layouts.Add(ComputeBoardLayoutCore(state, breadboardBounds, pixelsPerMm, originX, originY));
+                }
+            }
+            else
+            {
+                if (rightCount <= 1)
+                {
+                    layouts.Add(ComputeBoardLayoutCore(state, breadboardBounds, pixelsPerMm, null, null));
+                }
+                else
+                {
+                    float originX = breadboardBounds.Right + marginGapPx + ext.LeftPx;
+                    float originY = rightCursorY + ext.TopPx;
+                    rightCursorY = originY + boardHeightPx + ext.BottomPx + slotGapPx + titlePx;
+                    layouts.Add(ComputeBoardLayoutCore(state, breadboardBounds, pixelsPerMm, originX, originY));
+                }
+            }
+        }
+
+        return layouts;
+    }
+
+    private RenderedMicrocontrollerLayout ComputeBoardLayoutCore(
+        OffBoardMicrocontrollerVisualState state,
+        SKRect breadboardBounds,
+        float pixelsPerMm,
+        float? overrideOriginX,
+        float? overrideOriginY)
     {
         ArgumentNullException.ThrowIfNull(state);
 
@@ -101,7 +193,12 @@ public sealed class OffBoardMicrocontrollerRenderer
         float originX;
         float originY;
 
-        if (state.DockPlacement == OffBoardDockPlacement.BottomMargin)
+        if (overrideOriginX.HasValue && overrideOriginY.HasValue)
+        {
+            originX = overrideOriginX.Value;
+            originY = overrideOriginY.Value;
+        }
+        else if (state.DockPlacement == OffBoardDockPlacement.BottomMargin)
         {
             float centeredLeft = state.DockSlotIndex == 0
                 ? breadboardBounds.Left + ((breadboardBounds.Width - boardWidthPx) * 0.5f)
@@ -133,12 +230,75 @@ public sealed class OffBoardMicrocontrollerRenderer
             pinHitBoxes[pin.CanonicalId] = hitRect;
         }
 
+        var usbGeom = ComputeUsbReceptacleGeometry(state.BoardType, boardRect, pixelsPerMm);
+
         return new RenderedMicrocontrollerLayout(
             BoardInstanceId: state.BoardInstanceId,
             BoardType: state.BoardType,
             BoardBoundsCanvas: boardRect,
             PinSocketCanvasCenters: pinCenters,
-            PinHitBoxesCanvas: pinHitBoxes);
+            PinHitBoxesCanvas: pinHitBoxes,
+            UsbReceptacleRectCanvas: usbGeom.UsbRect,
+            NativeUsbKind: usbGeom.NativeKind,
+            IsUsbReceptacleVertical: usbGeom.IsVertical);
+    }
+
+    /// <summary>
+    /// Computes the exact USB receptacle rectangle, native connector standard, and
+    /// physical insertion orientation (vertical bottom-edge vs horizontal left-edge)
+    /// for any supported microcontroller PCB.
+    /// </summary>
+    public static (SKRect UsbRect, UsbCableKind NativeKind, bool IsVertical) ComputeUsbReceptacleGeometry(
+        MicrocontrollerBoardType boardType,
+        SKRect rect,
+        float pxPerMm)
+    {
+        if (rect.IsEmpty || pxPerMm <= 0.001f || boardType == MicrocontrollerBoardType.None)
+            return (SKRect.Empty, UsbCableKind.None, false);
+
+        return boardType switch
+        {
+            MicrocontrollerBoardType.ArduinoUnoR3R4 or MicrocontrollerBoardType.ArduinoMega2560 =>
+            (
+                new SKRect(
+                    rect.Left - (2.6f * pxPerMm),
+                    rect.Top + (9.0f * pxPerMm),
+                    rect.Left + (12.5f * pxPerMm),
+                    rect.Top + (21.5f * pxPerMm)),
+                UsbCableKind.UsbB,
+                false
+            ),
+            MicrocontrollerBoardType.WemosEsp32S2Mini =>
+            (
+                new SKRect(
+                    rect.MidX - (4.4f * pxPerMm),
+                    rect.Bottom - (5.5f * pxPerMm),
+                    rect.MidX + (4.4f * pxPerMm),
+                    rect.Bottom + (1.5f * pxPerMm)),
+                UsbCableKind.UsbTypeC,
+                true
+            ),
+            MicrocontrollerBoardType.Stm32BluePillF103C8 =>
+            (
+                new SKRect(
+                    rect.Left - (1.4f * pxPerMm),
+                    rect.MidY - (3.8f * pxPerMm),
+                    rect.Left + (5.2f * pxPerMm),
+                    rect.MidY + (3.8f * pxPerMm)),
+                UsbCableKind.MicroUsb,
+                false
+            ),
+            _ =>
+            (
+                new SKRect(
+                    rect.Left - (1.6f * pxPerMm),
+                    rect.MidY - (4.0f * pxPerMm),
+                    rect.Left + (5.8f * pxPerMm),
+                    rect.MidY + (4.0f * pxPerMm)),
+                UsbCableKind.MicroUsb,
+                false
+            )
+        };
     }
 
     /// <summary>
@@ -197,6 +357,13 @@ public sealed class OffBoardMicrocontrollerRenderer
             }
         }
 
+        if (profile.BoardType == MicrocontrollerBoardType.WemosEsp32S2Mini)
+        {
+            // Reserve clearance below the vertical bottom USB-C receptacle, plugged ANKER 100W barrel,
+            // and braided cable turn so the silkscreen caption never overlaps the connector or cable.
+            bottom = MathF.Max(bottom, 10.6f * pixelsPerMm);
+        }
+
         return new McuLabelExtents(
             MathF.Max(0f, top),
             MathF.Max(0f, bottom),
@@ -227,8 +394,27 @@ public sealed class OffBoardMicrocontrollerRenderer
         if (state.BoardType == MicrocontrollerBoardType.None)
             return new RenderedMicrocontrollerLayout(state.BoardInstanceId, state.BoardType, SKRect.Empty, new Dictionary<string, SKPoint>(), new Dictionary<string, SKRect>());
 
-        MicrocontrollerBoardProfile profile = _ruleEngine.GetBoardProfile(state.BoardType);
         RenderedMicrocontrollerLayout layout = ComputeBoardLayout(state, breadboardBounds, pixelsPerMm);
+        return RenderMicrocontroller(canvas, state, layout, pixelsPerMm);
+    }
+
+    /// <summary>
+    /// Renders an off-board microcontroller at a precomputed non-overlapping layout.
+    /// </summary>
+    public RenderedMicrocontrollerLayout RenderMicrocontroller(
+        SKCanvas canvas,
+        OffBoardMicrocontrollerVisualState state,
+        RenderedMicrocontrollerLayout layout,
+        float pixelsPerMm)
+    {
+        ArgumentNullException.ThrowIfNull(canvas);
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(layout);
+
+        if (state.BoardType == MicrocontrollerBoardType.None || layout.BoardBoundsCanvas.IsEmpty)
+            return layout;
+
+        MicrocontrollerBoardProfile profile = _ruleEngine.GetBoardProfile(state.BoardType);
         SKRect rect = layout.BoardBoundsCanvas;
 
         canvas.Save();
@@ -341,16 +527,17 @@ public sealed class OffBoardMicrocontrollerRenderer
         canvas.Restore();
 
         // 3. Solder mask surface gradient
+        using var pcbShader = SKShader.CreateLinearGradient(
+            new SKPoint(rect.Left, rect.Top),
+            new SKPoint(rect.Right, rect.Bottom),
+            new[] { primaryColor, secondaryColor },
+            null,
+            SKShaderTileMode.Clamp);
         using var pcbPaint = new SKPaint
         {
             Style = SKPaintStyle.Fill,
             IsAntialias = true,
-            Shader = SKShader.CreateLinearGradient(
-                new SKPoint(rect.Left, rect.Top),
-                new SKPoint(rect.Right, rect.Bottom),
-                new[] { primaryColor, secondaryColor },
-                null,
-                SKShaderTileMode.Clamp)
+            Shader = pcbShader
         };
         canvas.DrawPath(contourPath, pcbPaint);
 
@@ -523,7 +710,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = new SKColor(255, 255, 255, 230),
             TextSize = Math.Max(5.2f, 0.88f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Consolas", SKFontStyle.Bold),
+            Typeface = s_monoBoldTypeface,
             TextAlign = SKTextAlign.Center,
             IsAntialias = true
         };
@@ -531,7 +718,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = new SKColor(255, 255, 255, 200),
             TextSize = Math.Max(5.2f, 0.85f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold),
+            Typeface = s_uiBoldTypeface,
             IsAntialias = true
         };
         using var linePaint = new SKPaint
@@ -628,7 +815,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = new SKColor(255, 255, 255, 210),
             TextSize = Math.Max(5.2f, 0.90f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold),
+            Typeface = s_uiBoldTypeface,
             IsAntialias = true
         };
         canvas.DrawText("ARDUINO MEGA 2560", rect.Left + (58.0f * pxPerMm), rect.Top + (14.0f * pxPerMm), subTitlePaint);
@@ -747,7 +934,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = new SKColor(255, 255, 255, 220),
             TextSize = Math.Max(5.2f, 0.85f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold),
+            Typeface = s_uiBoldTypeface,
             TextAlign = SKTextAlign.Center,
             IsAntialias = true
         };
@@ -789,7 +976,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = new SKColor(255, 255, 255, 230),
             TextSize = Math.Max(5.2f, 0.88f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold),
+            Typeface = s_uiBoldTypeface,
             IsAntialias = true
         })
         {
@@ -884,7 +1071,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = new SKColor(255, 255, 255, 210),
             TextSize = Math.Max(5.2f, 0.85f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Consolas", SKFontStyle.Bold),
+            Typeface = s_monoBoldTypeface,
             TextAlign = SKTextAlign.Center,
             IsAntialias = true
         };
@@ -896,12 +1083,13 @@ public sealed class OffBoardMicrocontrollerRenderer
         float r = 0.85f * pxPerMm;
 
         // Radiant soft glow cone
+        using var glowBlur = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 1.2f * pxPerMm);
         using var glowPaint = new SKPaint
         {
             Color = ledColor.WithAlpha(95),
             Style = SKPaintStyle.Fill,
             IsAntialias = true,
-            MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 1.2f * pxPerMm)
+            MaskFilter = glowBlur
         };
         canvas.DrawCircle(cx, cy, r * 1.6f, glowPaint);
 
@@ -1028,7 +1216,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         using var measurePaint = new SKPaint
         {
             TextSize = calcFontSize,
-            Typeface = SKTypeface.FromFamilyName("Consolas", SKFontStyle.Bold)
+            Typeface = s_monoBoldTypeface
         };
 
         float uniformAboveW = 0f;
@@ -1132,21 +1320,21 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = isViolating ? SKColor.Parse("#FF5252") : SKColor.Parse("#00E5FF"),
             TextSize = Math.Max(7.0f, 1.25f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Consolas", SKFontStyle.Bold),
+            Typeface = s_monoBoldTypeface,
             IsAntialias = true
         };
         using var rolePaint = new SKPaint
         {
             Color = SKColor.Parse("#ECEFF1"),
             TextSize = Math.Max(5.8f, 1.02f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold),
+            Typeface = s_uiBoldTypeface,
             IsAntialias = true
         };
         using var metaPaint = new SKPaint
         {
             Color = SKColor.Parse("#B0BEC5"),
             TextSize = Math.Max(5.2f, 0.88f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Normal),
+            Typeface = s_uiRegularTypeface,
             IsAntialias = true
         };
 
@@ -1176,16 +1364,17 @@ public sealed class OffBoardMicrocontrollerRenderer
         canvas.DrawRoundRect(new SKRect(cardRect.Left + 1f, cardRect.Top + 2f, cardRect.Right + 1f, cardRect.Bottom + 2f), 1.2f * pxPerMm, 1.2f * pxPerMm, shadowPaint);
 
         // Glass background with high-contrast gradient
+        using var bgShader = SKShader.CreateLinearGradient(
+            new SKPoint(cardRect.Left, cardRect.Top),
+            new SKPoint(cardRect.Left, cardRect.Bottom),
+            new[] { new SKColor(24, 28, 36, 250), new SKColor(12, 16, 22, 250) },
+            null,
+            SKShaderTileMode.Clamp);
         using var bgPaint = new SKPaint
         {
             Style = SKPaintStyle.Fill,
             IsAntialias = true,
-            Shader = SKShader.CreateLinearGradient(
-                new SKPoint(cardRect.Left, cardRect.Top),
-                new SKPoint(cardRect.Left, cardRect.Bottom),
-                new[] { new SKColor(24, 28, 36, 250), new SKColor(12, 16, 22, 250) },
-                null,
-                SKShaderTileMode.Clamp)
+            Shader = bgShader
         };
         using var borderPaint = new SKPaint
         {
@@ -1249,7 +1438,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = textColor,
             TextSize = fontSize,
-            Typeface = SKTypeface.FromFamilyName("Consolas", SKFontStyle.Bold),
+            Typeface = s_monoBoldTypeface,
             IsAntialias = true,
             TextAlign = SKTextAlign.Center
         };
@@ -1366,16 +1555,17 @@ public sealed class OffBoardMicrocontrollerRenderer
         canvas.DrawRoundRect(new SKRect(rect.Left + (0.6f * pxPerMm), rect.Top + (0.8f * pxPerMm), rect.Right + (0.6f * pxPerMm), rect.Bottom + (0.8f * pxPerMm)), 0.8f * pxPerMm, 0.8f * pxPerMm, shadow);
 
         // Brushed nickel-plated outer metal shell
+        using var shellShader = SKShader.CreateLinearGradient(
+            new SKPoint(rect.Left, rect.Top),
+            new SKPoint(rect.Right, rect.Bottom),
+            new[] { SKColor.Parse("#CFD8DC"), SKColor.Parse("#90A4AE"), SKColor.Parse("#ECEFF1") },
+            new[] { 0f, 0.6f, 1f },
+            SKShaderTileMode.Clamp);
         using var shellFill = new SKPaint
         {
             Style = SKPaintStyle.Fill,
             IsAntialias = true,
-            Shader = SKShader.CreateLinearGradient(
-                new SKPoint(rect.Left, rect.Top),
-                new SKPoint(rect.Right, rect.Bottom),
-                new[] { SKColor.Parse("#CFD8DC"), SKColor.Parse("#90A4AE"), SKColor.Parse("#ECEFF1") },
-                new[] { 0f, 0.6f, 1f },
-                SKShaderTileMode.Clamp)
+            Shader = shellShader
         };
         using var shellStroke = new SKPaint
         {
@@ -1412,7 +1602,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = SKColor.Parse("#263238"),
             TextSize = Math.Max(6.2f, 1.1f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold),
+            Typeface = s_uiBoldTypeface,
             TextAlign = SKTextAlign.Center,
             IsAntialias = true
         };
@@ -1426,16 +1616,17 @@ public sealed class OffBoardMicrocontrollerRenderer
         canvas.DrawRoundRect(new SKRect(rect.Left + (0.4f * pxPerMm), rect.Top + (0.6f * pxPerMm), rect.Right + (0.4f * pxPerMm), rect.Bottom + (0.6f * pxPerMm)), 0.6f * pxPerMm, 0.6f * pxPerMm, shadow);
 
         // Metallic shell
+        using var fillShader = SKShader.CreateLinearGradient(
+            new SKPoint(rect.Left, rect.Top),
+            new SKPoint(rect.Right, rect.Bottom),
+            new[] { SKColor.Parse("#B0BEC5"), SKColor.Parse("#78909C"), SKColor.Parse("#ECEFF1") },
+            new[] { 0f, 0.65f, 1f },
+            SKShaderTileMode.Clamp);
         using var fillPaint = new SKPaint
         {
             Style = SKPaintStyle.Fill,
             IsAntialias = true,
-            Shader = SKShader.CreateLinearGradient(
-                new SKPoint(rect.Left, rect.Top),
-                new SKPoint(rect.Right, rect.Bottom),
-                new[] { SKColor.Parse("#B0BEC5"), SKColor.Parse("#78909C"), SKColor.Parse("#ECEFF1") },
-                new[] { 0f, 0.65f, 1f },
-                SKShaderTileMode.Clamp)
+            Shader = fillShader
         };
         using var strokePaint = new SKPaint
         {
@@ -1470,16 +1661,17 @@ public sealed class OffBoardMicrocontrollerRenderer
     private static void DrawUsbCConnector(SKCanvas canvas, SKRect rect, float pxPerMm)
     {
         // Brushed metallic oval pill shell
+        using var shellShader = SKShader.CreateLinearGradient(
+            new SKPoint(rect.Left, rect.Top),
+            new SKPoint(rect.Right, rect.Bottom),
+            new[] { SKColor.Parse("#CFD8DC"), SKColor.Parse("#90A4AE"), SKColor.Parse("#ECEFF1") },
+            null,
+            SKShaderTileMode.Clamp);
         using var shellFill = new SKPaint
         {
             Style = SKPaintStyle.Fill,
             IsAntialias = true,
-            Shader = SKShader.CreateLinearGradient(
-                new SKPoint(rect.Left, rect.Top),
-                new SKPoint(rect.Right, rect.Bottom),
-                new[] { SKColor.Parse("#CFD8DC"), SKColor.Parse("#90A4AE"), SKColor.Parse("#ECEFF1") },
-                null,
-                SKShaderTileMode.Clamp)
+            Shader = shellShader
         };
         using var shellStroke = new SKPaint
         {
@@ -1507,7 +1699,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = SKColor.Parse("#263238"),
             TextSize = Math.Max(5.6f, 0.95f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold),
+            Typeface = s_uiBoldTypeface,
             TextAlign = SKTextAlign.Center,
             IsAntialias = true
         };
@@ -1539,16 +1731,17 @@ public sealed class OffBoardMicrocontrollerRenderer
         canvas.DrawRect(rect.Right, rect.Bottom - (2.4f * pxPerMm), tabW - (0.2f * pxPerMm), tabH - (0.4f * pxPerMm), tabPaint);
 
         // 3. Brushed stainless steel metallic outer shell
+        using var shellShader = SKShader.CreateLinearGradient(
+            new SKPoint(rect.Left, rect.Top),
+            new SKPoint(rect.Right, rect.Bottom),
+            new[] { SKColor.Parse("#ECEFF1"), SKColor.Parse("#CFD8DC"), SKColor.Parse("#B0BEC5"), SKColor.Parse("#ECEFF1") },
+            new[] { 0f, 0.35f, 0.7f, 1f },
+            SKShaderTileMode.Clamp);
         using var shellFill = new SKPaint
         {
             Style = SKPaintStyle.Fill,
             IsAntialias = true,
-            Shader = SKShader.CreateLinearGradient(
-                new SKPoint(rect.Left, rect.Top),
-                new SKPoint(rect.Right, rect.Bottom),
-                new[] { SKColor.Parse("#ECEFF1"), SKColor.Parse("#CFD8DC"), SKColor.Parse("#B0BEC5"), SKColor.Parse("#ECEFF1") },
-                new[] { 0f, 0.35f, 0.7f, 1f },
-                SKShaderTileMode.Clamp)
+            Shader = shellShader
         };
         using var shellStroke = new SKPaint
         {
@@ -1584,16 +1777,17 @@ public sealed class OffBoardMicrocontrollerRenderer
         canvas.DrawRoundRect(new SKRect(rect.Left + (0.6f * pxPerMm), rect.Top + (0.8f * pxPerMm), rect.Right + (0.6f * pxPerMm), rect.Bottom + (0.8f * pxPerMm)), 1.0f * pxPerMm, 1.0f * pxPerMm, shadow);
 
         // Molded cylindrical thermoplastic housing
+        using var bodyShader = SKShader.CreateLinearGradient(
+            new SKPoint(rect.Left, rect.Top),
+            new SKPoint(rect.Left, rect.Bottom),
+            new[] { SKColor.Parse("#2C2C2C"), SKColor.Parse("#161616"), SKColor.Parse("#212121") },
+            new[] { 0f, 0.5f, 1f },
+            SKShaderTileMode.Clamp);
         using var bodyPaint = new SKPaint
         {
             Style = SKPaintStyle.Fill,
             IsAntialias = true,
-            Shader = SKShader.CreateLinearGradient(
-                new SKPoint(rect.Left, rect.Top),
-                new SKPoint(rect.Left, rect.Bottom),
-                new[] { SKColor.Parse("#2C2C2C"), SKColor.Parse("#161616"), SKColor.Parse("#212121") },
-                new[] { 0f, 0.5f, 1f },
-                SKShaderTileMode.Clamp)
+            Shader = bodyShader
         };
         using var bodyStroke = new SKPaint { Color = SKColor.Parse("#111111"), Style = SKPaintStyle.Stroke, StrokeWidth = 0.3f * pxPerMm, IsAntialias = true };
         canvas.DrawRoundRect(rect, 0.8f * pxPerMm, 0.8f * pxPerMm, bodyPaint);
@@ -1636,16 +1830,17 @@ public sealed class OffBoardMicrocontrollerRenderer
         canvas.DrawRoundRect(new SKRect(rect.Left + (0.4f * pxPerMm), rect.Top + (0.5f * pxPerMm), rect.Right + (0.4f * pxPerMm), rect.Bottom + (0.5f * pxPerMm)), r, r, shadow);
 
         // Brushed HC-49/S metal package with specular reflection
+        using var fillShader = SKShader.CreateLinearGradient(
+            new SKPoint(rect.Left, rect.Top),
+            new SKPoint(rect.Left, rect.Bottom),
+            new[] { SKColor.Parse("#ECEFF1"), SKColor.Parse("#B0BEC5"), SKColor.Parse("#CFD8DC") },
+            new[] { 0f, 0.5f, 1f },
+            SKShaderTileMode.Clamp);
         using var fillPaint = new SKPaint
         {
             Style = SKPaintStyle.Fill,
             IsAntialias = true,
-            Shader = SKShader.CreateLinearGradient(
-                new SKPoint(rect.Left, rect.Top),
-                new SKPoint(rect.Left, rect.Bottom),
-                new[] { SKColor.Parse("#ECEFF1"), SKColor.Parse("#B0BEC5"), SKColor.Parse("#CFD8DC") },
-                new[] { 0f, 0.5f, 1f },
-                SKShaderTileMode.Clamp)
+            Shader = fillShader
         };
         using var strokePaint = new SKPaint
         {
@@ -1671,7 +1866,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = SKColor.Parse("#263238"),
             TextSize = Math.Max(6.0f, 0.95f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Consolas", SKFontStyle.Bold),
+            Typeface = s_monoBoldTypeface,
             TextAlign = SKTextAlign.Center,
             IsAntialias = true
         };
@@ -1680,16 +1875,17 @@ public sealed class OffBoardMicrocontrollerRenderer
 
     private static void DrawRtcCrystalCylinder(SKCanvas canvas, SKRect rect, string label, float pxPerMm)
     {
+        using var fillShader = SKShader.CreateLinearGradient(
+            new SKPoint(rect.Left, rect.Top),
+            new SKPoint(rect.Left, rect.Bottom),
+            new[] { SKColor.Parse("#ECEFF1"), SKColor.Parse("#90A4AE"), SKColor.Parse("#CFD8DC") },
+            null,
+            SKShaderTileMode.Clamp);
         using var fillPaint = new SKPaint
         {
             Style = SKPaintStyle.Fill,
             IsAntialias = true,
-            Shader = SKShader.CreateLinearGradient(
-                new SKPoint(rect.Left, rect.Top),
-                new SKPoint(rect.Left, rect.Bottom),
-                new[] { SKColor.Parse("#ECEFF1"), SKColor.Parse("#90A4AE"), SKColor.Parse("#CFD8DC") },
-                null,
-                SKShaderTileMode.Clamp)
+            Shader = fillShader
         };
         using var stroke = new SKPaint { Color = SKColor.Parse("#546E7A"), Style = SKPaintStyle.Stroke, StrokeWidth = 0.2f * pxPerMm, IsAntialias = true };
         float r = rect.Height * 0.45f;
@@ -1735,7 +1931,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = SKColors.White,
             TextSize = Math.Max(5.8f, 0.9f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold),
+            Typeface = s_uiBoldTypeface,
             TextAlign = SKTextAlign.Center,
             IsAntialias = true
         };
@@ -1766,16 +1962,17 @@ public sealed class OffBoardMicrocontrollerRenderer
         canvas.DrawRoundRect(new SKRect(rect.Left + (0.5f * pxPerMm), rect.Top + (0.8f * pxPerMm), rect.Right + (0.5f * pxPerMm), rect.Bottom + (0.8f * pxPerMm)), 0.5f * pxPerMm, 0.5f * pxPerMm, shadow);
 
         // 3. Molded dark epoxy package body with beveled edges
+        using var bodyShader = SKShader.CreateLinearGradient(
+            new SKPoint(rect.Left, rect.Top),
+            new SKPoint(rect.Left, rect.Bottom),
+            new[] { SKColor.Parse("#262626"), SKColor.Parse("#161616"), SKColor.Parse("#222222") },
+            null,
+            SKShaderTileMode.Clamp);
         using var bodyPaint = new SKPaint
         {
             Style = SKPaintStyle.Fill,
             IsAntialias = true,
-            Shader = SKShader.CreateLinearGradient(
-                new SKPoint(rect.Left, rect.Top),
-                new SKPoint(rect.Left, rect.Bottom),
-                new[] { SKColor.Parse("#262626"), SKColor.Parse("#161616"), SKColor.Parse("#222222") },
-                null,
-                SKShaderTileMode.Clamp)
+            Shader = bodyShader
         };
         using var borderPaint = new SKPaint { Color = SKColor.Parse("#37474F"), Style = SKPaintStyle.Stroke, StrokeWidth = 0.25f * pxPerMm, IsAntialias = true };
         canvas.DrawRoundRect(rect, 0.5f * pxPerMm, 0.5f * pxPerMm, bodyPaint);
@@ -1795,7 +1992,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = SKColor.Parse("#BDBDBD"),
             TextSize = Math.Max(6.5f, 1.20f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Consolas", SKFontStyle.Bold),
+            Typeface = s_monoBoldTypeface,
             TextAlign = SKTextAlign.Center,
             IsAntialias = true
         };
@@ -1828,16 +2025,17 @@ public sealed class OffBoardMicrocontrollerRenderer
         canvas.DrawRoundRect(new SKRect(rect.Left + (0.4f * pxPerMm), rect.Top + (0.6f * pxPerMm), rect.Right + (0.4f * pxPerMm), rect.Bottom + (0.6f * pxPerMm)), 0.6f * pxPerMm, 0.6f * pxPerMm, shadow);
 
         // Molded epoxy square package body
+        using var bodyShader = SKShader.CreateLinearGradient(
+            new SKPoint(rect.Left, rect.Top),
+            new SKPoint(rect.Right, rect.Bottom),
+            new[] { SKColor.Parse("#282828"), SKColor.Parse("#161616") },
+            null,
+            SKShaderTileMode.Clamp);
         using var bodyPaint = new SKPaint
         {
             Style = SKPaintStyle.Fill,
             IsAntialias = true,
-            Shader = SKShader.CreateLinearGradient(
-                new SKPoint(rect.Left, rect.Top),
-                new SKPoint(rect.Right, rect.Bottom),
-                new[] { SKColor.Parse("#282828"), SKColor.Parse("#161616") },
-                null,
-                SKShaderTileMode.Clamp)
+            Shader = bodyShader
         };
         using var borderPaint = new SKPaint { Color = SKColor.Parse("#424242"), Style = SKPaintStyle.Stroke, StrokeWidth = 0.28f * pxPerMm, IsAntialias = true };
         canvas.DrawRoundRect(rect, 0.55f * pxPerMm, 0.55f * pxPerMm, bodyPaint);
@@ -1851,7 +2049,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = SKColor.Parse("#E0E0E0"),
             TextSize = Math.Max(5.8f, 1.0f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Consolas", SKFontStyle.Bold),
+            Typeface = s_monoBoldTypeface,
             TextAlign = SKTextAlign.Center,
             IsAntialias = true
         };
@@ -1869,16 +2067,17 @@ public sealed class OffBoardMicrocontrollerRenderer
         canvas.DrawRoundRect(new SKRect(rect.Left + (0.5f * pxPerMm), rect.Top + (0.7f * pxPerMm), rect.Right + (0.5f * pxPerMm), rect.Bottom + (0.7f * pxPerMm)), 0.8f * pxPerMm, 0.8f * pxPerMm, shadow);
 
         // 2. Nickel-silver RF shielding can with brushed sheen
+        using var shieldShader = SKShader.CreateLinearGradient(
+            new SKPoint(rect.Left, rect.Top),
+            new SKPoint(rect.Right, rect.Bottom),
+            new[] { SKColor.Parse("#ECEFF1"), SKColor.Parse("#CFD8DC"), SKColor.Parse("#B0BEC5"), SKColor.Parse("#ECEFF1") },
+            new[] { 0f, 0.35f, 0.75f, 1f },
+            SKShaderTileMode.Clamp);
         using var shieldPaint = new SKPaint
         {
             Style = SKPaintStyle.Fill,
             IsAntialias = true,
-            Shader = SKShader.CreateLinearGradient(
-                new SKPoint(rect.Left, rect.Top),
-                new SKPoint(rect.Right, rect.Bottom),
-                new[] { SKColor.Parse("#ECEFF1"), SKColor.Parse("#CFD8DC"), SKColor.Parse("#B0BEC5"), SKColor.Parse("#ECEFF1") },
-                new[] { 0f, 0.35f, 0.75f, 1f },
-                SKShaderTileMode.Clamp)
+            Shader = shieldShader
         };
         using var borderPaint = new SKPaint { Color = SKColor.Parse("#78909C"), Style = SKPaintStyle.Stroke, StrokeWidth = Math.Max(0.9f, 0.28f * pxPerMm), IsAntialias = true };
         canvas.DrawRoundRect(rect, 0.8f * pxPerMm, 0.8f * pxPerMm, shieldPaint);
@@ -1900,7 +2099,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = SKColors.White,
             TextSize = Math.Max(4.5f, 0.72f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold),
+            Typeface = s_uiBoldTypeface,
             TextAlign = SKTextAlign.Center,
             IsAntialias = true
         };
@@ -1913,7 +2112,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         using var logoCirclePaint = new SKPaint { Color = SKColor.Parse("#37474F"), Style = SKPaintStyle.Stroke, StrokeWidth = 0.28f * pxPerMm, IsAntialias = true };
         canvas.DrawCircle(logoCx, logoCy, 1.8f * pxPerMm, logoCirclePaint);
         canvas.DrawCircle(logoCx, logoCy, 1.2f * pxPerMm, logoCirclePaint);
-        using var logoLetter = new SKPaint { Color = SKColor.Parse("#37474F"), TextSize = Math.Max(4.8f, 0.75f * pxPerMm), Typeface = SKTypeface.FromFamilyName("Georgia", SKFontStyle.Bold), TextAlign = SKTextAlign.Center, IsAntialias = true };
+        using var logoLetter = new SKPaint { Color = SKColor.Parse("#37474F"), TextSize = Math.Max(4.8f, 0.75f * pxPerMm), Typeface = s_serifBoldTypeface, TextAlign = SKTextAlign.Center, IsAntialias = true };
         canvas.DrawText("e", logoCx, logoCy + (0.28f * pxPerMm), logoLetter);
 
         // 6. Laser-etched Part Title & Certification
@@ -1921,7 +2120,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = SKColor.Parse("#263238"),
             TextSize = Math.Max(6.8f, 1.20f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold),
+            Typeface = s_uiBoldTypeface,
             TextAlign = SKTextAlign.Center,
             IsAntialias = true
         };
@@ -1931,7 +2130,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = SKColor.Parse("#455A64"),
             TextSize = Math.Max(4.8f, 0.76f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold),
+            Typeface = s_uiBoldTypeface,
             TextAlign = SKTextAlign.Center,
             IsAntialias = true
         };
@@ -1977,16 +2176,17 @@ public sealed class OffBoardMicrocontrollerRenderer
         var rect = new SKRect(center.X - (2.8f * pxPerMm), center.Y - (1.1f * pxPerMm), center.X + (2.8f * pxPerMm), center.Y + (1.1f * pxPerMm));
 
         // 3D Yellow plastic jumper shunt with inner contacts
+        using var yellowShader = SKShader.CreateLinearGradient(
+            new SKPoint(rect.Left, rect.Top),
+            new SKPoint(rect.Left, rect.Bottom),
+            new[] { SKColor.Parse("#FFEE58"), SKColor.Parse("#FBC02D") },
+            null,
+            SKShaderTileMode.Clamp);
         using var yellowPaint = new SKPaint
         {
             Style = SKPaintStyle.Fill,
             IsAntialias = true,
-            Shader = SKShader.CreateLinearGradient(
-                new SKPoint(rect.Left, rect.Top),
-                new SKPoint(rect.Left, rect.Bottom),
-                new[] { SKColor.Parse("#FFEE58"), SKColor.Parse("#FBC02D") },
-                null,
-                SKShaderTileMode.Clamp)
+            Shader = yellowShader
         };
         using var borderPaint = new SKPaint { Color = SKColor.Parse("#F57F17"), Style = SKPaintStyle.Stroke, StrokeWidth = 0.2f * pxPerMm, IsAntialias = true };
         canvas.DrawRoundRect(rect, 0.35f * pxPerMm, 0.35f * pxPerMm, yellowPaint);
@@ -2001,7 +2201,7 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = SKColors.Black,
             TextSize = Math.Max(5.8f, 0.88f * pxPerMm),
-            Typeface = SKTypeface.FromFamilyName("Consolas", SKFontStyle.Bold),
+            Typeface = s_monoBoldTypeface,
             TextAlign = SKTextAlign.Center,
             IsAntialias = true
         };
@@ -2020,13 +2220,16 @@ public sealed class OffBoardMicrocontrollerRenderer
         {
             Color = new SKColor(255, 255, 255, 240),
             TextSize = fontSize,
-            Typeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold),
+            Typeface = s_uiBoldTypeface,
             TextAlign = SKTextAlign.Left,
             IsAntialias = true
         };
 
         McuLabelExtents extents = MeasureLabelExtents(profile, pxPerMm);
-        float baseline = rect.Bottom + extents.BottomPx + (1.8f * pxPerMm) + fontSize;
+        float bottomReserve = MathF.Max(
+            extents.BottomPx,
+            profile.BoardType == MicrocontrollerBoardType.WemosEsp32S2Mini ? 10.6f * pxPerMm : 0f);
+        float baseline = rect.Bottom + bottomReserve + (1.8f * pxPerMm) + fontSize;
         string caption = $"{profile.DisplayName} [{instanceId}]";
         float textWidth = paint.MeasureText(caption);
         float padX = 1.4f * pxPerMm;

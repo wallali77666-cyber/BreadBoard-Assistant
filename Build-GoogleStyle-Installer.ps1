@@ -17,10 +17,11 @@ if (-not $ScriptDir) { $ScriptDir = Get-Location }
 Get-Process -Name "BreadboardAOI_Setup", "BreadboardAOI.App" -ErrorAction SilentlyContinue | Stop-Process -Force
 
 $DotnetCmd = "dotnet"
-if (Test-Path "C:\Users\DELL\.dotnet\dotnet.exe") {
-    $DotnetCmd = "C:\Users\DELL\.dotnet\dotnet.exe"
-    $env:PATH = "C:\Users\DELL\.dotnet;$env:PATH"
-    $env:DOTNET_ROOT = "C:\Users\DELL\.dotnet"
+$UserDotnet = Join-Path $env:USERPROFILE ".dotnet\dotnet.exe"
+if (Test-Path $UserDotnet) {
+    $DotnetCmd = $UserDotnet
+    $env:PATH = "$(Join-Path $env:USERPROFILE '.dotnet');$env:PATH"
+    $env:DOTNET_ROOT = Join-Path $env:USERPROFILE ".dotnet"
 }
 
 Write-Host "=================================================================" -ForegroundColor Cyan
@@ -35,6 +36,9 @@ New-Item -ItemType Directory -Path $AppPayloadDir | Out-Null
 
 Write-Host "`n[1/5] Publishing complete Breadboard AOI Application (win-x64)..." -ForegroundColor Yellow
 & $DotnetCmd publish $AppProj -c Release -r win-x64 --self-contained false -o $AppPayloadDir
+if ($LASTEXITCODE -ne 0) {
+    throw "Fatal: Application publish failed with exit code $LASTEXITCODE"
+}
 
 # 2. Mirror native DLLs into root
 $nativeRuntimes = Join-Path $AppPayloadDir "runtimes\win-x64\native"
@@ -70,6 +74,9 @@ New-Item -ItemType Directory -Path $DistInstallerDir | Out-Null
 
 Write-Host "`n[3/5] Compiling Standalone Animated Installer (BreadboardAOI_Setup.exe)..." -ForegroundColor Yellow
 & $DotnetCmd publish $InstallerProj -c Release -r win-x64 --self-contained false -o $DistInstallerDir -p:UseSharedCompilation=false
+if ($LASTEXITCODE -ne 0) {
+    throw "Fatal: Installer publish failed with exit code $LASTEXITCODE"
+}
 
 $ProducedExe = Join-Path $DistInstallerDir "BreadboardAOI_Setup.exe"
 if (-not (Test-Path $ProducedExe)) {
@@ -79,12 +86,21 @@ if (-not (Test-Path $ProducedExe)) {
 $FinalSetupExe = Join-Path $ScriptDir "BreadboardAOI_Setup.exe"
 Copy-Item $ProducedExe $FinalSetupExe -Force
 
-# Append payload zip to produce single-file self-extracting executable
+# Append payload zip plus a 24-byte footer trailer [Int64 offset][Int64 length]["BAOIZIP1"]
+# so OpenEmbeddedPayload() slices cleanly at payloadOffset instead of reading EXE bytes at offset 0.
 Write-Host "Embedding full payload archive into standalone setup executable..." -ForegroundColor Yellow
+$payloadOffset = [Int64](Get-Item $FinalSetupExe).Length
+$payloadLength = [Int64](Get-Item $CompleteZip).Length
 $zipStream = [System.IO.File]::OpenRead($CompleteZip)
 $exeStream = [System.IO.File]::Open($FinalSetupExe, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write)
 try {
     $zipStream.CopyTo($exeStream)
+    $offsetBytes = [BitConverter]::GetBytes($payloadOffset)
+    $lengthBytes = [BitConverter]::GetBytes($payloadLength)
+    $magicBytes = [System.Text.Encoding]::ASCII.GetBytes("BAOIZIP1")
+    $exeStream.Write($offsetBytes, 0, $offsetBytes.Length)
+    $exeStream.Write($lengthBytes, 0, $lengthBytes.Length)
+    $exeStream.Write($magicBytes, 0, $magicBytes.Length)
 }
 finally {
     $zipStream.Dispose()
@@ -112,18 +128,21 @@ Write-Host "`n[4/5] Deploying directly to local workstation: $InstallRoot ..." -
 if (-not (Test-Path $InstallRoot)) { New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null }
 Copy-Item -Path "$AppPayloadDir\*" -Destination $InstallRoot -Recurse -Force
 
+$EstimatedSizeKb = [int][Math]::Ceiling(((Get-ChildItem -Path $InstallRoot -Recurse -File | Measure-Object -Property Length -Sum).Sum) / 1KB)
+if ($EstimatedSizeKb -lt 1000) { $EstimatedSizeKb = 600000 }
+
 # Register Windows Uninstall in Settings > Apps > Installed apps
 Write-Host "`n[5/5] Registering in Windows Settings (Installed Apps)..." -ForegroundColor Yellow
 $regKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\BreadboardAOI"
 if (-not (Test-Path $regKey)) { New-Item -Path $regKey -Force | Out-Null }
 Set-ItemProperty -Path $regKey -Name "DisplayName" -Value "Breadboard AOI Workstation"
-Set-ItemProperty -Path $regKey -Name "DisplayVersion" -Value "1.0.0"
+Set-ItemProperty -Path $regKey -Name "DisplayVersion" -Value "2.0.0"
 Set-ItemProperty -Path $regKey -Name "Publisher" -Value "Breadboard AOI Engineering"
 Set-ItemProperty -Path $regKey -Name "InstallLocation" -Value $InstallRoot
 Set-ItemProperty -Path $regKey -Name "DisplayIcon" -Value "$InstallRoot\app.ico,0"
 Set-ItemProperty -Path $regKey -Name "UninstallString" -Value "powershell.exe -ExecutionPolicy Bypass -File `"$InstallRoot\Uninstall-BreadboardAOI.ps1`""
 Set-ItemProperty -Path $regKey -Name "QuietUninstallString" -Value "powershell.exe -ExecutionPolicy Bypass -File `"$InstallRoot\Uninstall-BreadboardAOI.ps1`" -Quiet"
-Set-ItemProperty -Path $regKey -Name "EstimatedSize" -Value 260000 -Type DWord
+Set-ItemProperty -Path $regKey -Name "EstimatedSize" -Value $EstimatedSizeKb -Type DWord
 Set-ItemProperty -Path $regKey -Name "InstallDate" -Value (Get-Date -Format "yyyyMMdd")
 Set-ItemProperty -Path $regKey -Name "WindowsInstaller" -Value 0 -Type DWord
 Set-ItemProperty -Path $regKey -Name "HelpLink" -Value "https://github.com/wallali77666-cyber/BreadBoard-Assistant"

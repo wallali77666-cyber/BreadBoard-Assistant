@@ -1,17 +1,15 @@
 // ============================================================================
 // FILE: src/4_BreadboardAOI.Intelligence/QwenMoEService.cs
-// PURPOSE: Manages llama-server.exe for Qwen3-VL-30B-A3B, queries port 8081
-//          (or configured port) with datasheet_netlist.gbnf grammar enforcement
-//          to extract Golden Netlist JSON in <120 tokens, streams OpenAI-style
-//          SSE tokens over loopback HTTP, and falls back to a deterministic
-//          rule-based tutor (~20 tokens/sec) whenever the server, the NVIDIA
-//          GPU, or the 19 GB model files are missing.
+// PURPOSE: Minimal vision-tutor client. One request = one fixed instruction +
+//          one raw PNG frame. No crops, no DRC text, no GBNF grammar, no
+//          reasoning channel and no rule-based fallback: the model sees exactly
+//          what a chat client would see.
 //
 // RUNTIME OVERRIDES (any PC):
-//   BREADBOARD_QWEN_ENDPOINT, _MODEL, _MMPROJ, _SERVER, _PORT, _NETLIST_PORT,
-//   _GRAMMAR, _CTX, _GPU_LAYERS, _CPU_MOE, _THREADS, _THREADS_BATCH,
-//   _AUTO_LAUNCH, _MLOCK, _FLASH_ATTN, _STARTUP_TIMEOUT, _REQUEST_TIMEOUT,
-//   _FALLBACK_TPS, _MODEL_ALIAS, _API_KEY
+//   BREADBOARD_QWEN_ENDPOINT, _MODEL, _MMPROJ, _SERVER, _PORT, _CTX,
+//   _GPU_LAYERS, _CPU_MOE, _THREADS, _THREADS_BATCH, _AUTO_LAUNCH, _MLOCK,
+//   _FLASH_ATTN, _STARTUP_TIMEOUT, _REQUEST_TIMEOUT, _MAX_TOKENS,
+//   _TEMPERATURE, _MODEL_ALIAS, _API_KEY
 // ============================================================================
 
 using System;
@@ -33,63 +31,18 @@ using BreadboardAOI.Intelligence.Remote;
 
 namespace BreadboardAOI.Intelligence;
 
-public enum QwenResponseMode
-{
-    Server = 0,
-    RuleBasedFallback = 1
-}
-
-/// <summary>Which part of a streaming model answer an event belongs to.</summary>
-public enum QwenStreamKind
-{
-    Thinking = 0,
-    Content = 1
-}
-
-/// <summary>
-/// One streamed piece of an answer. Thinking is the model's reasoning trace;
-/// content is the final spoken/text answer. Keeping them separate stops raw
-/// &lt;think&gt; tags from leaking into the DRC transcript.
-/// </summary>
-public readonly record struct QwenStreamEvent(QwenStreamKind Kind, string Text);
-
-/// <summary>One pin-to-net assignment in a Golden Netlist extracted from a datasheet schematic.</summary>
-public sealed record GoldenNetConnection(string Pin, string Net);
-
-/// <summary>Structured Golden Netlist extracted under <c>datasheet_netlist.gbnf</c> in &lt;120 tokens.</summary>
-public sealed record GoldenNetlistResult(
-    string Ic,
-    IReadOnlyList<GoldenNetConnection> Connections,
-    string RawJson,
-    int TokenEstimate);
-
-/// <summary>Configuration for the Qwen MoE service. Use <see cref="FromEnvironment"/> to honour per-PC overrides.</summary>
+/// <summary>Configuration for the vision tutor. Use <see cref="FromEnvironment"/> for per-PC overrides.</summary>
 public sealed class QwenMoEOptions
 {
     public const string EnvironmentPrefix = "BREADBOARD_QWEN_";
     public const int DefaultPort = 8089;
-    public const int DefaultNetlistPort = 8081;
-    public const int MaxGoldenNetlistTokens = 118;
+    public const int DefaultMaxTokens = 1024;
+    public const double DefaultTemperature = 0.7d;
+
     public const string DefaultModelFile = "Qwen3-VL-30B-A3B-Instruct-Q4_K_M.gguf";
     public const string DefaultMmprojFile = "mmproj-Qwen3-VL-30B-f16.gguf";
-    public const string DefaultGrammarFile = "datasheet_netlist.gbnf";
-
-    /// <summary>
-    /// Built-in GBNF grammar matching <c>datasheet_netlist.gbnf</c> so Golden Netlist
-    /// extraction remains strictly constrained (<c>&lt;120 tokens</c>) even when the external
-    /// <c>assets/grammars/datasheet_netlist.gbnf</c> file is absent.
-    /// </summary>
-    public const string DefaultDatasheetNetlistGbnf = """
-        root   ::= "{" ws "\"ic\":" ws string "," ws "\"nets\":" ws "[" ws net ("," ws net)* ws "]" ws "}"
-        net    ::= "{" ws "\"pin\":" ws string "," ws "\"net\":" ws string ws "}"
-        string ::= "\"" ([A-Za-z0-9_+\-./ ])+ "\""
-        ws     ::= [ \t\n]*
-        """;
 
     public string EndpointUrl { get; init; } = $"http://127.0.0.1:{DefaultPort}/v1/chat/completions";
-
-    /// <summary>Dedicated llama-server endpoint on port 8081 for GBNF-constrained Golden Netlist extraction.</summary>
-    public string NetlistEndpointUrl { get; init; } = $"http://127.0.0.1:{DefaultNetlistPort}/v1/chat/completions";
 
     public string ServerExecutablePath { get; init; } = Path.Combine("tools", "llama-server.exe");
 
@@ -97,11 +50,7 @@ public sealed class QwenMoEOptions
 
     public string MmprojPath { get; init; } = Path.Combine("assets", "models", DefaultMmprojFile);
 
-    public string GrammarPath { get; init; } = Path.Combine("assets", "grammars", DefaultGrammarFile);
-
     public int Port { get; init; } = DefaultPort;
-
-    public int NetlistPort { get; init; } = DefaultNetlistPort;
 
     public int ContextSize { get; init; } = 4096;
 
@@ -110,7 +59,6 @@ public sealed class QwenMoEOptions
     /// <summary>Experts kept in DDR4. Set to null/0 for dense models that do not support --n-cpu-moe.</summary>
     public int? CpuMoeLayers { get; init; } = 22;
 
-    /// <summary>Half of the P-core batch width on the 20-thread target; scales down on smaller CPUs.</summary>
     public int Threads { get; init; } = DeriveThreads(Environment.ProcessorCount);
 
     public int ThreadsBatch { get; init; } = DeriveThreadsBatch(Environment.ProcessorCount);
@@ -125,8 +73,11 @@ public sealed class QwenMoEOptions
 
     public double RequestTimeoutSeconds { get; init; } = 120d;
 
-    /// <summary>Fallback token pacing; 20 tokens/sec is the target MoE decode speed.</summary>
-    public double FallbackTokensPerSecond { get; init; } = 20d;
+    /// <summary>Answer budget for one tutor turn. Five sentences need far fewer.</summary>
+    public int MaxTokens { get; init; } = DefaultMaxTokens;
+
+    /// <summary>Stock chat sampling so the app and a chat client behave the same.</summary>
+    public double Temperature { get; init; } = DefaultTemperature;
 
     public string ModelAlias { get; init; } = "qwen3-vl-30b-a3b";
 
@@ -141,19 +92,15 @@ public sealed class QwenMoEOptions
     public static QwenMoEOptions FromEnvironment()
     {
         int port = ReadInt("PORT") ?? DefaultPort;
-        int netlistPort = ReadInt("NETLIST_PORT") ?? DefaultNetlistPort;
         int processors = Environment.ProcessorCount;
 
         return new QwenMoEOptions
         {
             EndpointUrl = ReadString("ENDPOINT") ?? $"http://127.0.0.1:{port}/v1/chat/completions",
-            NetlistEndpointUrl = ReadString("NETLIST_ENDPOINT") ?? $"http://127.0.0.1:{netlistPort}/v1/chat/completions",
             ServerExecutablePath = ReadString("SERVER") ?? Path.Combine("tools", "llama-server.exe"),
             ModelPath = ReadString("MODEL") ?? Path.Combine("assets", "models", DefaultModelFile),
             MmprojPath = ReadString("MMPROJ") ?? Path.Combine("assets", "models", DefaultMmprojFile),
-            GrammarPath = ReadString("GRAMMAR") ?? Path.Combine("assets", "grammars", DefaultGrammarFile),
             Port = port,
-            NetlistPort = netlistPort,
             ContextSize = ReadInt("CTX") ?? 4096,
             GpuLayers = ReadInt("GPU_LAYERS") ?? 99,
             CpuMoeLayers = ReadOptionalInt("CPU_MOE", 22),
@@ -164,7 +111,8 @@ public sealed class QwenMoEOptions
             FlashAttention = ReadBool("FLASH_ATTN") ?? true,
             ServerStartupTimeoutSeconds = ReadDouble("STARTUP_TIMEOUT") ?? 120d,
             RequestTimeoutSeconds = ReadDouble("REQUEST_TIMEOUT") ?? 120d,
-            FallbackTokensPerSecond = ReadDouble("FALLBACK_TPS") ?? 20d,
+            MaxTokens = ReadInt("MAX_TOKENS") ?? DefaultMaxTokens,
+            Temperature = ReadDouble("TEMPERATURE") ?? DefaultTemperature,
             ModelAlias = ReadString("MODEL_ALIAS") ?? "qwen3-vl-30b-a3b",
             ApiKey = ReadString("API_KEY")
         };
@@ -177,13 +125,10 @@ public sealed class QwenMoEOptions
     public QwenMoEOptions WithRemoteEndpoint(string chatEndpoint, string? apiKey, string? modelAlias) => new()
     {
         EndpointUrl = chatEndpoint,
-        NetlistEndpointUrl = chatEndpoint,
         ServerExecutablePath = ServerExecutablePath,
         ModelPath = ModelPath,
         MmprojPath = MmprojPath,
-        GrammarPath = GrammarPath,
         Port = Port,
-        NetlistPort = NetlistPort,
         ContextSize = ContextSize,
         GpuLayers = GpuLayers,
         CpuMoeLayers = CpuMoeLayers,
@@ -194,7 +139,8 @@ public sealed class QwenMoEOptions
         FlashAttention = FlashAttention,
         ServerStartupTimeoutSeconds = ServerStartupTimeoutSeconds,
         RequestTimeoutSeconds = Math.Max(60d, RequestTimeoutSeconds),
-        FallbackTokensPerSecond = FallbackTokensPerSecond,
+        MaxTokens = MaxTokens,
+        Temperature = Temperature,
         ModelAlias = string.IsNullOrWhiteSpace(modelAlias) ? ModelAlias : modelAlias,
         ApiKey = string.IsNullOrWhiteSpace(apiKey) ? ApiKey : apiKey
     };
@@ -291,36 +237,13 @@ public sealed class QwenMoEOptions
 }
 
 /// <summary>
-/// Owns the llama-server child process, queries port 8081 with <c>datasheet_netlist.gbnf</c>
-/// for &lt;120-token Golden Netlist JSON extraction, and exposes an <see cref="IAsyncEnumerable{T}"/>
-/// of tutor tokens. Never blocks the 60 FPS reflex loop.
+/// Owns the llama-server child process (when used locally) and turns a raw frame
+/// plus the fixed prompt into a streamed answer. Callers only pass bytes in and
+/// read text out; every transport detail stays here.
 /// </summary>
 public sealed class QwenMoEService : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-
-    private static readonly string[] ReasoningPropertyNames =
-    {
-        "reasoning_content",
-        "reasoning",
-        "thinking",
-        "thought",
-        "analysis"
-    };
-
-    private string? _discoveredModelAlias;
-
-    /// <summary>Operator-selected model; wins over auto-discovery for any OpenAI-compatible server.</summary>
-    private volatile string? _modelOverride;
-
-    /// <summary>
-    /// Minimal role anchor. The task itself lives in the user prompt, and the
-    /// image is the authority, so no style or detection rules are injected here.
-    /// </summary>
-    private const string TutorSystemPrompt = "You are an electronics tutor examining a breadboard.";
-
-    private const string GoldenNetlistSystemPrompt =
-        "Extract the Typical Application Golden Netlist for the target IC as compact JSON matching the grammar.";
 
     private readonly QwenMoEOptions _options;
     private readonly HttpClient _httpClient;
@@ -332,6 +255,11 @@ public sealed class QwenMoEService : IDisposable
     private string? _lastServerLog;
     private bool _disposed;
 
+    private string? _discoveredModelAlias;
+
+    /// <summary>Operator-selected model; wins over auto-discovery for any OpenAI-compatible server.</summary>
+    private volatile string? _modelOverride;
+
     public QwenMoEService(QwenMoEOptions? options = null, HttpMessageHandler? handler = null)
     {
         _options = options ?? QwenMoEOptions.FromEnvironment();
@@ -339,7 +267,6 @@ public sealed class QwenMoEService : IDisposable
 
         ModelPath = LocalPathResolver.Resolve(_options.ModelPath, BaseDirectory);
         MmprojPath = LocalPathResolver.Resolve(_options.MmprojPath, BaseDirectory);
-        GrammarPath = LocalPathResolver.Resolve(_options.GrammarPath, BaseDirectory);
         ServerExecutablePath = LocalPathResolver.Resolve(_options.ServerExecutablePath, BaseDirectory);
 
         HttpMessageHandler messageHandler = handler ?? new SocketsHttpHandler
@@ -363,8 +290,6 @@ public sealed class QwenMoEService : IDisposable
 
     public string MmprojPath { get; }
 
-    public string GrammarPath { get; }
-
     public string ServerExecutablePath { get; }
 
     public bool HasLocalModel => File.Exists(ModelPath);
@@ -373,15 +298,6 @@ public sealed class QwenMoEService : IDisposable
 
     /// <summary>True when this process launched llama-server.exe and must terminate it on dispose.</summary>
     public bool IsServerManaged { get; private set; }
-
-    /// <summary>Which path produced the most recent answer.</summary>
-    public QwenResponseMode LastMode { get; private set; } = QwenResponseMode.RuleBasedFallback;
-
-    /// <summary>
-    /// When true and Qwen is offline, yields deterministic rule-based advice.
-    /// When false, yields an explicit offline message explaining how to connect Qwen.
-    /// </summary>
-    public bool AllowRuleBasedFallback { get; set; } = true;
 
     public string? LastError { get; private set; }
 
@@ -397,28 +313,27 @@ public sealed class QwenMoEService : IDisposable
         get
         {
             if (!Uri.TryCreate(_options.EndpointUrl, UriKind.Absolute, out Uri? endpoint))
-                return "QWEN";
+                return "VISION AI";
 
             return endpoint.Port switch
             {
                 1234 => "LM STUDIO",
                 11434 => "OLLAMA",
-                QwenMoEOptions.DefaultPort or QwenMoEOptions.DefaultNetlistPort => "LOCAL QWEN",
+                var port when port == QwenMoEOptions.DefaultPort || port == _options.Port => "LOCAL QWEN",
                 _ => endpoint.IsLoopback ? "LOCAL AI" : "REMOTE QWEN"
             };
         }
     }
 
     /// <summary>Provider + loaded model alias, for the studio badge and status line.</summary>
-    public string EndpointSummary => $"{EndpointProvider} · {ActiveModelAlias}";
+    public string EndpointSummary => $"{EndpointProvider} / {ActiveModelAlias}";
 
     /// <summary>Model name currently sent on every chat request.</summary>
     public string ActiveModelAlias => _modelOverride ?? _discoveredModelAlias ?? _options.ModelAlias;
 
     /// <summary>
     /// Pins the chat payload to an exact model id. Pass null or blank to return
-    /// to server-driven discovery. This links any LM Studio, Ollama, llama.cpp
-    /// or vLLM model without editing configuration or restarting the app.
+    /// to server-driven discovery.
     /// </summary>
     public void SetModelAlias(string? modelAlias)
     {
@@ -459,293 +374,35 @@ public sealed class QwenMoEService : IDisposable
     }
 
     /// <summary>
-    /// Loads the <c>datasheet_netlist.gbnf</c> grammar from disk if present, otherwise returns
-    /// <see cref="QwenMoEOptions.DefaultDatasheetNetlistGbnf"/>.
-    /// </summary>
-    public string LoadDatasheetNetlistGrammar()
-    {
-        if (!string.IsNullOrWhiteSpace(GrammarPath) && File.Exists(GrammarPath))
-        {
-            try
-            {
-                string content = File.ReadAllText(GrammarPath, Encoding.UTF8).Trim();
-                if (content.Length > 0)
-                    return content;
-            }
-            catch (IOException)
-            {
-                // Fall back to embedded grammar.
-            }
-        }
-
-        return QwenMoEOptions.DefaultDatasheetNetlistGbnf;
-    }
-
-    /// <summary>
-    /// Queries <c>llama-server</c> on port 8081 (or the active endpoint if 8081 is redirected)
-    /// with <c>datasheet_netlist.gbnf</c> grammar strictly enforced and <c>max_tokens</c> capped
-    /// below 120 tokens to extract the Golden Netlist JSON from a cropped Typical Application schematic.
-    /// </summary>
-    public async Task<GoldenNetlistResult> ExtractGoldenNetlistAsync(
-        string partNumber,
-        byte[] schematicPngBytes,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(partNumber);
-        ArgumentNullException.ThrowIfNull(schematicPngBytes);
-        ObjectDisposedException.ThrowIf(_disposed, this);
-
-        string normalizedPart = AlldatasheetRangeFetcher.NormalizePartKey(partNumber);
-        string grammar = LoadDatasheetNetlistGrammar();
-        int maxTokens = Math.Min(118, QwenMoEOptions.MaxGoldenNetlistTokens);
-
-        string prompt =
-            $"Part: {normalizedPart}. Extract the Typical Application pin-to-net connections from this schematic.";
-
-        string targetEndpoint = await SelectNetlistEndpointAsync(cancellationToken).ConfigureAwait(false);
-        string activeModel = await ResolveModelAliasAsync(cancellationToken).ConfigureAwait(false);
-
-        var payload = new Dictionary<string, object?>(10)
-        {
-            ["model"] = activeModel,
-            ["stream"] = false,
-            ["temperature"] = 0.0,
-            ["max_tokens"] = maxTokens,
-            ["n_predict"] = maxTokens,
-            ["grammar"] = grammar,
-            ["chat_template_kwargs"] = new { enable_thinking = false },
-            ["messages"] = new object[]
-            {
-                new { role = "system", content = GoldenNetlistSystemPrompt },
-                new { role = "user", content = BuildUserContent(prompt, schematicPngBytes) }
-            }
-        };
-
-        try
-        {
-            string requestJson = JsonSerializer.Serialize(payload, JsonOptions);
-            using var request = new HttpRequestMessage(HttpMethod.Post, targetEndpoint)
-            {
-                Content = new StringContent(requestJson, Encoding.UTF8, "application/json")
-            };
-
-            if (!string.IsNullOrWhiteSpace(_options.ApiKey))
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
-
-            using HttpResponseMessage response = await _httpClient
-                .SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (response.IsSuccessStatusCode)
-            {
-                string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-                if (TryExtractJsonResponse(body, out _, out string? content)
-                    && !string.IsNullOrWhiteSpace(content)
-                    && TryParseGoldenNetlistJson(content, normalizedPart, out GoldenNetlistResult? parsed))
-                {
-                    LastMode = QwenResponseMode.Server;
-                    IsConnected = true;
-                    LastAnswerUsable = true;
-                    LastError = null;
-                    return parsed!;
-                }
-            }
-        }
-        catch (Exception ex) when (!cancellationToken.IsCancellationRequested && IsRecoverable(ex))
-        {
-            LastError = $"Golden Netlist extraction on {targetEndpoint} fell back to deterministic profile: {ex.Message}";
-        }
-
-        LastMode = QwenResponseMode.RuleBasedFallback;
-        return BuildDeterministicGoldenNetlist(normalizedPart);
-    }
-
-    /// <summary>Parses a GBNF-constrained Golden Netlist JSON payload.</summary>
-    public static bool TryParseGoldenNetlistJson(
-        string? rawJson,
-        string fallbackPartNumber,
-        out GoldenNetlistResult? result)
-    {
-        result = null;
-        if (string.IsNullOrWhiteSpace(rawJson))
-            return false;
-
-        try
-        {
-            using JsonDocument doc = JsonDocument.Parse(rawJson);
-            JsonElement root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object)
-                return false;
-
-            string ic = root.TryGetProperty("ic", out JsonElement icEl) && icEl.ValueKind == JsonValueKind.String
-                ? icEl.GetString() ?? fallbackPartNumber
-                : fallbackPartNumber;
-
-            var connections = new List<GoldenNetConnection>();
-            if (root.TryGetProperty("nets", out JsonElement netsEl) && netsEl.ValueKind == JsonValueKind.Array)
-            {
-                foreach (JsonElement item in netsEl.EnumerateArray())
-                {
-                    if (item.ValueKind != JsonValueKind.Object)
-                        continue;
-
-                    string? pin = item.TryGetProperty("pin", out JsonElement pinEl) && pinEl.ValueKind == JsonValueKind.String
-                        ? pinEl.GetString()
-                        : null;
-                    string? net = item.TryGetProperty("net", out JsonElement netEl) && netEl.ValueKind == JsonValueKind.String
-                        ? netEl.GetString()
-                        : null;
-
-                    if (!string.IsNullOrWhiteSpace(pin) && !string.IsNullOrWhiteSpace(net))
-                        connections.Add(new GoldenNetConnection(pin, net));
-                }
-            }
-
-            if (connections.Count == 0)
-                return false;
-
-            string compact = rawJson.Trim();
-            int estimatedTokens = Math.Min(119, Math.Max(1, (compact.Length + 3) / 4));
-            result = new GoldenNetlistResult(ic, connections, compact, estimatedTokens);
-            return true;
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Deterministic reference Golden Netlist (<c>&lt;120 tokens</c>) when llama-server is offline.
-    /// </summary>
-    public static GoldenNetlistResult BuildDeterministicGoldenNetlist(string partNumber)
-    {
-        string key = AlldatasheetRangeFetcher.NormalizePartKey(partNumber);
-        IReadOnlyList<GoldenNetConnection> connections = key switch
-        {
-            var p when p.Contains("555", StringComparison.OrdinalIgnoreCase) =>
-            [
-                new("1", "GND"),
-                new("2", "TRIG"),
-                new("3", "OUT"),
-                new("4", "VCC"),
-                new("5", "CTRL"),
-                new("6", "THRES"),
-                new("7", "DISCH"),
-                new("8", "VCC")
-            ],
-            var p when p.Contains("358", StringComparison.OrdinalIgnoreCase) || p.Contains("741", StringComparison.OrdinalIgnoreCase) =>
-            [
-                new("1", "OUT1"),
-                new("2", "IN1-"),
-                new("3", "IN1+"),
-                new("4", "GND"),
-                new("8", "VCC")
-            ],
-            var p when p.Contains("7805", StringComparison.OrdinalIgnoreCase) || p.Contains("1117", StringComparison.OrdinalIgnoreCase) =>
-            [
-                new("1", "VIN"),
-                new("2", "GND"),
-                new("3", "VOUT")
-            ],
-            _ =>
-            [
-                new("1", "GND"),
-                new("2", "IN"),
-                new("3", "OUT"),
-                new("4", "VCC")
-            ]
-        };
-
-        var sb = new StringBuilder(192);
-        sb.Append("{\"ic\":\"").Append(key).Append("\",\"nets\":[");
-        for (int i = 0; i < connections.Count; i++)
-        {
-            if (i > 0)
-                sb.Append(',');
-            sb.Append("{\"pin\":\"").Append(connections[i].Pin)
-              .Append("\",\"net\":\"").Append(connections[i].Net).Append("\"}");
-        }
-        sb.Append("]}");
-
-        string json = sb.ToString();
-        int tokenEstimate = Math.Min(119, Math.Max(1, (json.Length + 3) / 4));
-        return new GoldenNetlistResult(key, connections, json, tokenEstimate);
-    }
-
-    private async Task<string> SelectNetlistEndpointAsync(CancellationToken cancellationToken)
-    {
-        if (Uri.TryCreate(_options.NetlistEndpointUrl, UriKind.Absolute, out Uri? netlistUri))
-        {
-            Uri healthUri = BuildSiblingUri(netlistUri, "/health");
-            if (await ProbeAsync(healthUri, cancellationToken).ConfigureAwait(false))
-                return _options.NetlistEndpointUrl;
-        }
-
-        if (await TryEnsureServerAsync(cancellationToken).ConfigureAwait(false))
-            return _options.EndpointUrl;
-
-        return _options.NetlistEndpointUrl;
-    }
-
-    /// <summary>
-    /// Streams the tutor answer for a DRC snapshot as content tokens only. This is
-    /// the workstation transcript path: reasoning is discarded so raw thinking
-    /// tags never leak into the DRC explanation.
+    /// Streams the tutor answer for a DRC snapshot. The only inputs are the fixed
+    /// instruction and <see cref="DrcStatePacket.RawImagePngBytes"/>.
     /// </summary>
     public async IAsyncEnumerable<string> StreamDiagnosticAsync(
         DrcStatePacket state,
         string? prompt = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        await foreach (QwenStreamEvent streamEvent in StreamDiagnosticDetailedAsync(
-                           state,
-                           prompt,
-                           allowThinking: false,
-                           cancellationToken).ConfigureAwait(false))
-        {
-            if (streamEvent.Kind == QwenStreamKind.Content && !string.IsNullOrEmpty(streamEvent.Text))
-                yield return streamEvent.Text;
-        }
-    }
-
-    /// <summary>
-    /// Streams both the model's reasoning trace and its final answer for the AI
-    /// Live Studio. The caller decides which channel to display and speak.
-    /// </summary>
-    public async IAsyncEnumerable<QwenStreamEvent> StreamDiagnosticDetailedAsync(
-        DrcStatePacket state,
-        string? prompt = null,
-        bool allowThinking = true,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
         ArgumentNullException.ThrowIfNull(state);
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         string effectivePrompt = prompt ?? DiagnosticPromptBuilder.Build(state);
-        byte[]? visualPng = state.FullBoardPngBytes ?? state.MicroCropPngBytes;
 
-        await foreach (QwenStreamEvent streamEvent in StreamDetailedAsync(
-                           state,
+        await foreach (string token in StreamTokensAsync(
                            effectivePrompt,
-                           visualPng,
-                           maxTokens: allowThinking ? 2048 : 512,
-                           allowThinking,
+                           state.RawImagePngBytes,
                            cancellationToken).ConfigureAwait(false))
         {
-            yield return streamEvent;
+            yield return token;
         }
     }
 
     /// <summary>
-    /// Streams a free-form photo inspection. Used by the studio's UPLOAD IMAGE
-    /// path, where the uploaded photo is the authoritative vision input and no
-    /// DRC packet is required.
+    /// Streams a free-form inspection. The uploaded photo or live frame is the
+    /// authoritative input; no DRC packet is required.
     /// </summary>
-    public async IAsyncEnumerable<QwenStreamEvent> StreamImageDetailedAsync(
+    public async IAsyncEnumerable<string> StreamImageAsync(
         byte[] pngBytes,
         string prompt,
-        bool allowThinking = true,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(pngBytes);
@@ -755,54 +412,32 @@ public sealed class QwenMoEService : IDisposable
         if (pngBytes.Length == 0)
         {
             LastAnswerUsable = false;
-            yield return new QwenStreamEvent(
-                QwenStreamKind.Content,
-                "[No image was supplied to the vision model. Upload a PNG or JPG and press ANALYZE AGAIN.]");
+            yield return "[No image was supplied to the vision model. Upload a PNG or JPG and press ANALYZE AGAIN.]";
             yield break;
         }
 
-        await foreach (QwenStreamEvent streamEvent in StreamDetailedAsync(
-                           state: null,
-                           prompt,
-                           pngBytes,
-                           maxTokens: 2048,
-                           allowThinking,
-                           cancellationToken).ConfigureAwait(false))
-        {
-            yield return streamEvent;
-        }
+        await foreach (string token in StreamTokensAsync(prompt, pngBytes, cancellationToken).ConfigureAwait(false))
+            yield return token;
     }
 
     /// <summary>
-    /// Shared server/fallback pipeline. When a server answers, reasoning and
-    /// content events pass through untouched. When it does not, a deterministic
-    /// DRC answer is used if one is available; otherwise an honest offline
-    /// message is emitted. No reasoning is fabricated in either case.
+    /// One server call, two inputs. On any failure the caller gets a single
+    /// explicit offline message instead of fabricated advice.
     /// </summary>
-    private async IAsyncEnumerable<QwenStreamEvent> StreamDetailedAsync(
-        DrcStatePacket? state,
+    private async IAsyncEnumerable<string> StreamTokensAsync(
         string prompt,
         byte[]? imagePng,
-        int maxTokens,
-        bool allowThinking,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         LastAnswerUsable = false;
 
-        bool serverReady = await TryEnsureServerAsync(cancellationToken).ConfigureAwait(false);
-        if (serverReady)
+        if (await TryEnsureServerAsync(cancellationToken).ConfigureAwait(false))
         {
             bool emittedAny = false;
-            bool emittedContent = false;
             bool streamFailed = false;
 
-            await using (IAsyncEnumerator<QwenStreamEvent> enumerator =
-                StreamServerAsync(
-                        prompt,
-                        imagePng,
-                        maxTokens,
-                        allowThinking,
-                        cancellationToken)
+            await using (IAsyncEnumerator<string> enumerator =
+                StreamServerAsync(prompt, imagePng, _options.MaxTokens, cancellationToken)
                     .GetAsyncEnumerator(cancellationToken))
             {
                 while (true)
@@ -816,7 +451,7 @@ public sealed class QwenMoEService : IDisposable
                     }
                     catch (Exception ex) when (!cancellationToken.IsCancellationRequested && IsRecoverable(ex))
                     {
-                        LastError = $"Qwen server stream failed: {ex.Message}";
+                        LastError = $"Vision server stream failed: {ex.Message}";
                         streamFailed = true;
                         break;
                     }
@@ -824,61 +459,40 @@ public sealed class QwenMoEService : IDisposable
                     if (!moved)
                         break;
 
-                    emittedAny = true;
-                    QwenStreamEvent streamEvent = enumerator.Current;
-                    if (streamEvent.Kind == QwenStreamKind.Content && !string.IsNullOrEmpty(streamEvent.Text))
-                        emittedContent = true;
+                    if (string.IsNullOrEmpty(enumerator.Current))
+                        continue;
 
-                    yield return streamEvent;
+                    emittedAny = true;
+                    yield return enumerator.Current;
                 }
             }
 
-            if (emittedContent)
+            if (emittedAny)
             {
-                LastMode = QwenResponseMode.Server;
                 IsConnected = true;
                 LastAnswerUsable = true;
                 LastError = null;
                 yield break;
             }
 
-            if (emittedAny)
-            {
-                LastMode = QwenResponseMode.Server;
-                IsConnected = true;
-                LastError = "Qwen streamed a reasoning trace but no final answer.";
-                yield return new QwenStreamEvent(
-                    QwenStreamKind.Content,
-                    "[Qwen finished thinking but returned no final answer. Raise the token budget in LM Studio / the provider, then press ANALYZE AGAIN.]");
-                yield break;
-            }
-
             if (!streamFailed)
-                LastError = "Qwen server returned an empty answer.";
+                LastError = "The vision server returned an empty answer.";
         }
 
-        LastMode = QwenResponseMode.RuleBasedFallback;
-
-        if (state is null || !AllowRuleBasedFallback)
-        {
-            yield return new QwenStreamEvent(QwenStreamKind.Content, BuildOfflineMessage());
-            yield break;
-        }
-
-        await foreach (string token in StreamFallbackAsync(state, cancellationToken).ConfigureAwait(false))
-            yield return new QwenStreamEvent(QwenStreamKind.Content, token);
+        LastAnswerUsable = false;
+        yield return BuildOfflineMessage();
     }
 
     private string BuildOfflineMessage()
     {
         string detail = string.IsNullOrWhiteSpace(LastError)
-            ? "No OpenAI-compatible endpoint answered."
+            ? "No OpenAI-compatible vision endpoint answered."
             : LastError!;
 
         string hint = EndpointProvider switch
         {
             "LM STUDIO" =>
-                "Start LM Studio, load a vision-capable Qwen model, enable the local server on port 1234, and connect it under AI ROUTING > LOCAL AI > LM STUDIO.",
+                "Start LM Studio, load a vision-capable model, enable the local server on port 1234, and connect it under AI ROUTING > LOCAL AI > LM STUDIO.",
             "OLLAMA" =>
                 "Start Ollama, pull a vision model, and connect it under AI ROUTING > LOCAL AI > OLLAMA.",
             "LOCAL QWEN" =>
@@ -887,129 +501,7 @@ public sealed class QwenMoEService : IDisposable
                 "Connect a vision-capable OpenAI-compatible endpoint under AI ROUTING."
         };
 
-        return $"[Qwen AI is offline] {detail} {hint}";
-    }
-
-    /// <summary>
-    /// The only gate for synthesized speech: the answer must come from the model
-    /// itself. Rule-based / DRC text is displayed but never spoken.
-    /// </summary>
-    public static bool ShouldSpeakAnswer(
-        QwenResponseMode mode,
-        bool voiceMuted,
-        bool hasVoiceEngine,
-        int sentenceCount) =>
-        !voiceMuted
-        && hasVoiceEngine
-        && sentenceCount > 0
-        && mode == QwenResponseMode.Server;
-
-    /// <summary>
-    /// Deterministic tutor sentence built directly from the highest-priority
-    /// violation. Public so the UI can display it without any model installed.
-    /// </summary>
-    public static string BuildRuleBasedDiagnostic(DrcStatePacket state)
-    {
-        ArgumentNullException.ThrowIfNull(state);
-
-        if (state.Violations.Count == 0)
-        {
-            return state.Components.Count == 0
-                ? "No components are visible on the board yet, so place a part and let the frame settle."
-                : "The board passes every electrical rule and the detected circuit matches the target netlist.";
-        }
-
-        DrcViolation violation = state.Violations[0];
-        string component = string.IsNullOrWhiteSpace(violation.ComponentId) ? "component" : violation.ComponentId;
-        string badHole = string.IsNullOrWhiteSpace(violation.BadHole.HoleId)
-            ? $"strip {violation.OffendingStripId}"
-            : violation.BadHole.HoleId;
-        string targetHole = string.IsNullOrWhiteSpace(violation.SuggestedTargetHole.HoleId)
-            ? string.Empty
-            : violation.SuggestedTargetHole.HoleId;
-
-        (string action, string why, string check) = violation.Code switch
-        {
-            ViolationCode.ErcVccGndDirectShort => (
-                $"Remove the jumper from {badHole} to the ground rail, as it ties VCC straight to GND and creates a dead short.",
-                "If you apply power, the supply will dump its whole current through that wire and can overheat the board or the supply.",
-                "Pull that jumper before you power anything, then re-check the rail colours so VCC only reaches VCC."),
-
-            ViolationCode.ErcSameStripShort when targetHole.Length > 0 => (
-                $"Move lead 2 of {component} from {badHole} to {targetHole}, as both leads sit in the same metal clip.",
-                "The five holes in a column are one piece of metal, so the part is bypassed and will never do its job.",
-                $"{targetHole} is the next free column; press the lead in there and let the DRC re-check the board."),
-
-            ViolationCode.ErcSameStripShort => (
-                $"Move one lead of {component} from {badHole} to an empty column, as both leads sit in the same metal clip.",
-                "A single clip is one node, so the part is bypassed and the circuit cannot work.",
-                "Leave at least one empty column between the legs, then reseat the part."),
-
-            ViolationCode.ErcFloatingLead => (
-                $"Move the free end of {component} from {badHole} to the target net, as {badHole} is the only terminal on its strip.",
-                "A part only conducts when both of its ends reach a complete loop, so this lead carries no current.",
-                "Run a jumper to the ground rail or the net named in the target netlist, then re-check the pin inspector."),
-
-            ViolationCode.ErcRedundantJumper => (
-                $"Remove the jumper from {badHole} to {targetHole}, as both holes already share one metal clip.",
-                "The strip is already one node, so the wire is spare copper that only makes the board harder to read.",
-                "Move one end to a net that still needs power if you meant to bridge two strips."),
-
-            ViolationCode.ErcHoleCollision => (
-                $"Move one lead out of {badHole} to the next free hole, as too many leads share one spring clip.",
-                "A clip that is overfilled grips nothing firmly, so the joint will go intermittent when the board warms up.",
-                "Reseat the remaining leads so every clip holds no more than two."),
-
-            ViolationCode.DrcSchematicNetMismatch => (
-                $"Add a jumper from {targetHole} to {badHole}, as the target net is open between them.",
-                "An open net means the signal or power never reaches the part, so the circuit stays dead even though every part is placed.",
-                "Confirm the new net in the pin inspector before moving on."),
-
-            ViolationCode.DrcUnexpectedNetLink => (
-                $"Remove the jumper that joins {targetHole} and {badHole}, as they belong to two different target nets.",
-                "Bridging two nets mixes signals and can make one part drive another one backwards.",
-                "Check the two nets separately in the pin inspector so they stay isolated."),
-
-            ViolationCode.ErcReversedPolarity => (
-                $"Refit {component} at {badHole} the other way round, as it looks reversed.",
-                "An LED or capacitor fitted backwards will not work and can be damaged when power is applied.",
-                "Check the flat side or the shorter lead, then press the part back in."),
-
-            _ => (
-                $"Recheck the connection at {badHole}, as the board reports {violation.Code}.",
-                "That rule exists because this connection does not behave like a finished circuit.",
-                "Compare it with the target netlist and reseat the leads.")
-        };
-
-        return $"{action} {why} {check}";
-    }
-
-    private async IAsyncEnumerable<string> StreamFallbackAsync(
-        DrcStatePacket state,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        string answer = BuildRuleBasedDiagnostic(state);
-        double tokensPerSecond = _options.FallbackTokensPerSecond;
-        int delayMilliseconds = tokensPerSecond > 0
-            ? Math.Max(1, (int)Math.Round(1000d / tokensPerSecond))
-            : 0;
-
-        foreach (string token in TokenizeForSpeech(answer))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (delayMilliseconds > 0)
-                await Task.Delay(delayMilliseconds, cancellationToken).ConfigureAwait(false);
-
-            yield return token;
-        }
-    }
-
-    private static IEnumerable<string> TokenizeForSpeech(string sentence)
-    {
-        string[] words = sentence.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        for (int i = 0; i < words.Length; i++)
-            yield return i == words.Length - 1 ? words[i] : words[i] + " ";
+        return $"[Vision model offline] {detail} {hint}";
     }
 
     private async Task<bool> TryEnsureServerAsync(CancellationToken cancellationToken)
@@ -1025,13 +517,13 @@ public sealed class QwenMoEService : IDisposable
 
         if (!HasLocalModel)
         {
-            LastError = $"Qwen model not found at '{ModelPath}'; using the rule-based fallback tutor.";
+            LastError = $"Vision model not found at '{ModelPath}'.";
             return false;
         }
 
         if (!File.Exists(ServerExecutablePath))
         {
-            LastError = $"llama-server.exe not found at '{ServerExecutablePath}'; using the rule-based fallback tutor.";
+            LastError = $"llama-server.exe not found at '{ServerExecutablePath}'.";
             return false;
         }
 
@@ -1072,7 +564,7 @@ public sealed class QwenMoEService : IDisposable
 
         LastError = _launchError
             ?? _lastServerLog
-            ?? "llama-server did not become ready in time; using the rule-based fallback tutor.";
+            ?? "llama-server did not become ready in time.";
         return false;
     }
 
@@ -1134,17 +626,14 @@ public sealed class QwenMoEService : IDisposable
 
     /// <summary>
     /// Non-blocking health probe used by the connection light. Checks
-    /// <c>/health</c> first and then the OpenAI <c>/v1/models</c> surface, so a
-    /// connected LM Studio, Ollama, llama-server, or tunnel turns the light green
-    /// even before the first diagnosis is requested.
+    /// <c>/health</c> first and then the OpenAI <c>/v1/models</c> surface.
     /// </summary>
     public async Task<bool> ProbeConnectionAsync(CancellationToken cancellationToken = default)
     {
         bool reachable = await IsServerReachableAsync(cancellationToken).ConfigureAwait(false);
         if (reachable)
-        {
             _ = await ResolveModelAliasAsync(cancellationToken).ConfigureAwait(false);
-        }
+
         IsConnected = reachable;
         return reachable;
     }
@@ -1228,7 +717,7 @@ public sealed class QwenMoEService : IDisposable
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            // Keep configured default
+            // Keep the configured default.
         }
 
         return !string.IsNullOrWhiteSpace(_discoveredModelAlias)
@@ -1307,32 +796,42 @@ public sealed class QwenMoEService : IDisposable
         }.Uri;
     }
 
-    private async IAsyncEnumerable<QwenStreamEvent> StreamServerAsync(
+    private bool IsLlamaCppEndpoint()
+    {
+        if (!Uri.TryCreate(_options.EndpointUrl, UriKind.Absolute, out Uri? endpoint))
+            return false;
+
+        return endpoint.Port == QwenMoEOptions.DefaultPort || endpoint.Port == _options.Port;
+    }
+
+    /// <summary>
+    /// Posts one chat completion with the prompt and the raw image, then relays
+    /// content deltas. Sampling matches a stock chat client so the app and a
+    /// desktop chat window see the same picture and the same instruction.
+    /// </summary>
+    private async IAsyncEnumerable<string> StreamServerAsync(
         string prompt,
         byte[]? imagePng,
         int maxTokens,
-        bool allowThinking,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         string activeModel = await ResolveModelAliasAsync(cancellationToken).ConfigureAwait(false);
 
-        var payload = new Dictionary<string, object?>(9)
+        var payload = new Dictionary<string, object?>(5)
         {
             ["model"] = activeModel,
             ["stream"] = true,
-            ["temperature"] = 0.6,
+            ["temperature"] = _options.Temperature,
             ["max_tokens"] = maxTokens,
             ["messages"] = new object[]
             {
-
-                new { role = "user", content = BuildUserContent(prompt, imagePng) }
+                new
+                {
+                    role = "user",
+                    content = BuildUserContent(prompt, imagePng)
+                }
             }
         };
-
-        // Ask every OpenAI-compatible server to expose reasoning separately so
-        // the studio can show it in THINKING instead of losing it. Servers that
-        // reject the option are retried below without it.
-
 
         string json = JsonSerializer.Serialize(payload, JsonOptions);
         using var request = new HttpRequestMessage(HttpMethod.Post, _options.EndpointUrl)
@@ -1344,14 +843,13 @@ public sealed class QwenMoEService : IDisposable
         if (!string.IsNullOrWhiteSpace(_options.ApiKey))
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
 
-        HttpResponseMessage response = await _httpClient
+        using HttpResponseMessage response = await _httpClient
             .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
             .ConfigureAwait(false);
 
         if (!response.IsSuccessStatusCode)
         {
             string body = await ReadErrorBodyAsync(response, cancellationToken).ConfigureAwait(false);
-            response.Dispose();
             throw new HttpRequestException(
                 $"HTTP {(int)response.StatusCode} {response.ReasonPhrase}: {body}",
                 inner: null,
@@ -1362,13 +860,10 @@ public sealed class QwenMoEService : IDisposable
         if (string.Equals(mediaType, "application/json", StringComparison.OrdinalIgnoreCase))
         {
             string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            if (!TryExtractJsonResponse(body, out string? thinking, out string? content))
+            if (!TryExtractJsonResponse(body, out string? content) || string.IsNullOrWhiteSpace(content))
                 throw new JsonException("The provider returned JSON without an assistant message.");
 
-            if (!string.IsNullOrEmpty(thinking))
-                yield return new QwenStreamEvent(QwenStreamKind.Thinking, thinking);
-            if (!string.IsNullOrEmpty(content))
-                yield return new QwenStreamEvent(QwenStreamKind.Content, content);
+            yield return content;
             yield break;
         }
 
@@ -1392,51 +887,48 @@ public sealed class QwenMoEService : IDisposable
             if (data == "[DONE]")
                 yield break;
 
-            if (!TryExtractStreamDelta(data, out string? thinking, out string? content))
+            if (!TryExtractStreamDelta(data, out string? content) || string.IsNullOrEmpty(content))
                 continue;
 
-            if (!string.IsNullOrEmpty(thinking))
-                yield return new QwenStreamEvent(QwenStreamKind.Thinking, thinking);
+            string text = content;
 
-            if (!string.IsNullOrEmpty(content))
+            // Reasoning models sometimes wrap their trace in <think ...> tags.
+            // The tutor only speaks the final answer, so those blocks are dropped.
+            while (text.Length > 0)
             {
-                string text = content;
-                while (text.Length > 0)
+                if (!insideThinkTag)
                 {
-                    if (!insideThinkTag)
+                    int thinkStart = text.IndexOf("<think", StringComparison.OrdinalIgnoreCase);
+                    if (thinkStart >= 0)
                     {
-                        int thinkStart = text.IndexOf("<think>", StringComparison.OrdinalIgnoreCase);
-                        if (thinkStart >= 0)
-                        {
-                            if (thinkStart > 0)
-                                yield return new QwenStreamEvent(QwenStreamKind.Content, text[..thinkStart]);
-
-                            insideThinkTag = true;
-                            text = text[(thinkStart + 7)..];
-                        }
-                        else
-                        {
-                            yield return new QwenStreamEvent(QwenStreamKind.Content, text);
+                        int tagEnd = text.IndexOf('>', thinkStart);
+                        if (tagEnd < 0)
                             break;
-                        }
+
+                        if (thinkStart > 0)
+                            yield return text[..thinkStart];
+
+                        insideThinkTag = true;
+                        text = text[(tagEnd + 1)..];
                     }
                     else
                     {
-                        int thinkEnd = text.IndexOf("</think>", StringComparison.OrdinalIgnoreCase);
-                        if (thinkEnd >= 0)
-                        {
-                            if (thinkEnd > 0)
-                                yield return new QwenStreamEvent(QwenStreamKind.Thinking, text[..thinkEnd]);
-
-                            insideThinkTag = false;
-                            text = text[(thinkEnd + 8)..];
-                        }
-                        else
-                        {
-                            yield return new QwenStreamEvent(QwenStreamKind.Thinking, text);
-                            break;
-                        }
+                        yield return text;
+                        break;
                     }
+                }
+                else
+                {
+                    int thinkEnd = text.IndexOf("</think", StringComparison.OrdinalIgnoreCase);
+                    if (thinkEnd < 0)
+                        break;
+
+                    int tagEnd = text.IndexOf('>', thinkEnd);
+                    if (tagEnd < 0)
+                        break;
+
+                    insideThinkTag = false;
+                    text = text[(tagEnd + 1)..];
                 }
             }
         }
@@ -1458,17 +950,6 @@ public sealed class QwenMoEService : IDisposable
         }
     }
 
-    private bool IsLlamaCppEndpoint()
-    {
-        if (!Uri.TryCreate(_options.EndpointUrl, UriKind.Absolute, out Uri? endpoint))
-            return false;
-
-        return endpoint.Port == 8089
-               || endpoint.Port == 8081
-               || endpoint.Port == _options.Port
-               || endpoint.Port == _options.NetlistPort;
-    }
-
     private static object BuildUserContent(string prompt, byte[]? imagePng)
     {
         if (imagePng is not { Length: > 0 })
@@ -1482,12 +963,8 @@ public sealed class QwenMoEService : IDisposable
         };
     }
 
-    private static bool TryExtractJsonResponse(
-        string json,
-        out string? thinking,
-        out string? content)
+    private static bool TryExtractJsonResponse(string json, out string? content)
     {
-        thinking = null;
         content = null;
 
         try
@@ -1504,9 +981,9 @@ public sealed class QwenMoEService : IDisposable
             bool extracted = false;
 
             if (choice.TryGetProperty("message", out JsonElement message))
-                extracted = TryExtractMessageParts(message, out thinking, out content);
+                extracted = TryExtractContent(message, out content);
             else if (choice.TryGetProperty("delta", out JsonElement delta))
-                extracted = TryExtractMessageParts(delta, out thinking, out content);
+                extracted = TryExtractContent(delta, out content);
             else if (choice.TryGetProperty("text", out JsonElement text)
                      && text.ValueKind == JsonValueKind.String)
             {
@@ -1514,17 +991,7 @@ public sealed class QwenMoEService : IDisposable
                 extracted = content is not null;
             }
 
-            if (extracted && !string.IsNullOrEmpty(content) && string.IsNullOrEmpty(thinking))
-            {
-                int tStart = content.IndexOf("<think>", StringComparison.OrdinalIgnoreCase);
-                int tEnd = content.IndexOf("</think>", StringComparison.OrdinalIgnoreCase);
-                if (tStart >= 0 && tEnd > tStart)
-                {
-                    thinking = content.Substring(tStart + 7, tEnd - tStart - 7).Trim();
-                    content = (content.Substring(0, tStart) + content.Substring(tEnd + 8)).Trim();
-                }
-            }
-
+            content = StripThinkTags(content);
             return extracted;
         }
         catch (JsonException)
@@ -1533,12 +1000,8 @@ public sealed class QwenMoEService : IDisposable
         }
     }
 
-    private static bool TryExtractStreamDelta(
-        string json,
-        out string? thinking,
-        out string? content)
+    private static bool TryExtractStreamDelta(string json, out string? content)
     {
-        thinking = null;
         content = null;
 
         try
@@ -1548,7 +1011,7 @@ public sealed class QwenMoEService : IDisposable
 
             if (root.TryGetProperty("error", out JsonElement error))
             {
-                content = "[Qwen provider error] " + ExtractErrorText(error);
+                content = "[Vision provider error] " + ExtractErrorText(error);
                 return true;
             }
 
@@ -1561,10 +1024,10 @@ public sealed class QwenMoEService : IDisposable
 
             JsonElement choice = choices[0];
             if (choice.TryGetProperty("delta", out JsonElement delta))
-                return TryExtractMessageParts(delta, out thinking, out content);
+                return TryExtractContent(delta, out content);
 
             if (choice.TryGetProperty("message", out JsonElement message))
-                return TryExtractMessageParts(message, out thinking, out content);
+                return TryExtractContent(message, out content);
 
             if (choice.TryGetProperty("text", out JsonElement text)
                 && text.ValueKind == JsonValueKind.String)
@@ -1581,28 +1044,13 @@ public sealed class QwenMoEService : IDisposable
         return false;
     }
 
-    private static bool TryExtractMessageParts(
-        JsonElement element,
-        out string? thinking,
-        out string? content)
+    private static bool TryExtractContent(JsonElement element, out string? content)
     {
-        thinking = null;
-        content = null;
+        content = element.TryGetProperty("content", out JsonElement contentElement)
+            ? ExtractTextContent(contentElement)
+            : null;
 
-        foreach (string name in ReasoningPropertyNames)
-        {
-            if (!element.TryGetProperty(name, out JsonElement reasoning))
-                continue;
-
-            thinking = ExtractTextContent(reasoning);
-            if (!string.IsNullOrEmpty(thinking))
-                break;
-        }
-
-        if (element.TryGetProperty("content", out JsonElement contentElement))
-            content = ExtractTextContent(contentElement);
-
-        return !string.IsNullOrEmpty(thinking) || !string.IsNullOrEmpty(content);
+        return !string.IsNullOrEmpty(content);
     }
 
     private static string? ExtractTextContent(JsonElement element)
@@ -1629,6 +1077,44 @@ public sealed class QwenMoEService : IDisposable
         }
 
         return builder.Length == 0 ? null : builder.ToString();
+    }
+
+    private static string? StripThinkTags(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return text;
+
+        var builder = new StringBuilder(text.Length);
+        int index = 0;
+
+        while (index < text.Length)
+        {
+            int start = text.IndexOf("<think", index, StringComparison.OrdinalIgnoreCase);
+            if (start < 0)
+            {
+                builder.Append(text, index, text.Length - index);
+                break;
+            }
+
+            builder.Append(text, index, start - index);
+
+            int openEnd = text.IndexOf('>', start);
+            if (openEnd < 0)
+                break;
+
+            int end = text.IndexOf("</think", openEnd, StringComparison.OrdinalIgnoreCase);
+            if (end < 0)
+                break;
+
+            int closeEnd = text.IndexOf('>', end);
+            if (closeEnd < 0)
+                break;
+
+            index = closeEnd + 1;
+        }
+
+        string result = builder.ToString().Trim();
+        return result.Length == 0 ? null : result;
     }
 
     private static string ExtractErrorText(JsonElement error)

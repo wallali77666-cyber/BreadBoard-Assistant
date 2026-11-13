@@ -54,17 +54,18 @@ public sealed partial class MainWorkstationViewModel
             }
 
             var parts = _draft.Parts.ToList();
-            var targetBoard = SelectedDevBoardType == MicrocontrollerBoardType.None
-                ? MicrocontrollerBoardType.ArduinoUnoR3R4
-                : SelectedDevBoardType;
+            var targetBoard = GetEffectiveTargetBoard();
+            var wiredPins = ExtractWiredMcuPins();
 
-            _boxCodingStudioWindow = new BoxCodingStudioWindow(parts, targetBoard)
+            _boxCodingStudioWindow = new BoxCodingStudioWindow(parts, targetBoard, wiredPins)
             {
                 Owner = Application.Current?.MainWindow
             };
 
             if (_boxCodingStudioWindow.DataContext is BoxCodingStudioViewModel boxVm)
             {
+                boxVm.UpdateProgrammerConnectionState(IsProgrammerCableConnected, GlobalConnectionBadgeText, IsCableMismatchWarning);
+
                 boxVm.LcdSimulatedStateUpdated += (isStimulated, r0, r1) =>
                 {
                     ShowLcdSimulation = isStimulated;
@@ -85,13 +86,12 @@ public sealed partial class MainWorkstationViewModel
 
                 boxVm.SendToProgrammerRequested += (code, language, boardType) =>
                 {
-                    if (boardType != MicrocontrollerBoardType.None && SelectedDevBoardType != boardType)
+                    if (boardType != MicrocontrollerBoardType.None && GetEffectiveTargetBoard() != boardType)
                         SelectedDevBoardType = boardType;
 
                     var mappedLanguage = (BoxCodingLanguage)language;
                     ActiveFirmwareCode = code;
                     ActiveFirmwareLanguage = mappedLanguage;
-                    ConnectUsbCable();
                     OpenProgrammerUploadDialogCore(code, mappedLanguage);
                 };
 

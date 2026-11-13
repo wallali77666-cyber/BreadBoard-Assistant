@@ -26,8 +26,8 @@ if (-not $Quiet) {
     } catch { }
 }
 
-# Self-delete install directory after process exits
+# Self-delete install directory after process exits (ping avoids timeout stdin issues in hidden cmd)
 if (Test-Path $installDir) {
-    Start-Process -FilePath "cmd.exe" -ArgumentList "/c timeout /t 2 & rmdir /s /q `"$installDir`"" -WindowStyle Hidden
+    Start-Process -FilePath "cmd.exe" -ArgumentList "/c ping -n 3 127.0.0.1 >nul & rmdir /s /q `"$installDir`"" -WindowStyle Hidden
 }
 

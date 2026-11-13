@@ -112,8 +112,8 @@ with `BREADBOARD_START_LAYOUT=builder` (or `canvas`, `inspect`, `workstation`).
 
 The Qwen3-VL tutor can run in the operator's own Google Colab runtime instead of this PC.
 Vision, homography, the PinMatrix and the KiCad DRC engine stay local at 60 FPS; only the
-diagnosis is offloaded. The tutor routes **Colab → local `llama-server` → rule-based tutor**,
-so the workstation always has a fallback.
+diagnosis is offloaded. The tutor routes **Colab → local `llama-server` → explicit offline notice**,
+so the workstation always reports whether the tutor is online.
 
 ### One-paste pairing (default, no Google account)
 
@@ -144,7 +144,7 @@ first loaded one and routes the tutor there, labelled `LOCAL AI · 127.0.0.1:123
 
 Nothing is installed, downloaded or launched: start the provider yourself, load a
 vision model and press the button. If nothing answers, the workstation reports it
-and keeps the local `llama-server` / rule-based tutor. Vision, homography and the
+and keeps the local `llama-server`, then shows an explicit offline notice. Vision, homography and the
 DRC engine always stay in this process at 60 FPS.
 
 ## BMO-style tutor voice
@@ -417,14 +417,14 @@ gh release download models-v1 `
   --dir assets/models
 ```
 
-No model is required to start the workstation: Demo Mode, the synthetic camera and the rule-based offline tutor are the default path. Missing YOLO / Qwen / Piper / Kokoro files are reported in the Hardware dock and degrade gracefully.
+No model is required to start the workstation: Demo Mode and the synthetic camera are the default path; when no model answers, the tutor shows an explicit offline notice. Missing YOLO / Qwen / Piper / Kokoro files are reported in the Hardware dock and degrade gracefully.
 
 ## Implementation status
 
 - [x] **Phase 1** — solution scaffolding, data contracts, CPU affinity, pinned triple frame buffer, NVML monitor.
 - [x] **Phase 2** — 830-point PinMatrix, Union-Find ERC/DRC engine, target 555 netlist + ratsnest, unit tests.
 - [x] **Phase 3** — OpenCV homography, hand gate, YOLO pose inference.
-- [x] **Phase 4** — Qwen3-VL MoE service + Piper / Kokoro voice engine with offline rule-based tutor and SAPI fallback.
+- [x] **Phase 4** — Qwen3-VL MoE service + Piper / Kokoro voice engine with an explicit offline notice and SAPI fallback.
 - [x] **Phase 5** — Spectrum-dark WPF workstation, SkiaSharp CAD viewport, demo-mode fault injection.
 - [x] **Phase 6** — Google-linked Colab Qwen3-VL runtime, still-image input (`LOAD IMAGE`, drag & drop, `BREADBOARD_IMAGE_PATH`), dock tabs.
 - [x] **Phase 7** — one-paste Colab pairing (`BBAOI1|url|key`), prebuilt CUDA `llama-server`, persisted endpoint, optional Drive auto-connect.

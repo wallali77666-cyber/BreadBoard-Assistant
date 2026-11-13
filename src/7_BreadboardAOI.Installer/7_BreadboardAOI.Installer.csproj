@@ -18,13 +18,13 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     
     <!-- Assembly & Explorer Version Metadata -->
-    <AssemblyTitle>Breadboard AOI Workstation Setup</AssemblyTitle>
-    <Description>Google Installer (x64) — Real-Time Circuit Verification Workstation</Description>
+    <AssemblyTitle>Breadboard AOI Workstation Setup v2.0</AssemblyTitle>
+    <Description>Google Installer (x64) — Block Coding, USB Programmer, Live AI Cam &amp; KiCad DRC</Description>
     <Company>Breadboard AOI Systems</Company>
     <Product>Breadboard AOI Workstation</Product>
     <Copyright>Copyright © 2026</Copyright>
-    <FileVersion>1.0.0.0</FileVersion>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>2.0.0.0</FileVersion>
+    <AssemblyVersion>2.0.0.0</AssemblyVersion>
   </PropertyGroup>
 
   <ItemGroup>

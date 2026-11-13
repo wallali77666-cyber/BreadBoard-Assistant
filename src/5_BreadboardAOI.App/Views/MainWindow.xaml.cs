@@ -26,6 +26,8 @@ public partial class MainWindow : Window
     private Point _panStartPoint;
     private bool _isPanning;
     private bool _isRightPanning;
+    private bool _isDraggingCable;
+    private Point _cableDragStartPoint;
 
     public MainWindow()
     {
@@ -145,6 +147,9 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_isDraggingCable || _viewModel.PendingCableDragKind != BreadboardAOI.Core.BoxCoding.UsbCableKind.None)
+            _viewModel.UpdateCablePlacementCursor((float)position.X, (float)position.Y);
+
         _viewModel.UpdateHover(position.X, position.Y);
     }
 
@@ -180,12 +185,16 @@ public partial class MainWindow : Window
         }
         else if (e.RightButton == MouseButtonState.Pressed && !_viewModel.IsBuildMode)
         {
-            _isPanning = true;
-            _isRightPanning = true;
-            _panStartPoint = GetViewportPoint(e);
-            Viewport.CaptureMouse();
-            Viewport.Cursor = Cursors.SizeAll;
-            e.Handled = true;
+            Point position = GetViewportPoint(e);
+            if (!_viewModel.ShouldInterceptSecondaryViewportAction(position.X, position.Y))
+            {
+                _isPanning = true;
+                _isRightPanning = true;
+                _panStartPoint = position;
+                Viewport.CaptureMouse();
+                Viewport.Cursor = Cursors.SizeAll;
+                e.Handled = true;
+            }
         }
     }
 
@@ -201,6 +210,23 @@ public partial class MainWindow : Window
                 _isRightPanning = false;
                 Viewport.ReleaseMouseCapture();
                 Viewport.Cursor = Cursors.Arrow;
+                e.Handled = true;
+            }
+        }
+
+        if (_isDraggingCable && e.ChangedButton == MouseButton.Left)
+        {
+            _isDraggingCable = false;
+            if (Viewport.IsMouseCaptured)
+                Viewport.ReleaseMouseCapture();
+            Viewport.Cursor = Cursors.Arrow;
+
+            Point position = GetViewportPoint(e);
+            double dx = position.X - _cableDragStartPoint.X;
+            double dy = position.Y - _cableDragStartPoint.Y;
+            if ((dx * dx + dy * dy) > 64.0)
+            {
+                _viewModel.TryHandleProgrammerViewportAction(position.X, position.Y, secondary: false);
                 e.Handled = true;
             }
         }
@@ -279,15 +305,38 @@ public partial class MainWindow : Window
     private void OnViewportMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         Point position = GetViewportPoint(e);
+        bool hadPendingDrag = _viewModel.PendingCableDragKind != BreadboardAOI.Core.BoxCoding.UsbCableKind.None;
         _viewModel.HandleViewportClick(position.X, position.Y, secondary: false);
+
+        if (!hadPendingDrag && _viewModel.PendingCableDragKind != BreadboardAOI.Core.BoxCoding.UsbCableKind.None)
+        {
+            _isDraggingCable = true;
+            _cableDragStartPoint = position;
+            Viewport.CaptureMouse();
+            Viewport.Cursor = Cursors.Hand;
+        }
     }
 
     private void OnViewportMouseRightButtonDown(object sender, MouseButtonEventArgs e)
     {
+        Point position = GetViewportPoint(e);
+        if (_isDraggingCable)
+        {
+            _isDraggingCable = false;
+            if (Viewport.IsMouseCaptured)
+                Viewport.ReleaseMouseCapture();
+            Viewport.Cursor = Cursors.Arrow;
+        }
+
+        if (_viewModel.TryHandleProgrammerViewportAction(position.X, position.Y, secondary: true))
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (!_viewModel.IsBuildMode)
             return;
 
-        Point position = GetViewportPoint(e);
         _viewModel.HandleViewportClick(position.X, position.Y, secondary: true);
         e.Handled = true;
     }

@@ -413,7 +413,7 @@ public sealed partial class MainWorkstationViewModel
     /// <summary>
     /// Probes LM Studio / Ollama that the operator already runs on this PC.
     /// Nothing is installed or launched: an offline provider just leaves the
-    /// local llama.cpp / rule-based tutor in charge.
+    /// local llama.cpp tutor in charge.
     /// </summary>
     [RelayCommand]
     private async Task ConnectLocalProviderAsync(string? presetId)

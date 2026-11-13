@@ -408,6 +408,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         _renderer.Layers.ShowHardwareProgrammer = ShowHardwareProgrammer;
         _renderer.Layers.ShowThermalHeatmap = ShowThermalHeatmap;
         OnDevBoardTypeChangedForProgrammer(SelectedDevBoardType);
+        InitializeProgrammerSubsystem();
 
         _telemetryTimer = new DispatcherTimer(DispatcherPriority.Background, _dispatcher)
         {
@@ -973,9 +974,6 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     private bool _isCognitiveTutorEnabled = true;
 
     [ObservableProperty]
-    private bool _isRuleBasedAdviceEnabled;
-
-    [ObservableProperty]
     private bool _isAffinityEnabled = true;
 
     [ObservableProperty]
@@ -1256,7 +1254,6 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         coordinator.IsDrcEnabled = IsDrcEnabled;
         coordinator.IsAlarmEnabled = IsAlarmEnabled;
         coordinator.IsCognitiveTutorEnabled = IsCognitiveTutorEnabled;
-        coordinator.IsRuleBasedAdviceEnabled = IsRuleBasedAdviceEnabled;
         coordinator.ReflexDrcUpdated += OnReflexDrcUpdated;
         coordinator.TutorTurnStarted += OnTutorTurnStarted;
         coordinator.TutorTranscriptTokenReceived += OnTutorToken;
@@ -1308,7 +1305,7 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     /// Finishes startup off the constructor path: the remembered tutor endpoint
     /// must be live before any startup photo is inspected. The previous order
     /// opened the studio first, so the first photo was answered by the local
-    /// llama-server / rule-based fallback even though LM Studio was saved.
+    /// llama-server even though LM Studio was saved.
     /// </summary>
     private async Task CompleteStartupAsync(string? startupPhoto)
     {
@@ -1467,11 +1464,8 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
         if (_disposed)
             return;
 
-        if (!secondary && _renderer.TryHitTestProgrammerUploadButton((float)viewportX, (float)viewportY))
-        {
-            OpenProgrammerUploadDialog();
+        if (TryHandleProgrammerViewportAction(viewportX, viewportY, secondary))
             return;
-        }
 
         if (!IsBuildMode)
             return;
@@ -2316,8 +2310,8 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
     // ---- commands ----------------------------------------------------------
 
     /// <summary>
-    /// Explicitly sends the active circuit and DRC violations to Qwen AI for multimodal tutoring.
-    /// In builder mode, Qwen only runs when this command is invoked.
+    /// Sends the live raw camera frame to the vision tutor. The model gets the
+    /// same picture a chat client would receive: no crop, no overlay, no DRC text.
     /// </summary>
     [RelayCommand]
     private void AskAi()
@@ -2329,27 +2323,29 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             return;
         }
 
-        DrcStatePacket packet = coordinator.LatestPacket ?? DrcStatePacket.Empty;
-
-        // Capture full high-resolution 1000x500 breadboard screenshot for Qwen vision
-        byte[] fullBoardPng = _renderer.CaptureFullBoardPng(packet, coordinator.LatestRatsnest);
-        coordinator.RequestAiDiagnostic(fullBoardPng);
+        byte[]? rawFrame = coordinator.CaptureLiveRawPng();
+        bool dispatched = coordinator.RequestAiDiagnostic(rawFrame);
 
         string? snapshotPath = null;
-        try
+        if (rawFrame is { Length: > 0 })
         {
-            string cacheDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BreadboardAOI", "cache");
-            Directory.CreateDirectory(cacheDir);
-            snapshotPath = Path.Combine(cacheDir, "ask_ai_breadboard.png");
-            File.WriteAllBytes(snapshotPath, fullBoardPng);
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            snapshotPath = null;
+            try
+            {
+                string cacheDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BreadboardAOI", "cache");
+                Directory.CreateDirectory(cacheDir);
+                snapshotPath = Path.Combine(cacheDir, "ask_ai_breadboard.png");
+                File.WriteAllBytes(snapshotPath, rawFrame);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                snapshotPath = null;
+            }
         }
 
         OpenAiVisionInspector(snapshotPath ?? LoadedImagePath);
-        StatusLine = $"AI TUTOR: Studio opened with {packet.Components.Count} component(s) uploaded for Qwen analysis.";
+        StatusLine = dispatched && rawFrame is { Length: > 0 }
+            ? "AI TUTOR: raw camera frame sent to the vision model."
+            : "AI TUTOR: no raw frame available yet; start the camera and try again.";
     }
 
     [RelayCommand]
@@ -3643,12 +3639,6 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
             _coordinator.IsCognitiveTutorEnabled = value;
     }
 
-    partial void OnIsRuleBasedAdviceEnabledChanged(bool value)
-    {
-        if (_coordinator is not null)
-            _coordinator.IsRuleBasedAdviceEnabled = value;
-    }
-
     partial void OnUseColabAiChanged(bool value)
     {
         if (value)
@@ -3913,6 +3903,8 @@ public sealed partial class MainWorkstationViewModel : ObservableObject, IDispos
 
         _programmerUploadDialog?.Close();
         _programmerUploadDialog = null;
+
+        DisposeProgrammerResources();
 
         _datasheetFetcher?.Dispose();
         _datasheetFetcher = null;

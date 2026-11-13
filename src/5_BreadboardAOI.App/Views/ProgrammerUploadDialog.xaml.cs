@@ -1,29 +1,30 @@
 // ============================================================================
 // FILE: src/5_BreadboardAOI.App/Views/ProgrammerUploadDialog.xaml.cs
-// PURPOSE: Spectrum-Dark dialog for inspecting MCU/USB programmer specs,
-//          choosing a target COM/VIRTUAL-SIM port, validating firmware with
-//          BoxCodeErrorAnalyzer, and flashing onto the virtual/connected MCU.
+// PURPOSE: Spectrum-Dark Arduino IDE-style dialog for inspecting MCU/USB
+//          programmer specs, choosing a physical COM or VIRTUAL-SIM port,
+//          configuring board variant/FQBN/baud/flash/programmer options,
+//          verifying/compiling firmware, flashing onto hardware or virtual MCU,
+//          and operating the live hardware serial monitor.
 // ============================================================================
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
+using BreadboardAOI.App.Orchestration;
 using BreadboardAOI.App.ViewModels;
 using BreadboardAOI.Core.BoxCoding;
 using BreadboardAOI.Core.DrcEngine;
-using Microsoft.Win32;
 
 namespace BreadboardAOI.App.Views;
 
 public partial class ProgrammerUploadDialog : Window
 {
-    private const string VirtualSimPortOption = "VIRTUAL-SIM (Live Breadboard Execution)";
-
     private readonly MainWorkstationViewModel _viewModel;
     private bool _suppressUiEvents;
 
@@ -45,13 +46,51 @@ public partial class ProgrammerUploadDialog : Window
         _suppressUiEvents = false;
 
         LoadFirmwareContext(initialCode, initialLanguage);
-        ConsoleOutputBox.Text = "[READY] Select port & press UPLOAD TO BOARD to run pre-flight check + flash.\n";
+        _lastSyncedSerialRevision = _viewModel.VirtualSerialRevision;
+        _failedAtExternalSerialRevision = _viewModel.ExternalSerialTrafficRevision;
+        ConsoleOutputBox.Text = "[READY] Select port & Arduino IDE options, verify/compile, or press SEND / UPLOAD.\n";
+
+        _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        Closed += (_, _) => _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
     }
 
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
         TryEnableDarkTitleBar();
+    }
+
+    private bool _isUploadWorkflowActive;
+    private bool _hasFailedUploadLogInConsole;
+    private long _lastSyncedSerialRevision;
+    private long _failedAtExternalSerialRevision;
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(MainWorkstationViewModel.IsProgrammerCableConnected)
+            or nameof(MainWorkstationViewModel.SelectedUsbCableKind)
+            or nameof(MainWorkstationViewModel.IsUsbAdapterEnabled)
+            or nameof(MainWorkstationViewModel.TargetProgrammerBoardInstanceId)
+            or nameof(MainWorkstationViewModel.EffectiveFqbnPreview)
+            or nameof(MainWorkstationViewModel.IsHardwareSerialOpen))
+        {
+            RefreshHardwareContext();
+        }
+        else if ((e.PropertyName == nameof(MainWorkstationViewModel.VirtualSerialLog)
+                  || e.PropertyName == nameof(MainWorkstationViewModel.VirtualSerialRevision))
+            && !_isUploadWorkflowActive
+            && _viewModel.VirtualSerialRevision != _lastSyncedSerialRevision
+            && !string.IsNullOrEmpty(_viewModel.VirtualSerialLog))
+        {
+            bool externalTrafficArrived = _viewModel.ExternalSerialTrafficRevision != _failedAtExternalSerialRevision;
+            if (!_hasFailedUploadLogInConsole || externalTrafficArrived)
+            {
+                _hasFailedUploadLogInConsole = false;
+                _lastSyncedSerialRevision = _viewModel.VirtualSerialRevision;
+                ConsoleOutputBox.Text = _viewModel.VirtualSerialLog;
+                ConsoleOutputBox.ScrollToEnd();
+            }
+        }
     }
 
     public void LoadFirmwareContext(string code, BoxCodingLanguage language)
@@ -73,35 +112,27 @@ public partial class ProgrammerUploadDialog : Window
 
     private void PopulatePorts()
     {
+        _viewModel.RefreshProgrammerComPorts();
+
         PortComboBox.Items.Clear();
-        PortComboBox.Items.Add(VirtualSimPortOption);
+        PortComboBox.Items.Add(ProgrammerIdeCatalog.VirtualSimPortDisplay);
 
-        var discoveredPorts = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            using RegistryKey? serialKey = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DEVICEMAP\SERIALCOMM");
-            if (serialKey is not null)
-            {
-                foreach (string valueName in serialKey.GetValueNames())
-                {
-                    if (serialKey.GetValue(valueName) is string portName && !string.IsNullOrWhiteSpace(portName))
-                        discoveredPorts.Add(portName.Trim());
-                }
-            }
-        }
-        catch
-        {
-            // Registry access may be restricted under hardened environments; VIRTUAL-SIM remains available.
-        }
-
-        foreach (string port in discoveredPorts)
-            PortComboBox.Items.Add($"{port} (Hardware USB-UART)");
+        IReadOnlyList<PhysicalComPortEntry> discovered = HardwareSerialMonitorService.DiscoverAvailablePorts();
+        foreach (PhysicalComPortEntry entry in discovered)
+            PortComboBox.Items.Add(entry.DisplayLabel);
 
         string currentTarget = _viewModel.SelectedProgrammerComPort;
+        string rawTarget = ProgrammerIdeCatalog.ExtractRawComPort(currentTarget) ?? string.Empty;
         int matchIndex = 0;
         for (int i = 0; i < PortComboBox.Items.Count; i++)
         {
             string itemText = PortComboBox.Items[i]?.ToString() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(rawTarget)
+                && string.Equals(ProgrammerIdeCatalog.ExtractRawComPort(itemText), rawTarget, StringComparison.OrdinalIgnoreCase))
+            {
+                matchIndex = i;
+                break;
+            }
             if (!string.IsNullOrWhiteSpace(currentTarget)
                 && itemText.StartsWith(currentTarget.Split(' ')[0], StringComparison.OrdinalIgnoreCase))
             {
@@ -119,28 +150,50 @@ public partial class ProgrammerUploadDialog : Window
             : BoxCodingLanguage.ArduinoCpp;
 
     private string GetSelectedPort()
-        => PortComboBox.SelectedItem?.ToString() ?? VirtualSimPortOption;
+        => PortComboBox.SelectedItem?.ToString() ?? ProgrammerIdeCatalog.VirtualSimPortDisplay;
+
+    private MicrocontrollerBoardType GetTargetBoard()
+        => _viewModel.GetEffectiveTargetBoard();
 
     private void RefreshHardwareContext()
     {
-        MicrocontrollerBoardType board = _viewModel.SelectedDevBoardType == MicrocontrollerBoardType.None
-            ? MicrocontrollerBoardType.ArduinoUnoR3R4
-            : _viewModel.SelectedDevBoardType;
-
+        MicrocontrollerBoardType board = GetTargetBoard();
         MicrocontrollerBoardProfile profile = _viewModel.Renderer.McuRuleEngine.GetBoardProfile(board);
         UsbCableSpec cableSpec = ProgrammerCatalog.GetCableSpec(_viewModel.SelectedUsbCableKind);
-        ProgrammerCatalog.IsCableCompatible(_viewModel.SelectedUsbCableKind, board, out bool isNative, out string compatNote);
+        bool isCompatible = ProgrammerCatalog.IsCableCompatible(
+            _viewModel.SelectedUsbCableKind,
+            board,
+            _viewModel.IsUsbAdapterEnabled,
+            out bool isNative,
+            out string compatNote);
 
         BoardSummaryText.Text =
-            $"{profile.DisplayName} · {profile.OperatingLogicVoltage:0.#}V Logic · {profile.Pins.Count} Pins · Cable: {cableSpec.DisplayName}";
+            $"{profile.DisplayName} ({_viewModel.TargetProgrammerBoardInstanceId}) · {profile.OperatingLogicVoltage:0.#}V Logic · Cable: {cableSpec.DisplayName}";
 
-        CompatibilityBadgeText.Text = isNative
-            ? $"✓ NATIVE {cableSpec.ShortTag}"
-            : $"⚡ {cableSpec.ShortTag} ADAPTER";
-        CompatibilityBadgeBorder.BorderBrush = new SolidColorBrush(
-            isNative ? Color.FromRgb(0x10, 0xB9, 0x81) : Color.FromRgb(0xF5, 0x9E, 0x0B));
-        CompatibilityBadgeText.Foreground = new SolidColorBrush(
-            isNative ? Color.FromRgb(0x6E, 0xE7, 0xB7) : Color.FromRgb(0xFD, 0xE6, 0x8A));
+        if (!_viewModel.IsProgrammerCableConnected)
+        {
+            CompatibilityBadgeText.Text = "○ CABLE UNPLUGGED";
+            CompatibilityBadgeBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(0x64, 0x74, 0x8B));
+            CompatibilityBadgeText.Foreground = new SolidColorBrush(Color.FromRgb(0xCB, 0xD5, 0xE1));
+        }
+        else if (isNative)
+        {
+            CompatibilityBadgeText.Text = $"✓ NATIVE {cableSpec.ShortTag}";
+            CompatibilityBadgeBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(0x00, 0xFF, 0xC8));
+            CompatibilityBadgeText.Foreground = new SolidColorBrush(Color.FromRgb(0x00, 0xFF, 0xC8));
+        }
+        else if (isCompatible)
+        {
+            CompatibilityBadgeText.Text = $"⚡ {cableSpec.ShortTag} ADAPTER";
+            CompatibilityBadgeBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(0xF5, 0x9E, 0x0B));
+            CompatibilityBadgeText.Foreground = new SolidColorBrush(Color.FromRgb(0xFD, 0xE6, 0x8A));
+        }
+        else
+        {
+            CompatibilityBadgeText.Text = $"⚠ {cableSpec.ShortTag} MISMATCH";
+            CompatibilityBadgeBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(0xEF, 0x44, 0x44));
+            CompatibilityBadgeText.Foreground = new SolidColorBrush(Color.FromRgb(0xFC, 0xA5, 0xA5));
+        }
 
         PortDetailText.Text =
             $"{ProgrammerCatalog.GetBoardPortDescription(board, _viewModel.SelectedUsbCableKind, GetSelectedPort())}  |  {compatNote}";
@@ -150,16 +203,8 @@ public partial class ProgrammerUploadDialog : Window
     {
         string code = CodeEditorBox.Text ?? string.Empty;
         BoxCodingLanguage language = GetSelectedLanguage();
-        MicrocontrollerBoardType board = _viewModel.SelectedDevBoardType == MicrocontrollerBoardType.None
-            ? MicrocontrollerBoardType.ArduinoUnoR3R4
-            : _viewModel.SelectedDevBoardType;
-
-        var wiredPins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var wire in _viewModel.ActiveDevBoardWires)
-        {
-            AddPin(wire.SourceEndpointKey, wiredPins);
-            AddPin(wire.TargetEndpointKey, wiredPins);
-        }
+        MicrocontrollerBoardType board = GetTargetBoard();
+        HashSet<string> wiredPins = _viewModel.ExtractWiredMcuPins().ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         BoxCodeAnalysisReport report = BoxCodeErrorAnalyzer.Analyze(code, language, board, wiredPins);
 
@@ -185,22 +230,28 @@ public partial class ProgrammerUploadDialog : Window
         }
 
         return report;
-
-        static void AddPin(string key, HashSet<string> target)
-        {
-            if (string.IsNullOrWhiteSpace(key) || !key.StartsWith("MCU", StringComparison.OrdinalIgnoreCase))
-                return;
-
-            int colon = key.LastIndexOf(':');
-            if (colon >= 0 && colon < key.Length - 1)
-                target.Add(key.Substring(colon + 1));
-        }
     }
 
     private void OnPortSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressUiEvents)
             return;
+
+        _viewModel.SelectedProgrammerComPort = GetSelectedPort();
+        RefreshHardwareContext();
+    }
+
+    private void OnRefreshPortsClick(object sender, RoutedEventArgs e)
+    {
+        _suppressUiEvents = true;
+        try
+        {
+            PopulatePorts();
+        }
+        finally
+        {
+            _suppressUiEvents = false;
+        }
 
         _viewModel.SelectedProgrammerComPort = GetSelectedPort();
         RefreshHardwareContext();
@@ -252,30 +303,79 @@ public partial class ProgrammerUploadDialog : Window
         _viewModel.OpenBoxCodingStudio();
     }
 
+    private async void OnVerifyOnlyClick(object sender, RoutedEventArgs e)
+    {
+        await RunUploadWorkflowAsync(verifyOnly: true).ConfigureAwait(true);
+    }
+
     private async void OnUploadToBoardClick(object sender, RoutedEventArgs e)
     {
+        await RunUploadWorkflowAsync(verifyOnly: false).ConfigureAwait(true);
+    }
+
+    private async System.Threading.Tasks.Task RunUploadWorkflowAsync(bool verifyOnly)
+    {
+        _isUploadWorkflowActive = true;
+        _hasFailedUploadLogInConsole = false;
         UploadNowButton.IsEnabled = false;
+        VerifyNowButton.IsEnabled = false;
         try
         {
             string code = CodeEditorBox.Text ?? string.Empty;
             BoxCodingLanguage lang = GetSelectedLanguage();
             string port = GetSelectedPort();
 
-            UploadStageText.Text = "[1/4] VERIFYING SYNTAX & PIN RULES...";
+            UploadStageText.Text = verifyOnly
+                ? "[1/3] VERIFYING SYNTAX & COMPILING..."
+                : "[1/4] VERIFYING SYNTAX & PIN RULES...";
+            UploadStageText.Foreground = new SolidColorBrush(Color.FromRgb(0x38, 0xBD, 0xF8));
             UploadProgressBar.Value = 20;
             UploadPercentText.Text = "20%";
-            ConsoleOutputBox.Text = "[1/4] Starting upload pipeline...\n";
+            ConsoleOutputBox.Text = verifyOnly
+                ? "[1/3] Starting Arduino / MicroPython verify pipeline...\n"
+                : "[1/4] Starting hardware upload pipeline...\n";
 
             await System.Windows.Threading.Dispatcher.Yield();
             UploadProgressBar.Value = 50;
             UploadPercentText.Text = "50%";
-            UploadStageText.Text = "[2/4] COMPILING & CONNECTING OVER USB...";
+            UploadStageText.Text = verifyOnly
+                ? "[2/3] RUNNING TOOLCHAIN VERIFICATION..."
+                : "[2/4] COMPILING & FLASHING OVER USB...";
 
             ProgrammerUploadResult result = await _viewModel
-                .UploadFirmwareCoreAsync(code, lang, port)
+                .UploadFirmwareWithOptionsAsync(code, lang, port, verifyOnly)
                 .ConfigureAwait(true);
 
-            DiagnosticsListBox.ItemsSource = result.CodeAnalysis.Diagnostics;
+            var combinedDiags = new List<BoxCodeDiagnostic>();
+            if (result.CodeAnalysis is not null)
+                combinedDiags.AddRange(result.CodeAnalysis.Diagnostics);
+            foreach (BoxCodeDiagnostic cliDiag in _viewModel.LastCliCompileDiagnostics)
+            {
+                if (!combinedDiags.Contains(cliDiag))
+                    combinedDiags.Add(cliDiag);
+            }
+            DiagnosticsListBox.ItemsSource = combinedDiags;
+            int totalErrors = combinedDiags.Count(d => d.Severity == BoxCodeDiagnosticSeverity.Error);
+            int totalWarnings = combinedDiags.Count(d => d.Severity == BoxCodeDiagnosticSeverity.Warning);
+            if (totalErrors > 0)
+            {
+                DiagnosticsHeaderText.Text = $"CHECK FAILED: {totalErrors} ERROR(S), {totalWarnings} WARNING(S)";
+                DiagnosticsHeaderText.Foreground = new SolidColorBrush(Color.FromRgb(0xF8, 0x71, 0x71));
+            }
+            else if (totalWarnings > 0)
+            {
+                DiagnosticsHeaderText.Text = $"CHECK PASSED WITH {totalWarnings} WARNING(S)";
+                DiagnosticsHeaderText.Foreground = new SolidColorBrush(Color.FromRgb(0xFB, 0xBF, 0x24));
+            }
+            else if (result.CodeAnalysis is not null)
+            {
+                DiagnosticsHeaderText.Text = "STATIC & CLI CHECK CLEAN (0 ERRORS, 0 WARNINGS)";
+                DiagnosticsHeaderText.Foreground = new SolidColorBrush(Color.FromRgb(0x34, 0xD3, 0x99));
+            }
+
+            _hasFailedUploadLogInConsole = !result.Success;
+            _lastSyncedSerialRevision = _viewModel.VirtualSerialRevision;
+            _failedAtExternalSerialRevision = _viewModel.ExternalSerialTrafficRevision;
             ConsoleOutputBox.Text = result.LogOutput;
             ConsoleOutputBox.ScrollToEnd();
 
@@ -283,14 +383,20 @@ public partial class ProgrammerUploadDialog : Window
             {
                 UploadProgressBar.Value = 100;
                 UploadPercentText.Text = "100%";
-                UploadStageText.Text = $"✓ LIVE ON {result.BoardDisplayName}";
-                UploadStageText.Foreground = new SolidColorBrush(Color.FromRgb(0x34, 0xD3, 0x99));
+                UploadStageText.Text = verifyOnly
+                    ? $"✓ VERIFIED CLEAN · {result.BoardDisplayName}"
+                    : result.UsedHardwareCli
+                        ? $"✓ FLASHED PHYSICALLY ON {result.TargetPort}"
+                        : $"✓ LIVE ON {result.BoardDisplayName}";
+                UploadStageText.Foreground = new SolidColorBrush(Color.FromRgb(0x00, 0xFF, 0xC8));
             }
             else
             {
                 UploadProgressBar.Value = 0;
                 UploadPercentText.Text = "ERR";
-                UploadStageText.Text = $"✕ UPLOAD BLOCKED ({result.CodeAnalysis.ErrorCount} ERROR(S))";
+                UploadStageText.Text = totalErrors > 0
+                    ? $"✕ BLOCKED ({totalErrors} ERROR(S))"
+                    : "✕ PHYSICAL UPLOAD FAILED — CHECK CABLE / PORT / TOOLCHAIN";
                 UploadStageText.Foreground = new SolidColorBrush(Color.FromRgb(0xF8, 0x71, 0x71));
             }
 
@@ -298,7 +404,9 @@ public partial class ProgrammerUploadDialog : Window
         }
         finally
         {
+            _isUploadWorkflowActive = false;
             UploadNowButton.IsEnabled = true;
+            VerifyNowButton.IsEnabled = true;
         }
     }
 

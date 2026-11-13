@@ -327,7 +327,18 @@ public sealed class WorkstationAndAuditRegressionTests
                 using var vm = new MainWorkstationViewModel(dispatcher);
                 vm.Initialize();
 
-                // 1. Select USB cables & connect programmer
+                // 1. Disconnected upload must stay blocked without silently connecting the USB cable
+                vm.DisconnectUsbCable();
+                vm.IsProgrammerCableConnected.Should().BeFalse();
+                vm.IsGlobalBoardConnected.Should().BeFalse();
+                ProgrammerUploadResult blockedWhileDisconnected = vm
+                    .UploadFirmwareCoreAsync(vm.ActiveFirmwareCode, BoxCodingLanguage.ArduinoCpp, ProgrammerIdeCatalog.VirtualSimPortDisplay)
+                    .GetAwaiter()
+                    .GetResult();
+                blockedWhileDisconnected.Success.Should().BeFalse();
+                vm.IsProgrammerCableConnected.Should().BeFalse("upload must not silently connect cable behind user's back");
+
+                // 2. Select USB cables & connect programmer manually
                 vm.SelectUsbCableCommand.Execute("typec");
                 vm.SelectedUsbCableKind.Should().Be(UsbCableKind.UsbTypeC);
                 vm.SelectUsbCableCommand.Execute("usbb");
@@ -335,9 +346,11 @@ public sealed class WorkstationAndAuditRegressionTests
 
                 vm.ConnectUsbCableCommand.Execute(null);
                 vm.IsProgrammerCableConnected.Should().BeTrue();
+                vm.IsGlobalBoardConnected.Should().BeTrue();
+                vm.GlobalConnectionBadgeText.Should().Contain("CONNECTED");
                 vm.ConnectedBoardSummary.Should().NotBeNullOrWhiteSpace();
 
-                // 2. Upload firmware to virtual MCU and verify running state + oscilloscope + serial monitor
+                // 3. Upload firmware to virtual MCU and verify running state + oscilloscope + serial monitor
                 ProgrammerUploadResult uploadResult = vm
                     .UploadFirmwareToBoardAsync()
                     .GetAwaiter()
@@ -347,19 +360,48 @@ public sealed class WorkstationAndAuditRegressionTests
                 vm.OscilloscopeSamples.Should().NotBeEmpty();
                 vm.VirtualSerialLog.Should().Contain("System Initialized");
 
-                ProgrammerUploadResult comUploadResult = vm
+                // 4. Physical COM upload failure must be reported honestly unless Virtual Fallback is explicitly opted into
+                vm.AllowVirtualFallbackOnPhysicalPort.Should().BeFalse();
+                ProgrammerUploadResult comFailResult = vm
+                    .UploadFirmwareCoreAsync(vm.ActiveFirmwareCode, BoxCodingLanguage.ArduinoCpp, "COM99 (Non-Existent Hardware)")
+                    .GetAwaiter()
+                    .GetResult();
+                comFailResult.Success.Should().BeFalse(comFailResult.LogOutput);
+                comFailResult.TargetPort.Should().Be("COM99");
+                comFailResult.LogOutput.Should().Contain("PHYSICAL UPLOAD");
+
+                vm.AllowVirtualFallbackOnPhysicalPort = true;
+                ProgrammerUploadResult comFallbackResult = vm
                     .UploadFirmwareCoreAsync(vm.ActiveFirmwareCode, BoxCodingLanguage.ArduinoCpp, "COM99")
                     .GetAwaiter()
                     .GetResult();
-                comUploadResult.Success.Should().BeTrue(comUploadResult.LogOutput);
-                comUploadResult.UsedHardwareCli.Should().BeFalse();
-                comUploadResult.LogOutput.Should().Contain("virtual execution");
+                comFallbackResult.Success.Should().BeTrue(comFallbackResult.LogOutput);
+                comFallbackResult.UsedHardwareCli.Should().BeFalse();
+                comFallbackResult.LogOutput.Should().Contain("virtual execution");
+                vm.AllowVirtualFallbackOnPhysicalPort = false;
+
+                // 5. Cross-mode manual cable placement & right-click unplug work even when IsBuildMode == false
+                vm.IsBuildMode = false;
+                vm.StartCablePlacementFromRack(UsbCableKind.UsbB, 50f, 50f);
+                vm.PendingCableDragKind.Should().Be(UsbCableKind.UsbB);
+                vm.CompleteCablePlacementOnBoard("MCU_1", UsbCableKind.UsbB);
+                vm.IsProgrammerCableConnected.Should().BeTrue();
+
+                // Right-click on active plug/jack unplugs across non-Build modes
+                using (var surface = SKSurface.Create(new SKImageInfo(1600, 960)))
+                {
+                    vm.Render(surface.Canvas, 1600, 960);
+                    SKRect jackRect = vm.Renderer.LastProgrammerJackRect;
+                    jackRect.Width.Should().BeGreaterThan(2f);
+                    vm.TryHandleProgrammerViewportAction(jackRect.MidX, jackRect.MidY, secondary: true).Should().BeTrue();
+                    vm.IsProgrammerCableConnected.Should().BeFalse();
+                }
 
                 vm.SerialInputCommandText = "STATUS";
                 vm.SendSerialInputCommand.Execute(null);
                 vm.VirtualSerialLog.Should().Contain("STATUS");
 
-                // 3. Experimental Lab: Natural language prompt -> circuit synthesis + thermal heatmap + DRC auto-fix
+                // 6. Experimental Lab: Natural language prompt -> circuit synthesis + thermal heatmap + DRC auto-fix
                 vm.GenerateCircuitFromPromptCommand.Execute("Traffic light with red yellow green LEDs");
                 vm.DraftParts.Should().NotBeEmpty();
 
@@ -371,14 +413,30 @@ public sealed class WorkstationAndAuditRegressionTests
                 vm.StopVirtualFirmwareCommand.Execute(null);
                 vm.IsVirtualFirmwareRunning.Should().BeFalse();
 
-                // 4. Instantiate WPF dialogs/windows on STA to verify XAML resource loading and bindings
-                var studioWindow = new BoxCodingStudioWindow(Array.Empty<DraftPart>(), vm.SelectedDevBoardType);
+                // 7. Instantiate WPF dialogs/windows on STA to verify XAML resource loading and bindings
+                var studioWindow = new BoxCodingStudioWindow(Array.Empty<DraftPart>(), vm.SelectedDevBoardType, vm.ExtractWiredMcuPins());
                 studioWindow.DataContext.Should().BeOfType<BoxCodingStudioViewModel>();
                 studioWindow.Close();
 
                 var uploadDialog = new ProgrammerUploadDialog(vm, vm.ActiveFirmwareCode, BoxCodingLanguage.ArduinoCpp);
                 uploadDialog.DataContext.Should().BeSameAs(vm);
                 uploadDialog.Close();
+
+                if (System.Windows.Application.Current is null)
+                {
+                    var wpfApp = new System.Windows.Application
+                    {
+                        ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown
+                    };
+                    wpfApp.Resources.MergedDictionaries.Add(new System.Windows.ResourceDictionary
+                    {
+                        Source = new Uri("/BreadboardAOI.App;component/Themes/SpectrumDarkTheme.xaml", UriKind.Relative)
+                    });
+                }
+
+                var mainWindow = new MainWindow();
+                mainWindow.DataContext.Should().BeOfType<MainWorkstationViewModel>();
+                mainWindow.Close();
             }
             catch (Exception ex)
             {
@@ -391,5 +449,324 @@ public sealed class WorkstationAndAuditRegressionTests
         thread.Join();
 
         staException.Should().BeNull();
+    }
+
+    [Fact]
+    public void CadRenderer_25DCableRack_VerticalS2MiniReceptacle_And_DualBoardTargeting_Work()
+    {
+        var rules = new DevBoardAndModuleRuleEngine();
+        var offBoardRenderer = new OffBoardMicrocontrollerRenderer(rules);
+        var breadboardBounds = new SKRect(100f, 100f, 900f, 400f);
+
+        RenderedMicrocontrollerLayout unoLayout = offBoardRenderer.ComputeBoardLayout(
+            new OffBoardMicrocontrollerVisualState(
+                "MCU_1",
+                MicrocontrollerBoardType.ArduinoUnoR3R4,
+                OffBoardDockPlacement.BottomMargin,
+                DockSlotIndex: 0,
+                HoveredPinCanonicalId: null,
+                ConnectedPinCanonicalIds: new HashSet<string>(),
+                ViolatingPinCanonicalIds: new HashSet<string>()),
+            breadboardBounds,
+            pixelsPerMm: 4f);
+
+        RenderedMicrocontrollerLayout s2Layout = offBoardRenderer.ComputeBoardLayout(
+            new OffBoardMicrocontrollerVisualState(
+                "MCU_2",
+                MicrocontrollerBoardType.WemosEsp32S2Mini,
+                OffBoardDockPlacement.BottomMargin,
+                DockSlotIndex: 1,
+                HoveredPinCanonicalId: null,
+                ConnectedPinCanonicalIds: new HashSet<string>(),
+                ViolatingPinCanonicalIds: new HashSet<string>()),
+            breadboardBounds,
+            pixelsPerMm: 4f);
+
+        unoLayout.IsUsbReceptacleVertical.Should().BeFalse();
+        unoLayout.NativeUsbKind.Should().Be(UsbCableKind.UsbB);
+        unoLayout.UsbReceptacleRectCanvas.Width.Should().BeGreaterThan(5f);
+
+        s2Layout.IsUsbReceptacleVertical.Should().BeTrue("Wemos ESP32-S2 Mini bottom Type-C port accepts vertical cable insertion");
+        s2Layout.NativeUsbKind.Should().Be(UsbCableKind.UsbTypeC);
+        s2Layout.UsbReceptacleRectCanvas.Width.Should().BeGreaterThan(5f);
+
+        var renderer = new SkiaArOverlayRenderer
+        {
+            ActiveUsbCableKind = UsbCableKind.UsbTypeC,
+            IsProgrammerConnected = true,
+            TargetProgrammerBoardInstanceId = "MCU_2",
+            ActiveMicrocontrollers = new[]
+            {
+                new OffBoardMicrocontrollerVisualState("MCU_1", MicrocontrollerBoardType.ArduinoUnoR3R4, OffBoardDockPlacement.BottomMargin, 0, null, new HashSet<string>(), new HashSet<string>()),
+                new OffBoardMicrocontrollerVisualState("MCU_2", MicrocontrollerBoardType.WemosEsp32S2Mini, OffBoardDockPlacement.BottomMargin, 1, null, new HashSet<string>(), new HashSet<string>())
+            }
+        };
+        renderer.Layers.ShowHardwareProgrammer = true;
+
+        using var surface = SKSurface.Create(new SKImageInfo(1600, 960));
+        renderer.RenderCadViewport(surface.Canvas, 1600, 960, warpedBoardFrame: null, drcState: null);
+
+        renderer.LastCableRackBodyRect.Width.Should().BeGreaterThan(10f);
+        renderer.LastProgrammerSendButtonRect.Width.Should().BeGreaterThan(10f);
+        renderer.LastProgrammerJackRect.Width.Should().BeGreaterThan(2f);
+
+        // Connected plug/jack hit-test works
+        renderer.TryHitTestConnectedCableOrPlug(renderer.LastProgrammerJackRect.MidX, renderer.LastProgrammerJackRect.MidY)
+            .Should().BeTrue();
+    }
+
+    [Fact]
+    public void BoxCodingStudioViewModel_WiredPinsPropagation_QuickFix_And_DebuggerCommands_Work()
+    {
+        var studioVm = new BoxCodingStudioViewModel(
+            draftParts: null,
+            initialBoard: MicrocontrollerBoardType.ArduinoUnoR3R4,
+            wiredMcuPins: new[] { "12" });
+
+        studioVm.GeneratedCode = """
+            void setup() {
+                Serial.begin(115200);
+                pinMode(12, OUTPUT);
+                pinMode(13, OUTPUT);
+            }
+            void loop() {
+                int a = 2;
+                if (a = 2) {
+                    digitalWrite(12, HIGH);
+                    digitalWrite(13, HIGH);
+                }
+                delay(100);
+            }
+            """;
+
+        studioVm.CodeDiagnostics.Should().Contain(d => d.Code == "BC034" && d.Message.Contains("13"));
+        studioVm.CodeDiagnostics.Should().NotContain(d => d.Code == "BC034" && d.Message.Contains("12"));
+
+        // Propagating wired pin 13 eliminates the unwired warning
+        studioVm.UpdateWiredMcuPins(new[] { "12", "13" });
+        studioVm.CodeDiagnostics.Should().NotContain(d => d.Code == "BC034");
+
+        // JumpToDiagnosticCommand fires EditorCaretJumpRequested
+        int jumpedLine = -1;
+        studioVm.EditorCaretJumpRequested += (line, _) => jumpedLine = line;
+        var fixable = studioVm.CodeDiagnostics.First(d => d.Code == "BC040" && d.HasQuickFix);
+        studioVm.JumpToDiagnosticCommand.Execute(fixable);
+        jumpedLine.Should().Be(fixable.Line);
+
+        // ApplyQuickFixCommand repairs if (a = 2) -> if (a == 2)
+        studioVm.ApplyQuickFixCommand.Execute(fixable);
+        studioVm.GeneratedCode.Should().Contain("if (a == 2)");
+        studioVm.CodeDiagnostics.Should().NotContain(d => d.Code == "BC040");
+
+        // Interactive Debugger commands work via ViewModel
+        studioVm.ToggleBreakpointAtLine(9);
+        studioVm.DebugBreakpoints.Should().Contain(9);
+        studioVm.DebugStartOrContinueCommand.Execute(null);
+        studioVm.DebugCurrentLine.Should().Be(9);
+        studioVm.DebugStepOverCommand.Execute(null);
+        studioVm.DebugWatchPins.Should().Contain(p => p.PinName == "12" && p.IsHigh);
+        studioVm.DebugResetCommand.Execute(null);
+    }
+
+    [Fact]
+    public void MicroPython_PhysicalComUpload_FailsHonestly_And_AdapterMismatchBlocksUpload()
+    {
+        Exception? staException = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                using var vm = new MainWorkstationViewModel(Dispatcher.CurrentDispatcher);
+                vm.Initialize();
+
+                // Plug mismatch: Type-C on Arduino Uno with Adapter OFF must block upload
+                vm.IsUsbAdapterEnabled = false;
+                vm.SelectUsbCableCommand.Execute("typec");
+                vm.ConnectUsbCableCommand.Execute(null);
+                vm.IsCableMismatchWarning.Should().BeTrue();
+                vm.IsGlobalBoardConnected.Should().BeFalse();
+
+                ProgrammerUploadResult mismatchRes = vm
+                    .UploadFirmwareWithOptionsAsync(
+                        "from machine import Pin\n",
+                        BoxCodingLanguage.MicroPython,
+                        ProgrammerIdeCatalog.VirtualSimPortDisplay,
+                        verifyOnly: false)
+                    .GetAwaiter()
+                    .GetResult();
+                mismatchRes.Success.Should().BeFalse();
+
+                // Enable adapter + native Micro-USB for ESP32 & test honest MicroPython physical COM failure
+                vm.SelectDevBoardTypeCommand.Execute("esp32");
+                vm.SelectUsbCableCommand.Execute("micro");
+                vm.ConnectUsbCableCommand.Execute(null);
+                vm.IsGlobalBoardConnected.Should().BeTrue();
+
+                ProgrammerUploadResult pyComResult = vm
+                    .UploadFirmwareWithOptionsAsync(
+                        "from machine import Pin\np = Pin(2, Pin.OUT)\np.value(1)\n",
+                        BoxCodingLanguage.MicroPython,
+                        "COM99 (ESP32 MicroPython)",
+                        verifyOnly: false)
+                    .GetAwaiter()
+                    .GetResult();
+                pyComResult.Success.Should().BeFalse();
+                pyComResult.TargetPort.Should().Be("COM99");
+                pyComResult.LogOutput.Should().Contain("PHYSICAL UPLOAD FAILED");
+                pyComResult.LogOutput.Should().NotContain("Virtual execution started");
+
+                // Verify-only with a physical COM port selected must NOT attempt physical COM flash or fail on missing mpremote
+                ProgrammerUploadResult pyVerifyOnCom = vm
+                    .UploadFirmwareWithOptionsAsync(
+                        "from machine import Pin\np = Pin(2, Pin.OUT)\np.value(1)\n",
+                        BoxCodingLanguage.MicroPython,
+                        "COM99 (ESP32 MicroPython)",
+                        verifyOnly: true)
+                    .GetAwaiter()
+                    .GetResult();
+                pyVerifyOnCom.Success.Should().BeTrue(pyVerifyOnCom.LogOutput);
+                pyVerifyOnCom.LogOutput.Should().NotContain("mpremote connect COM99");
+                pyVerifyOnCom.LogOutput.Should().NotContain("PHYSICAL UPLOAD FAILED");
+
+                // Dual-board BottomMargin and RightMargin layouts never overlap even for Mega + Uno
+                var rules = new DevBoardAndModuleRuleEngine();
+                var mcuRenderer = new OffBoardMicrocontrollerRenderer(rules);
+                var bbBounds = new SKRect(100f, 100f, 760f, 320f);
+                var dualBottom = mcuRenderer.ComputeBoardLayouts(
+                    new[]
+                    {
+                        new OffBoardMicrocontrollerVisualState("MCU_1", MicrocontrollerBoardType.ArduinoMega2560, OffBoardDockPlacement.BottomMargin, 0, null, new HashSet<string>(), new HashSet<string>()),
+                        new OffBoardMicrocontrollerVisualState("MCU_2", MicrocontrollerBoardType.ArduinoUnoR3R4, OffBoardDockPlacement.BottomMargin, 1, null, new HashSet<string>(), new HashSet<string>())
+                    },
+                    bbBounds,
+                    pixelsPerMm: 4f);
+                dualBottom.Should().HaveCount(2);
+                dualBottom[0].BoardBoundsCanvas.IntersectsWith(dualBottom[1].BoardBoundsCanvas).Should().BeFalse("dual BottomMargin boards must never overlap");
+                dualBottom[1].BoardBoundsCanvas.Left.Should().BeGreaterThan(dualBottom[0].BoardBoundsCanvas.Right);
+
+                var dualRight = mcuRenderer.ComputeBoardLayouts(
+                    new[]
+                    {
+                        new OffBoardMicrocontrollerVisualState("MCU_1", MicrocontrollerBoardType.ArduinoUnoR3R4, OffBoardDockPlacement.RightMargin, 0, null, new HashSet<string>(), new HashSet<string>()),
+                        new OffBoardMicrocontrollerVisualState("MCU_2", MicrocontrollerBoardType.WemosEsp32S2Mini, OffBoardDockPlacement.RightMargin, 1, null, new HashSet<string>(), new HashSet<string>())
+                    },
+                    bbBounds,
+                    pixelsPerMm: 4f);
+                dualRight.Should().HaveCount(2);
+                dualRight[0].BoardBoundsCanvas.IntersectsWith(dualRight[1].BoardBoundsCanvas).Should().BeFalse("dual RightMargin boards must never overlap");
+                dualRight[1].BoardBoundsCanvas.Top.Should().BeGreaterThan(dualRight[0].BoardBoundsCanvas.Bottom);
+            }
+            catch (Exception ex)
+            {
+                staException = ex;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+
+        staException.Should().BeNull();
+    }
+
+    [Fact]
+    public void CadRenderer_HoverTooltip_UpdatesAndClearsForProgrammerJackUsbPortAndCableRack()
+    {
+        var renderer = new SkiaArOverlayRenderer
+        {
+            ActiveUsbCableKind = UsbCableKind.UsbB,
+            IsProgrammerConnected = false,
+            TargetProgrammerBoardInstanceId = "MCU_1",
+            ActiveMicrocontrollers = new[]
+            {
+                new OffBoardMicrocontrollerVisualState("MCU_1", MicrocontrollerBoardType.ArduinoUnoR3R4, OffBoardDockPlacement.BottomMargin, 0, null, new HashSet<string>(), new HashSet<string>())
+            }
+        };
+        renderer.Layers.ShowHardwareProgrammer = true;
+        renderer.Layers.ShowHoverInspector = true;
+
+        using var surface = SKSurface.Create(new SKImageInfo(1600, 960));
+        renderer.RenderCadViewport(surface.Canvas, 1600, 960, warpedBoardFrame: null, drcState: null);
+
+        // Hover Programmer USB jack -> non-breadboard hover state active, tooltip renders cleanly
+        renderer.UpdateHover(renderer.LastProgrammerJackRect.MidX, renderer.LastProgrammerJackRect.MidY).Should().BeTrue();
+        renderer.HoveredProgrammerJack.Should().BeTrue();
+        renderer.IsHoveringPin.Should().BeFalse();
+        renderer.RenderCadViewport(surface.Canvas, 1600, 960, warpedBoardFrame: null, drcState: null);
+
+        // Moving onto empty pasteboard clears programmer/cable hover flags cleanly
+        renderer.UpdateHover(2f, 2f).Should().BeFalse();
+        renderer.HoveredProgrammerJack.Should().BeFalse();
+        renderer.HoveredCableRackKind.Should().Be(UsbCableKind.None);
+        renderer.HoveredUsbReceptacleBoardId.Should().BeNull();
+    }
+
+    [Fact]
+    public void OffBoardRenderer_WemosS2Mini_BottomCaptionExtentsClearUsbCReceptacleAndCable()
+    {
+        var mcuRenderer = new OffBoardMicrocontrollerRenderer(new DevBoardAndModuleRuleEngine());
+        float pxPerMm = 6.0f;
+        McuLabelExtents s2Extents = mcuRenderer.MeasureLabelExtents(MicrocontrollerBoardType.WemosEsp32S2Mini, pxPerMm);
+
+        s2Extents.BottomPx.Should().BeGreaterThanOrEqualTo(10.5f * pxPerMm,
+            "Wemos S2 Mini bottom USB-C receptacle + plugged ANKER 100W barrel + cable turn require dedicated bottom clearance before the board caption.");
+
+        var renderer = new SkiaArOverlayRenderer
+        {
+            ActiveUsbCableKind = UsbCableKind.UsbTypeC,
+            IsProgrammerConnected = true,
+            TargetProgrammerBoardInstanceId = "MCU_1",
+            ActiveMicrocontrollers = new[]
+            {
+                new OffBoardMicrocontrollerVisualState("MCU_1", MicrocontrollerBoardType.WemosEsp32S2Mini, OffBoardDockPlacement.RightMargin, 0, null, new HashSet<string>(), new HashSet<string>())
+            }
+        };
+        renderer.Layers.ShowHardwareProgrammer = true;
+
+        using var surface = SKSurface.Create(new SKImageInfo(1600, 980));
+        renderer.RenderCadViewport(surface.Canvas, 1600, 980, warpedBoardFrame: null, drcState: null);
+
+        renderer.LastProgrammerBodyRect.IsEmpty.Should().BeFalse();
+        renderer.LastProgrammerUploadButtonRect.IsEmpty.Should().BeFalse();
+        renderer.LastCableRackBodyRect.IsEmpty.Should().BeFalse();
+        renderer.TryHitTestConnectedCableOrPlug(renderer.LastProgrammerJackRect.MidX - 4f, renderer.LastProgrammerJackRect.MidY)
+            .Should().BeTrue();
+    }
+
+    [Fact]
+    public void SkiaRenderer_UnoUsbB_S2MiniAnker_And_DualBoardDragPreview_RenderWithoutOverlapOrExceptions()
+    {
+        var renderer = new SkiaArOverlayRenderer
+        {
+            TargetProgrammerBoardInstanceId = "MCU_1",
+            ActiveUsbCableKind = UsbCableKind.UsbB,
+            IsProgrammerConnected = true,
+            ActiveMicrocontrollers = new[]
+            {
+                new OffBoardMicrocontrollerVisualState("MCU_1", MicrocontrollerBoardType.ArduinoUnoR3R4, OffBoardDockPlacement.RightMargin, 0, null, new HashSet<string>(), new HashSet<string>())
+            }
+        };
+        renderer.Layers.ShowHardwareProgrammer = true;
+
+        using var surface = SKSurface.Create(new SKImageInfo(1600, 980));
+        renderer.RenderCadViewport(surface.Canvas, 1600, 980, warpedBoardFrame: null, drcState: null);
+        renderer.LastProgrammerSendButtonRect.Width.Should().BeGreaterThan(20f);
+
+        // Dual-board + interactive drag preview over MCU_2 vertical S2 Mini port
+        renderer.IsProgrammerConnected = false;
+        renderer.ActiveMicrocontrollers = new[]
+        {
+            new OffBoardMicrocontrollerVisualState("MCU_1", MicrocontrollerBoardType.ArduinoUnoR3R4, OffBoardDockPlacement.RightMargin, 0, null, new HashSet<string>(), new HashSet<string>()),
+            new OffBoardMicrocontrollerVisualState("MCU_2", MicrocontrollerBoardType.WemosEsp32S2Mini, OffBoardDockPlacement.RightMargin, 1, null, new HashSet<string>(), new HashSet<string>())
+        };
+        renderer.RenderCadViewport(surface.Canvas, 1600, 980, warpedBoardFrame: null, drcState: null);
+
+        renderer.PendingCableDragKind = UsbCableKind.UsbTypeC;
+        renderer.CableDragCursorCanvas = new SKPoint(renderer.LastProgrammerJackRect.MidX - 80f, renderer.LastProgrammerJackRect.MidY + 120f);
+        renderer.HoveredUsbReceptacleBoardId = "MCU_2";
+        renderer.RenderCadViewport(surface.Canvas, 1600, 980, warpedBoardFrame: null, drcState: null);
+
+        renderer.LastCableRackBodyRect.IsEmpty.Should().BeFalse();
+        renderer.LastProgrammerUploadButtonRect.Should().Be(SKRect.Empty);
+        renderer.LastProgrammerSendButtonRect.IsEmpty.Should().BeFalse();
     }
 }

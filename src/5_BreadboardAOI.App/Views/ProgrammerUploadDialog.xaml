@@ -1,11 +1,11 @@
 <Window x:Class="BreadboardAOI.App.Views.ProgrammerUploadDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="HARDWARE PROGRAMMER &amp; FIRMWARE UPLOAD STUDIO"
-        Width="780"
-        Height="680"
-        MinWidth="640"
-        MinHeight="540"
+        Title="HARDWARE PROGRAMMER &amp; ARDUINO IDE FIRMWARE STUDIO"
+        Width="960"
+        Height="800"
+        MinWidth="760"
+        MinHeight="620"
         WindowStartupLocation="CenterOwner"
         ResizeMode="CanResize"
         ShowInTaskbar="False"
@@ -20,12 +20,31 @@
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="/BreadboardAOI.App;component/Themes/SpectrumDarkTheme.xaml" />
             </ResourceDictionary.MergedDictionaries>
+            <BooleanToVisibilityConverter x:Key="BoolToVis" />
         </ResourceDictionary>
     </Window.Resources>
 
-    <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+    <Border>
+        <Border.Style>
+            <Style TargetType="Border">
+                <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsGlobalBoardConnected}" Value="True">
+                        <Setter Property="BorderBrush" Value="#00FFC8" />
+                        <Setter Property="BorderThickness" Value="2" />
+                    </DataTrigger>
+                    <DataTrigger Binding="{Binding IsCableMismatchWarning}" Value="True">
+                        <Setter Property="BorderBrush" Value="#F59E0B" />
+                        <Setter Property="BorderThickness" Value="2" />
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+        </Border.Style>
+
         <Grid Margin="14">
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -34,64 +53,172 @@
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <!-- HEADER BANNER -->
-            <Border Grid.Row="0" Background="{StaticResource ToolbarSurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="10,8" Margin="0,0,0,10">
+            <!-- ROW 0: NEON HEADER BANNER -->
+            <Border Grid.Row="0" BorderThickness="1" Padding="10,8" Margin="0,0,0,8">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Background" Value="{StaticResource ToolbarSurfaceBrush}" />
+                        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsGlobalBoardConnected}" Value="True">
+                                <Setter Property="Background" Value="#042F2E" />
+                                <Setter Property="BorderBrush" Value="#00FFC8" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
                 <DockPanel LastChildFill="False">
                     <StackPanel DockPanel.Dock="Left" VerticalAlignment="Center">
-                        <TextBlock Text="USB-ISP / UART HARDWARE PROGRAMMER"
-                                   Style="{StaticResource PanelHeaderTextStyle}"
-                                   FontSize="12"
-                                   Foreground="{StaticResource AccentCyanBrush}" />
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Ellipse Width="9" Height="9" Margin="0,0,7,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="#64748B" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsGlobalBoardConnected}" Value="True">
+                                                <Setter Property="Fill" Value="#00FFC8" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="USB-ISP / UART HARDWARE PROGRAMMER"
+                                       Style="{StaticResource PanelHeaderTextStyle}"
+                                       FontSize="12"
+                                       Foreground="{StaticResource AccentCyanBrush}" />
+                            <Border Margin="10,0,0,0" CornerRadius="3" Padding="7,2" BorderThickness="1">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Background" Value="#1E293B" />
+                                        <Setter Property="BorderBrush" Value="#475569" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsGlobalBoardConnected}" Value="True">
+                                                <Setter Property="Background" Value="#004D40" />
+                                                <Setter Property="BorderBrush" Value="#00FFC8" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsCableMismatchWarning}" Value="True">
+                                                <Setter Property="Background" Value="#78350F" />
+                                                <Setter Property="BorderBrush" Value="#F59E0B" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <TextBlock Text="{Binding GlobalConnectionBadgeText}"
+                                           FontFamily="{StaticResource MonoFontFamily}"
+                                           FontSize="9.5"
+                                           FontWeight="Bold">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="#94A3B8" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsGlobalBoardConnected}" Value="True">
+                                                    <Setter Property="Foreground" Value="#00FFC8" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsCableMismatchWarning}" Value="True">
+                                                    <Setter Property="Foreground" Value="#FDE68A" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Border>
+                        </StackPanel>
                         <TextBlock x:Name="BoardSummaryText"
                                    Style="{StaticResource MonoSecondaryTextStyle}"
                                    FontSize="10"
-                                   Margin="0,2,0,0" />
+                                   Margin="0,3,0,0" />
                     </StackPanel>
 
-                    <Border DockPanel.Dock="Right"
-                            x:Name="CompatibilityBadgeBorder"
-                            Background="#102A2E"
-                            BorderBrush="{StaticResource AccentCyanBrush}"
-                            BorderThickness="1"
-                            CornerRadius="3"
-                            Padding="8,4"
-                            VerticalAlignment="Center">
-                        <TextBlock x:Name="CompatibilityBadgeText"
-                                   FontFamily="{StaticResource MonoFontFamily}"
-                                   FontSize="10"
-                                   FontWeight="Bold"
-                                   Foreground="#64FFDA" />
-                    </Border>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Style="{StaticResource DockButtonStyle}"
+                                Command="{Binding ToggleUsbCableConnectionCommand}"
+                                Content="{Binding ConnectCableButtonLabel}"
+                                Padding="10,5"
+                                Margin="0,0,8,0"
+                                ToolTip="Manually connect or unplug the programmer USB cable" />
+
+                        <ToggleButton Style="{StaticResource ToolbarToggleButtonStyle}"
+                                      IsChecked="{Binding IsUsbAdapterEnabled, Mode=TwoWay}"
+                                      Command="{Binding ToggleUsbAdapterModeCommand}"
+                                      Content="USB ADAPTER"
+                                      Padding="8,5"
+                                      Margin="0,0,8,0"
+                                      ToolTip="Allow non-native USB plug via OTG / Type-C adapter dongle" />
+
+                        <Border x:Name="CompatibilityBadgeBorder"
+                                Background="#102A2E"
+                                BorderBrush="{StaticResource AccentCyanBrush}"
+                                BorderThickness="1"
+                                CornerRadius="3"
+                                Padding="8,4"
+                                VerticalAlignment="Center">
+                            <TextBlock x:Name="CompatibilityBadgeText"
+                                       FontFamily="{StaticResource MonoFontFamily}"
+                                       FontSize="10"
+                                       FontWeight="Bold"
+                                       Foreground="#64FFDA" />
+                        </Border>
+                    </StackPanel>
                 </DockPanel>
             </Border>
 
-            <!-- HARDWARE PORT & CABLE CONFIGURATION -->
-            <Border Grid.Row="1" Background="{StaticResource PanelBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="10,8" Margin="0,0,0,10">
+            <!-- ROW 1: PORT, TARGET MCU SLOT, CABLE & LANGUAGE -->
+            <Border Grid.Row="1" Background="{StaticResource PanelBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="10,8" Margin="0,0,0,8">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="12" />
-                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="1.2*" />
+                        <ColumnDefinition Width="10" />
+                        <ColumnDefinition Width="0.8*" />
+                        <ColumnDefinition Width="10" />
+                        <ColumnDefinition Width="1.2*" />
                     </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
+                    <!-- Target Port + Refresh -->
                     <StackPanel Grid.Row="0" Grid.Column="0">
-                        <TextBlock Text="TARGET PORT / EXECUTION TARGET" Style="{StaticResource PanelHeaderTextStyle}" FontSize="9.5" Margin="0,0,0,4" />
-                        <ComboBox x:Name="PortComboBox"
-                                  Style="{StaticResource DockComboBoxStyle}"
-                                  Height="26"
-                                  SelectionChanged="OnPortSelectionChanged" />
-                    </StackPanel>
-
-                    <StackPanel Grid.Row="0" Grid.Column="2">
-                        <TextBlock Text="TARGET FIRMWARE LANGUAGE &amp; CABLE" Style="{StaticResource PanelHeaderTextStyle}" FontSize="9.5" Margin="0,0,0,4" />
+                        <TextBlock Text="TARGET COM PORT / EXECUTION TARGET" Style="{StaticResource PanelHeaderTextStyle}" FontSize="9.5" Margin="0,0,0,4" />
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="8" />
+                                <ColumnDefinition Width="4" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <ComboBox x:Name="PortComboBox"
+                                      Grid.Column="0"
+                                      Style="{StaticResource DockComboBoxStyle}"
+                                      Height="26"
+                                      SelectionChanged="OnPortSelectionChanged" />
+                            <Button Grid.Column="2"
+                                    Content="↻ COM"
+                                    Style="{StaticResource DockButtonStyle}"
+                                    Padding="8,4"
+                                    Height="26"
+                                    Click="OnRefreshPortsClick"
+                                    ToolTip="Rescan physical Windows COM / USB-UART serial ports" />
+                        </Grid>
+                    </StackPanel>
+
+                    <!-- Target Docked Board Slot -->
+                    <StackPanel Grid.Row="0" Grid.Column="2">
+                        <TextBlock Text="TARGET BOARD SLOT" Style="{StaticResource PanelHeaderTextStyle}" FontSize="9.5" Margin="0,0,0,4" />
+                        <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                  ItemsSource="{Binding AvailableTargetBoardSlots}"
+                                  DisplayMemberPath="DisplayLabel"
+                                  SelectedValuePath="BoardInstanceId"
+                                  SelectedValue="{Binding TargetProgrammerBoardInstanceId, Mode=TwoWay}"
+                                  Height="26" />
+                    </StackPanel>
+
+                    <!-- Language & 2.5D Cable Selector -->
+                    <StackPanel Grid.Row="0" Grid.Column="4">
+                        <TextBlock Text="FIRMWARE LANGUAGE &amp; 2.5D CABLE" Style="{StaticResource PanelHeaderTextStyle}" FontSize="9.5" Margin="0,0,0,4" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="6" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <ComboBox x:Name="LanguageComboBox"
@@ -100,9 +227,9 @@
                                       Height="26"
                                       SelectionChanged="OnLanguageSelectionChanged" />
                             <StackPanel Grid.Column="2" Orientation="Horizontal">
-                                <Button Content="USB-C" Style="{StaticResource DockButtonStyle}" Padding="7,4" Margin="0,0,2,0" Click="OnSelectUsbCClick" />
-                                <Button Content="USB-B" Style="{StaticResource DockButtonStyle}" Padding="7,4" Margin="0,0,2,0" Click="OnSelectUsbBClick" />
-                                <Button Content="MICRO" Style="{StaticResource DockButtonStyle}" Padding="7,4" Click="OnSelectMicroUsbClick" />
+                                <Button Content="ANKER C" Style="{StaticResource DockButtonStyle}" Padding="7,4" Margin="0,0,2,0" Click="OnSelectUsbCClick" ToolTip="Anker 100W Diamond-Braided USB-C to USB-C cable" />
+                                <Button Content="USB-A→B" Style="{StaticResource DockButtonStyle}" Padding="7,4" Margin="0,0,2,0" Click="OnSelectUsbBClick" ToolTip="Glossy Black / Orange-Emblem USB Type-A to Type-B cable" />
+                                <Button Content="MICRO" Style="{StaticResource DockButtonStyle}" Padding="7,4" Click="OnSelectMicroUsbClick" ToolTip="Micro-USB 2.0 Data Cable" />
                             </StackPanel>
                         </Grid>
                     </StackPanel>
@@ -110,7 +237,7 @@
                     <TextBlock x:Name="PortDetailText"
                                Grid.Row="1"
                                Grid.Column="0"
-                               Grid.ColumnSpan="3"
+                               Grid.ColumnSpan="5"
                                Style="{StaticResource MonoSecondaryTextStyle}"
                                FontSize="9.5"
                                Margin="0,6,0,0"
@@ -118,8 +245,154 @@
                 </Grid>
             </Border>
 
-            <!-- PRE-FLIGHT DIAGNOSTICS BAR -->
-            <Border Grid.Row="2" Background="{StaticResource EditorBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="8,6" Margin="0,0,0,8">
+            <!-- ROW 2: ARDUINO IDE TOOLS & MICROPYTHON TRANSFER OPTIONS -->
+            <Border Grid.Row="2" Background="#12161F" BorderBrush="#2A3447" BorderThickness="1" Padding="10,8" Margin="0,0,0,8">
+                <StackPanel>
+                    <DockPanel LastChildFill="False" Margin="0,0,0,6">
+                        <TextBlock DockPanel.Dock="Left"
+                                   Text="ARDUINO IDE BOARD / PROGRAMMER / MICROPYTHON OPTIONS"
+                                   Style="{StaticResource PanelHeaderTextStyle}"
+                                   FontSize="9.5"
+                                   Foreground="{StaticResource AccentCyanBrush}"
+                                   VerticalAlignment="Center" />
+                        <Border DockPanel.Dock="Right" Background="#0F172A" BorderBrush="#334155" BorderThickness="1" CornerRadius="3" Padding="6,2">
+                            <TextBlock Text="{Binding EffectiveFqbnPreview, StringFormat='FQBN: {0}'}"
+                                       FontFamily="{StaticResource MonoFontFamily}"
+                                       FontSize="9"
+                                       Foreground="#7DD3FC" />
+                        </Border>
+                    </DockPanel>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="8" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="8" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="8" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <!-- Board Variant -->
+                        <StackPanel Grid.Row="0" Grid.Column="0">
+                            <TextBlock Text="BOARD VARIANT" Style="{StaticResource PanelHeaderTextStyle}" FontSize="8.5" Margin="0,0,0,2" />
+                            <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                      ItemsSource="{Binding AvailableBoardVariants}"
+                                      DisplayMemberPath="DisplayName"
+                                      SelectedValuePath="Id"
+                                      SelectedValue="{Binding SelectedBoardVariantId, Mode=TwoWay}"
+                                      Height="24" />
+                        </StackPanel>
+
+                        <!-- Upload Speed / Baud -->
+                        <StackPanel Grid.Row="0" Grid.Column="2">
+                            <TextBlock Text="UPLOAD SPEED (BAUD)" Style="{StaticResource PanelHeaderTextStyle}" FontSize="8.5" Margin="0,0,0,2" />
+                            <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                      ItemsSource="{Binding AvailableUploadSpeeds}"
+                                      SelectedItem="{Binding SelectedUploadSpeedBaud, Mode=TwoWay}"
+                                      Height="24" />
+                        </StackPanel>
+
+                        <!-- Hardware Programmer Tool -->
+                        <StackPanel Grid.Row="0" Grid.Column="4">
+                            <TextBlock Text="PROGRAMMER" Style="{StaticResource PanelHeaderTextStyle}" FontSize="8.5" Margin="0,0,0,2" />
+                            <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                      ItemsSource="{Binding AvailableProgrammerTools}"
+                                      DisplayMemberPath="DisplayName"
+                                      SelectedValuePath="Id"
+                                      SelectedValue="{Binding SelectedProgrammerToolId, Mode=TwoWay}"
+                                      Height="24" />
+                        </StackPanel>
+
+                        <!-- Custom FQBN Override & MicroPython CLI -->
+                        <StackPanel Grid.Row="0" Grid.Column="6">
+                            <TextBlock Text="CUSTOM FQBN / MPY TOOL" Style="{StaticResource PanelHeaderTextStyle}" FontSize="8.5" Margin="0,0,0,2" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="1.2*" />
+                                    <ColumnDefinition Width="4" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox Grid.Column="0"
+                                         Style="{StaticResource DockTextBoxStyle}"
+                                         Text="{Binding CustomFqbnOverride, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         Height="24"
+                                         ToolTip="Optional custom FQBN override (leave empty to auto-build from IDE options)" />
+                                <ComboBox Grid.Column="2"
+                                          Style="{StaticResource DockComboBoxStyle}"
+                                          ItemsSource="{Binding AvailableMicroPythonTools}"
+                                          SelectedItem="{Binding SelectedMicroPythonTool, Mode=TwoWay}"
+                                          Height="24"
+                                          ToolTip="MicroPython CLI transfer backend" />
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- Row 1: Conditional ESP32 / CPU / Flags -->
+                        <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,6,0,0" Visibility="{Binding SupportsEspFlashOptions, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="FLASH MODE" Style="{StaticResource PanelHeaderTextStyle}" FontSize="8.5" Margin="0,0,0,2" />
+                            <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                      ItemsSource="{Binding AvailableFlashModes}"
+                                      SelectedItem="{Binding SelectedFlashMode, Mode=TwoWay}"
+                                      Height="24" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,6,0,0" Visibility="{Binding SupportsEspFlashOptions, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="FLASH SIZE &amp; PARTITION" Style="{StaticResource PanelHeaderTextStyle}" FontSize="8.5" Margin="0,0,0,2" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="0.7*" />
+                                    <ColumnDefinition Width="4" />
+                                    <ColumnDefinition Width="1.3*" />
+                                </Grid.ColumnDefinitions>
+                                <ComboBox Grid.Column="0" Style="{StaticResource DockComboBoxStyle}" ItemsSource="{Binding AvailableFlashSizes}" SelectedItem="{Binding SelectedFlashSize, Mode=TwoWay}" Height="24" />
+                                <ComboBox Grid.Column="2" Style="{StaticResource DockComboBoxStyle}" ItemsSource="{Binding AvailablePartitionSchemes}" SelectedItem="{Binding SelectedPartitionScheme, Mode=TwoWay}" Height="24" />
+                            </Grid>
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="1" Grid.Column="4" Margin="0,6,0,0" Visibility="{Binding SupportsCpuFreqOption, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="CPU FREQ (MHz) &amp; USB CDC" Style="{StaticResource PanelHeaderTextStyle}" FontSize="8.5" Margin="0,0,0,2" />
+                            <StackPanel Orientation="Horizontal">
+                                <ComboBox Style="{StaticResource DockComboBoxStyle}"
+                                          Width="84"
+                                          ItemsSource="{Binding AvailableCpuFrequenciesMHz}"
+                                          SelectedItem="{Binding SelectedCpuFrequencyMHz, Mode=TwoWay}"
+                                          Height="24"
+                                          Margin="0,0,6,0" />
+                                <CheckBox Content="USB CDC"
+                                          Style="{StaticResource LayerCheckBoxStyle}"
+                                          Visibility="{Binding SupportsUsbCdcOption, Converter={StaticResource BoolToVis}}"
+                                          IsChecked="{Binding UsbCdcOnBoot, Mode=TwoWay}"
+                                          VerticalAlignment="Center" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="1" Grid.Column="6" Margin="0,6,0,0" VerticalAlignment="Bottom">
+                            <WrapPanel Orientation="Horizontal">
+                                <CheckBox Content="Upload Using Programmer"
+                                          Style="{StaticResource LayerCheckBoxStyle}"
+                                          IsChecked="{Binding UploadUsingProgrammer, Mode=TwoWay}"
+                                          Margin="0,0,8,2" />
+                                <CheckBox Content="Verbose (-v)"
+                                          Style="{StaticResource LayerCheckBoxStyle}"
+                                          IsChecked="{Binding VerboseUploadOutput, Mode=TwoWay}"
+                                          Margin="0,0,8,2" />
+                                <CheckBox Content="Allow Virtual Fallback"
+                                          Style="{StaticResource LayerCheckBoxStyle}"
+                                          IsChecked="{Binding AllowVirtualFallbackOnPhysicalPort, Mode=TwoWay}"
+                                          ToolTip="Opt-in: fall back to virtual breadboard simulator if physical COM upload/toolchain fails" />
+                            </WrapPanel>
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- ROW 3: PRE-FLIGHT DIAGNOSTICS BAR -->
+            <Border Grid.Row="3" Background="{StaticResource EditorBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="8,6" Margin="0,0,0,8">
                 <StackPanel>
                     <DockPanel LastChildFill="False" Margin="0,0,0,4">
                         <TextBlock x:Name="DiagnosticsHeaderText"
@@ -133,7 +406,7 @@
                                    FontSize="9.5" />
                     </DockPanel>
                     <ListBox x:Name="DiagnosticsListBox"
-                             MaxHeight="78"
+                             MaxHeight="74"
                              Background="Transparent"
                              BorderThickness="0"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
@@ -151,14 +424,14 @@
                 </StackPanel>
             </Border>
 
-            <!-- FIRMWARE SOURCE EDITOR -->
-            <Grid Grid.Row="3" Margin="0,0,0,8">
+            <!-- ROW 4: FIRMWARE SOURCE EDITOR -->
+            <Grid Grid.Row="4" Margin="0,0,0,8">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
                 <DockPanel Grid.Row="0" Margin="0,0,0,4">
-                    <TextBlock Text="FIRMWARE SKETCH / SCRIPT PAYLOAD (EDITABLE PRIOR TO FLASH)"
+                    <TextBlock Text="FIRMWARE SKETCH / SCRIPT PAYLOAD (EDITABLE PRIOR TO VERIFY / UPLOAD)"
                                Style="{StaticResource PanelHeaderTextStyle}"
                                FontSize="9.5"
                                VerticalAlignment="Center" />
@@ -182,22 +455,33 @@
                          TextChanged="OnCodeEditorTextChanged" />
             </Grid>
 
-            <!-- FLASH PROGRESS BAR & STAGE CONSOLE -->
-            <Border Grid.Row="4" Background="{StaticResource PanelBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="8" Margin="0,0,0,10">
+            <!-- ROW 5: FLASH PROGRESS BAR, HARDWARE SERIAL CONTROLS & STAGE CONSOLE -->
+            <Border Grid.Row="5" Background="{StaticResource PanelBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="8" Margin="0,0,0,8">
                 <StackPanel>
                     <DockPanel LastChildFill="False" Margin="0,0,0,4">
                         <TextBlock x:Name="UploadStageText"
                                    DockPanel.Dock="Left"
-                                   Text="READY TO FLASH"
+                                   Text="READY"
                                    Style="{StaticResource MonoTelemetryTextStyle}"
                                    FontWeight="Bold"
                                    FontSize="10"
-                                   Foreground="{StaticResource AccentCyanBrush}" />
-                        <TextBlock x:Name="UploadPercentText"
-                                   DockPanel.Dock="Right"
-                                   Text="0%"
-                                   Style="{StaticResource MonoSecondaryTextStyle}"
-                                   FontSize="10" />
+                                   Foreground="{StaticResource AccentCyanBrush}"
+                                   VerticalAlignment="Center" />
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding HardwareSerialStatusText}"
+                                       Style="{StaticResource MonoSecondaryTextStyle}"
+                                       FontSize="9"
+                                       Margin="0,0,10,0"
+                                       VerticalAlignment="Center" />
+                            <Button Content="OPEN SERIAL" Style="{StaticResource DockButtonStyle}" Padding="7,2" FontSize="9" Margin="0,0,4,0" Command="{Binding OpenHardwareSerialMonitorCommand}" />
+                            <Button Content="CLOSE SERIAL" Style="{StaticResource DockButtonStyle}" Padding="7,2" FontSize="9" Margin="0,0,4,0" Command="{Binding CloseHardwareSerialMonitorCommand}" />
+                            <Button Content="DTR RESET" Style="{StaticResource DockButtonStyle}" Padding="7,2" FontSize="9" Margin="0,0,10,0" Command="{Binding PulseDtrResetCommand}" />
+                            <TextBlock x:Name="UploadPercentText"
+                                       Text="0%"
+                                       Style="{StaticResource MonoSecondaryTextStyle}"
+                                       FontSize="10"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
                     </DockPanel>
                     <ProgressBar x:Name="UploadProgressBar"
                                  Minimum="0"
@@ -210,15 +494,34 @@
                                  Margin="0,0,0,6" />
                     <TextBox x:Name="ConsoleOutputBox"
                              Style="{StaticResource ConsoleTextBoxStyle}"
-                             Height="86"
+                             Height="92"
                              FontSize="9.5"
                              TextWrapping="Wrap"
-                             VerticalScrollBarVisibility="Auto" />
+                             VerticalScrollBarVisibility="Auto"
+                             Margin="0,0,0,5" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="6" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0"
+                                 Style="{StaticResource DockTextBoxStyle}"
+                                 Text="{Binding SerialInputCommandText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 Height="24"
+                                 ToolTip="Send serial line to open hardware COM port or virtual firmware simulator" />
+                        <Button Grid.Column="2"
+                                Content="SEND SERIAL"
+                                Style="{StaticResource DockButtonStyle}"
+                                Command="{Binding SendSerialInputCommand}"
+                                Padding="10,2"
+                                Height="24" />
+                    </Grid>
                 </StackPanel>
             </Border>
 
-            <!-- ACTION FOOTER -->
-            <DockPanel Grid.Row="5" LastChildFill="False">
+            <!-- ROW 6: ACTION FOOTER -->
+            <DockPanel Grid.Row="6" LastChildFill="False">
                 <Button x:Name="OpenStudioButton"
                         DockPanel.Dock="Left"
                         Content="⚡ OPEN BOX CODING STUDIO"
@@ -230,11 +533,21 @@
                         Click="OnOpenBoxCodingStudioClick" />
 
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button x:Name="VerifyNowButton"
+                            Content="✓ VERIFY / COMPILE"
+                            Style="{StaticResource DockButtonStyle}"
+                            Background="#1E293B"
+                            BorderBrush="#38BDF8"
+                            Foreground="#BAE6FD"
+                            FontWeight="SemiBold"
+                            Padding="12,6"
+                            Margin="0,0,8,0"
+                            Click="OnVerifyOnlyClick" />
                     <Button x:Name="UploadNowButton"
-                            Content="⬆ UPLOAD TO BOARD"
+                            Content="{Binding GlobalSendButtonLabel}"
                             Style="{StaticResource DockButtonStyle}"
                             Background="#004D40"
-                            BorderBrush="#00BFA5"
+                            BorderBrush="#00FFC8"
                             Foreground="#A7FFEB"
                             FontWeight="Bold"
                             Padding="16,6"
